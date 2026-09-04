@@ -3,3 +3,7 @@ langgraph==1.2.11
 pytest==9.1.1
 httpx==0.28.1
 pydantic==2.13.5
+# K4 PostgreSQL 唯一事实源（Repository 层；DB 需自行启动）
+SQLAlchemy==2.0.52
+alembic==1.19.1
+psycopg2-binary==2.9.12
