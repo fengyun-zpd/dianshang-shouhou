@@ -91,9 +91,17 @@
 - 验收命令：`.venv\Scripts\python.exe -m pytest tests/ -v`（171 passed）；`.venv\Scripts\python.exe evals\replay.py`（11/11）；`.venv\Scripts\python.exe evals\run_model_shadow_eval.py --mode offline`（意图准确率 1.0）；`--mode candidate` 未配置 Key → 安全降级、标注"未实测"、未联网。
 - 诚实边界：真实模型候选未实测（本环境无 Key）；微调/LoRA/DPO 需对照数据后另行门禁。
 
+### 任务卡 G：Supervisor 多 Agent 拆分实验（阶段 5B，✅ 已完成，回退结论）
+
+- 交付：`src/agents/subagents.py`（`ReadOnlySubAgent` + order/history/policy 白名单；构造时断言全只读）、`supervisor.py`（`SupervisorRunner`：API/状态/审批语义与单 Agent 一致，仅证据节点替换为并行子 Agent 编排）、`graph.py` 支持 `evidence_node` 切换；A/B 对照 `evals/compare_agents.py`；`docs/MULTI_AGENT_EXPERIMENT.md`。
+- 测试：`tests/unit/agents/test_supervisor.py`（11 项：只读边界/无写工具/跨租户/正确性一致（approved+rejected）/政策引用/审批 resume/拒绝/重复 resume 幂等/unknown 原键对账/伪造忽略/零副作用）。
+- 实验结论（ADR-002）：两模式黄金集均 11/11、outcome 与退款 100% 一致 → **默认路径维持单 Agent**；Supervisor 保留为可选实验运行时（并行只读证据、子 Agent 模块化、未来多模型挂载点）。
+- 验收命令：`.venv\Scripts\python.exe -m pytest tests/ -v`（182 passed）；`.venv\Scripts\python.exe evals\compare_agents.py`；`.venv\Scripts\python.exe evals\replay.py`（11/11）；`git diff --check`。
+
 ## 5. 修订记录
 
 - v0.1（本会话）—— 建立模块任务拆分、目录规划、所有权矩阵与任务卡 A/B/C。
 - v0.2（2026-09-04）—— 任务卡 A/C 完成（阶段 0/1）；任务卡 B（阶段 2）完成：LangGraph 1.2.11 单 Agent 工作流，全量 95 passed。
 - v0.3（2026-09-04）—— 任务卡 D（阶段 3 工具契约 + TenantContext + RAG）与任务卡 E（阶段 4 可靠性与评测）完成：全量 139 passed；黄金集 11/11。
 - v0.4（2026-09-04）—— 任务卡 F（阶段 5A 受控 LLM 运行时/能力矩阵/影子评测）完成：全量 171 passed；离线影子意图准确率 1.0，候选模型"未实测"（未配 Key、未联网）。
+- v0.5（2026-09-04）—— 任务卡 G（阶段 5B Supervisor 实验）完成：全量 182 passed；A/B 对照两模式均 11/11 → 默认维持单 Agent（ADR-002 回退条款），Supervisor 保留可选运行时。

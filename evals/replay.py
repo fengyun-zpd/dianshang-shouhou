@@ -80,9 +80,12 @@ def _observe(runner, thread_id: str) -> dict:
             "intent": st.get("intent"), "next_action": st.get("next_action")}
 
 
-def run_case(case: dict) -> dict:
+def run_case(case: dict, runner_factory=None) -> dict:
     svc = build_service(case)
-    runner = WorkflowRunner(svc)
+    if runner_factory is None:
+        runner = WorkflowRunner(svc)
+    else:
+        runner = runner_factory(svc)
     thread = f"eval-{case['id']}"
     started = time.monotonic()
     detail: list[str] = []

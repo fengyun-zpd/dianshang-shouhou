@@ -2,7 +2,7 @@
 
 > 归属：电商售后多智能体工单系统（OpsPilot After-Sales，目标远程 `fengyun-zpd/dianshang-shouhou`）
 > 性质：总负责人 Agent 的侦察与实施基线记录。本文档只陈述事实与判断，不把规划写成已实现；实时状态以此文件与测试输出为准。
-> 版本：v0.5（阶段 0/1/2/3/4/5A 完成，2026-09-04）
+> 版本：v0.6（阶段 0/1/2/3/4/5A/5B 完成，2026-09-04）
 
 ## 1. 工作区与目录角色
 
@@ -23,7 +23,7 @@
 
 ### ✅ 已实现（有代码 + 测试证据）
 
-| 项 | 证据（`.venv` 下 `python -m pytest tests/` → **171 passed**） |
+| 项 | 证据（`.venv` 下 `python -m pytest tests/` → **182 passed**） |
 | --- | --- |
 | 工程宪法 `AGENTS.md` v0.2；README 设计基线 + 实施进度节 | 文件存在 |
 | 退款最小闭环（确定性领域服务） | `src/domain/{models,idempotency,refund_service}.py` + `tests/test_refund_service.py`（14 项） |
@@ -35,6 +35,7 @@
 | **阶段 3 工具契约 + TenantContext + RAG** | `src/platform/tooling.py`（严格 JSON Schema 工具注册表：角色权限/防跨租户/入出参校验/超时/审计）；`src/rag/`（政策文档分块、关键词 + 可插拔向量（字典余弦）混合检索、引用校验、提示注入双向防护）；`src/agents/toolkit.py` 只读工具（get_order/get_ticket/list_customer_tickets/retrieve_policy）；测试 35 项 |
 | **阶段 4 可靠性与评测** | `src/platform/reliability.py`（有限重试/熔断/只读降级/fail-closed/接管标记）；黄金集 `evals/golden/golden_v1.json` + 回放器 `evals/replay.py` → **11/11 通过**，报告 `evals/reports/golden_v1_report.md`（完成率/意图/引用/澄清率/P50-P95/安全不变量）；测试 13 项 |
 | **阶段 5A 受控 LLM 运行时** | `src/models/`（config 白名单/Key 校验、base 协议+内容守卫、schemas 结构化输出、prompts 版本化、offline 规则适配器、openai_compatible HTTP 适配、router 能力矩阵+降级链）；影子评测 `evals/run_model_shadow_eval.py`（offline 实测 意图准确率 1.0；candidate 未配 Key → 安全降级未联网标注"未实测"）；`docs/MODEL_EVALUATION.md`；测试 32 项 |
+| **阶段 5B Supervisor 多 Agent 实验** | `src/agents/subagents.py`（只读子 Agent 白名单：order/history/policy）、`supervisor.py`（SupervisorRunner，与单 Agent 同 API/状态/审批语义）、graph 支持 evidence 节点替换；对照实验 `evals/compare_agents.py` → 两模式均 11/11、outcome/退款 100% 一致 → 按 ADR-002 **默认维持单 Agent**、Supervisor 保留可选运行时；`docs/MULTI_AGENT_EXPERIMENT.md`；测试 11 项 |
 | 依赖清单 | `requirements.txt`（langgraph==1.2.11 / pytest==9.1.1 / httpx==0.28.1 / pydantic==2.13.5，安装到 D 盘 `.venv`） |
 | 规划文档 | `docs/{STATUS_AND_RISKS,TASK_SPLIT,ARCHITECTURE,TESTING_BASELINE}.md` |
 
@@ -78,3 +79,4 @@
 - v0.3（2026-09-04）—— 阶段 2 完成：LangGraph 1.2.11 单 Agent 工作流（src/agents + 33 项测试 + 演示脚本），全量 95 passed；依赖迁至 D 盘 `.venv` 并记录安装约定；D3 执行；新增 R9。
 - v0.4（2026-09-04）—— 阶段 3（工具契约/TenantContext/RAG）与阶段 4（可靠性/黄金集评测）完成：全量 139 passed；黄金集 golden-v1 11/11，任务完成率 1.0；新增任务卡 D/E 与评测证据。
 - v0.5（2026-09-04）—— 阶段 5A（受控 LLM 运行时/能力矩阵/影子评测）完成：全量 171 passed；离线影子意图准确率 1.0；候选模型因未配置 Key 保持"未实测"（安全降级、未联网）；新增任务卡 F、docs/MODEL_EVALUATION.md。
+- v0.6（2026-09-04）—— 阶段 5B（Supervisor 只读子 Agent 实验）完成：全量 182 passed；对照实验两模式均 11/11 且 outcome/退款一致 → 按 ADR-002 默认维持单 Agent，Supervisor 保留可选运行时；新增任务卡 G、docs/MULTI_AGENT_EXPERIMENT.md。

@@ -13,7 +13,6 @@ from langgraph.types import Command
 
 from src.domain.after_sales import AfterSalesService
 
-from .graph import build_workflow
 from .ports import AfterSalesGateway
 from .state import APPROVAL_INTERRUPT_TYPE, CLARIFY_INTERRUPT_TYPE, AgentState, new_state
 
@@ -41,7 +40,12 @@ class WorkflowRunner:
     def __init__(self, service: AfterSalesService, checkpointer=None):
         self.service = service
         self.gateway = AfterSalesGateway(service)
-        self.graph = build_workflow(self.gateway, checkpointer)
+        self.graph = self._build_graph(checkpointer)
+
+    def _build_graph(self, checkpointer=None):
+        """构建默认单 Agent 图（子类可覆盖以切换运行时，如 Supervisor 模式）。"""
+        from .graph import build_workflow
+        return build_workflow(self.gateway, checkpointer)
 
     # ---------- 运行 ----------
 

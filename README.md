@@ -203,13 +203,14 @@ RAG、控制台、微调、观测：均标记「规划中」，V1 不前置实�
 - **阶段 3 工具契约 + TenantContext + RAG**：`src/platform/tooling.py`（严格 JSON Schema 工具注册表 + 超时/审计/输出校验）、`src/rag/`（政策文档分块、关键词 + 可插拔向量混合检索、引用校验、提示注入双向防护）、`src/agents/toolkit.py` 只读工具集；35 项单测；
 - **阶段 4 可靠性与评测**：`src/platform/reliability.py`（重试/熔断/只读降级/接管标记）＋ 黄金集评测（`evals/golden/golden_v1.json` 11 条 + `evals/replay.py` → 11/11 通过，报告 `evals/reports/golden_v1_report.md`）；13 项单测；
 - **阶段 5A 受控 LLM 运行时** `src/models/`：可替换/可降级的 OpenAI-compatible 适配层（统一 Client 协议、结构化输出 Schema、能力矩阵——tool_calling/high_risk_draft 默认禁用、内容安全守卫、发送前 PII 脱敏与证据注入拒绝、Base URL 白名单）；影子评测 `evals/run_model_shadow_eval.py`（offline 实测意图准确率 1.0；candidate 需显式安全 Key，未配置即安全降级不联网并标注"未实测"）；32 项单测 + `docs/MODEL_EVALUATION.md`；
+- **阶段 5B Supervisor 多 Agent 实验** `src/agents/{subagents,supervisor}.py`：只读子 Agent（order/history/policy，工具白名单 + TenantContext，无写路径）+ `SupervisorRunner`；A/B 对照 `evals/compare_agents.py` → 两模式黄金集均 11/11、outcome/退款 100% 一致 → **按 ADR-002 默认维持单 Agent**，Supervisor 保留可选运行时；11 项单测 + `docs/MULTI_AGENT_EXPERIMENT.md`；
 - **平台层最小落地** `src/platform/`：PII 脱敏（手机/邮箱/身份证）与整行脱敏日志 formatter；8 项单测；
 - **测试工具链**：`scripts/run_tests.py` 分层回归、`tests/conftest.py`（固定种子 42）、pytest markers、`.github/workflows/ci.yml` 模板；
-- 回归：`.venv` 下 `python -m pytest tests/` → **171 passed**；`python scripts/run_tests.py` → `REGRESSION PASS`；黄金集 `.venv\Scripts\python.exe evals\replay.py` → 11/11；影子 `.venv\Scripts\python.exe evals\run_model_shadow_eval.py --mode offline` → 意图准确率 1.0。
+- 回归：`.venv` 下 `python -m pytest tests/` → **182 passed**；`python scripts/run_tests.py` → `REGRESSION PASS`；黄金集 `.venv\Scripts\python.exe evals\replay.py` → 11/11；影子 `.venv\Scripts\python.exe evals\run_model_shadow_eval.py --mode offline` → 意图准确率 1.0；A/B `.venv\Scripts\python.exe evals\compare_agents.py` → 单 Agent 与 Supervisor 均 11/11（默认单 Agent）。
 
 ### 13.2 规划中（未实现，不写成已实现）
 
-- 阶段 5 其余（多 Agent Supervisor 拆分、LoRA/QLoRA/DPO 微调对照——无对照数据禁止）与阶段 6 Mule Agent Bridge（ADR-002~006 提议状态）；控制台 / 前端亦规划中。
+- 阶段 6 Mule Agent Bridge（ADR-003 提议状态）；Supervisor 的 LLM 子 Agent 路由（需重跑 5B 对照、正收益再切默认）、LoRA/QLoRA/DPO 微调对照（无对照数据禁止）、CrewAI（需可量化协作收益）、Graphiti/Neo4j 长期记忆；控制台 / 前端亦规划中。
 - 真实模型候选接入（需安全 Key 与白名单 Base URL 后实测回填指标）；MCP 跨服务协议、外部向量库（pgvector/Milvus）。
 - 数据库持久化（PostgreSQL 唯一事实源 + alembic）与物流查询接入：规划中（当前内存仓储 + 显式"未接入"）。
 

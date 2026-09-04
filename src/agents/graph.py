@@ -24,18 +24,19 @@ from .ports import AfterSalesGateway
 from .state import AgentState
 
 
-def build_workflow(gateway: AfterSalesGateway, checkpointer=None):
-    """构建并编译单 Agent 售后工作流。
+def build_workflow(gateway: AfterSalesGateway, checkpointer=None,
+                   evidence_node=None, mode: str = "single"):
+    """构建并编译售后工作流。
 
-    节点路径：
-    parse →(缺参)→ clarify ⇄ parse
-    parse →(无法识别/不支持动作)→ escalate
-    parse →(refund)→ gather_evidence → plan → create_ticket_draft
-    → request_approval(interrupt) → apply_decision(重读领域决定)
-      → execute_operation / settle_rejected / finish（幂等收尾）
-    escalate → END；execute/settle/escalate → END
+    - mode="single"（默认）：单 Agent 闭环；
+    - mode="supervisor"：evidence_node 为 Supervisor 并行子 Agent 编排节点时，
+      将 gather_evidence 替换为其等价物（其余节点/状态 Schema/interrupt 语义一致，
+      便于黄金集 A/B 对照）。架构约束：子 Agent 只读；写命令仍经领域服务+审批。
     """
     nodes = build_nodes(gateway)
+    if evidence_node is not None:
+        nodes["gather_evidence"] = evidence_node
+        mode = "supervisor"
     g = StateGraph(AgentState)
     for name, fn in nodes.items():
         g.add_node(name, fn)
