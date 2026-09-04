@@ -68,6 +68,35 @@ class AfterSalesService:
     def seed_policy(self, policy: PolicyRule) -> None:
         self._policies.append(policy)
 
+    # ---------- 可恢复持久化（原型）：导出/恢复领域状态（只读/恢复，不改变任何规则） ----------
+
+    def export_state(self) -> dict:
+        """导出领域状态，供快照存储与重启恢复（不影响运行；不含任何模型输出）。"""
+        return {
+            "schema_version": 1,
+            "seq": self._seq,
+            "orders": dict(self._orders),
+            "policies": list(self._policies),
+            "tickets": dict(self._tickets),
+            "operations": dict(self._operations),
+            "refunded": dict(self._refunded_by_order),
+            "audit": list(self._audit),
+            "idempotency": self._idempotency.export_records(),
+        }
+
+    def restore_state(self, state: dict) -> None:
+        """从导出状态恢复（仅用于持久化恢复路径；不改变权限/状态机/幂等语义）。"""
+        if int(state.get("schema_version", 0)) != 1:
+            raise ValueError(f"未知快照 schema_version：{state.get('schema_version')}")
+        self._orders = dict(state["orders"])
+        self._policies = list(state["policies"])
+        self._tickets = dict(state["tickets"])
+        self._operations = dict(state["operations"])
+        self._refunded_by_order = dict(state["refunded"])
+        self._audit = list(state["audit"])
+        self._seq = int(state["seq"])
+        self._idempotency.import_records(state["idempotency"])
+
     # ---------- 只读查询 ----------
 
     def get_ticket(self, ticket_id: str) -> AfterSalesTicket:

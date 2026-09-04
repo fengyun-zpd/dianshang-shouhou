@@ -106,6 +106,13 @@
 - 验收命令：`.venv\Scripts\python.exe -m pytest tests/ -v`；`.venv\Scripts\python.exe evals\replay.py`（11/11）；`git diff --check`。
 - 边界：未接真实 MuleSoft/MCP server（规划）；身份映射为内存配置。
 
+### 任务卡 I：可恢复持久化原型（SQLite，✅ 已完成）
+
+- 交付：`service.export_state/restore_state` 与 `idempotency.export/import_records`（只读/恢复增量，不改规则）；`src/persistence/{codec,store,session}.py`；`RecoverableSession`；演示 `scripts/demo_persistence.py`；`docs/PERSISTENCE.md`。
+- 测试：`tests/unit/persistence/test_snapshot.py`（6 项：roundtrip 保真+续跑 / 幂等恢复 / JSON 可序列化 / 损坏拒绝 fail-closed / checksum 篡改检测 / 跨库隔离）。全量 200 passed。
+- 验收命令：`.venv\Scripts\python.exe scripts\demo_persistence.py`；`.venv\Scripts\python.exe -m pytest tests/ -v`。
+- 限制：全量快照（非 WAL/事务型）；生产路线 PostgreSQL + alembic（规划，未实现）。
+
 ## 5. 修订记录
 
 - v0.1（本会话）—— 建立模块任务拆分、目录规划、所有权矩阵与任务卡 A/B/C。
@@ -114,3 +121,4 @@
 - v0.4（2026-09-04）—— 任务卡 F（阶段 5A 受控 LLM 运行时/能力矩阵/影子评测）完成：全量 171 passed；离线影子意图准确率 1.0，候选模型"未实测"（未配 Key、未联网）。
 - v0.5（2026-09-04）—— 任务卡 G（阶段 5B Supervisor 实验）完成：全量 182 passed；A/B 对照两模式均 11/11 → 默认维持单 Agent（ADR-002 回退条款），Supervisor 保留可选运行时。
 - v0.6（2026-09-04）—— 任务卡 H（阶段 6 Mule Agent Bridge）完成：全量 194 passed；桥接仅只读 + 发起请求（无审批/执行）。阶段 0–6 主线全部完成。
+- v0.7（2026-09-04）—— 任务卡 I（可恢复持久化原型 SQLite）完成：全量 200 passed；恢复保真/续跑/损坏拒绝测试 6 项 + 演示。

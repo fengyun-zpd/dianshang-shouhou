@@ -2,7 +2,7 @@
 
 > 归属：电商售后多智能体工单系统（OpsPilot After-Sales，目标远程 `fengyun-zpd/dianshang-shouhou`）
 > 性质：总负责人 Agent 的侦察与实施基线记录。本文档只陈述事实与判断，不把规划写成已实现；实时状态以此文件与测试输出为准。
-> 版本：v0.7（阶段 0–6 全部完成，2026-09-04）
+> 版本：v0.8（阶段 0–6 + 可恢复持久化原型完成，2026-09-04）
 
 ## 1. 工作区与目录角色
 
@@ -23,7 +23,7 @@
 
 ### ✅ 已实现（有代码 + 测试证据）
 
-| 项 | 证据（`.venv` 下 `python -m pytest tests/` → **194 passed**） |
+| 项 | 证据（`.venv` 下 `python -m pytest tests/` → **200 passed**） |
 | --- | --- |
 | 工程宪法 `AGENTS.md` v0.2；README 设计基线 + 实施进度节 | 文件存在 |
 | 退款最小闭环（确定性领域服务） | `src/domain/{models,idempotency,refund_service}.py` + `tests/test_refund_service.py`（14 项） |
@@ -37,6 +37,7 @@
 | **阶段 5A 受控 LLM 运行时** | `src/models/`（config 白名单/Key 校验、base 协议+内容守卫、schemas 结构化输出、prompts 版本化、offline 规则适配器、openai_compatible HTTP 适配、router 能力矩阵+降级链）；影子评测 `evals/run_model_shadow_eval.py`（offline 实测 意图准确率 1.0；candidate 未配 Key → 安全降级未联网标注"未实测"）；`docs/MODEL_EVALUATION.md`；测试 32 项 |
 | **阶段 5B Supervisor 多 Agent 实验** | `src/agents/subagents.py`（只读子 Agent 白名单：order/history/policy）、`supervisor.py`（SupervisorRunner，与单 Agent 同 API/状态/审批语义）、graph 支持 evidence 节点替换；对照实验 `evals/compare_agents.py` → 两模式均 11/11、outcome/退款 100% 一致 → 按 ADR-002 **默认维持单 Agent**、Supervisor 保留可选运行时；`docs/MULTI_AGENT_EXPERIMENT.md`；测试 11 项 |
 | **阶段 6 Mule Agent Bridge** | `src/bridge/`（models 身份/动作白名单/入出站 Schema + bridge 适配器：身份映射、租户注入、超时、审计、熔断 fail-closed、注入拒绝；白名单仅只读查询 + submit_after_sales_request，无审批/执行）；`docs/MULE_BRIDGE.md`；测试 12 项；MCP/A2A 协议包装为规划 |
+| **可恢复持久化原型（SQLite）** | service 新增 `export_state/restore_state`（不动规则）+ `idempotency.export/import_records`；`src/persistence/`（codec JSON 安全编解码、SQLite append-only journal + checksum、`RecoverableSession` load/persist）；恢复保真/幂等续跑/损坏 fail-closed/跨库隔离测试 6 项；演示 `scripts/demo_persistence.py`；`docs/PERSISTENCE.md` |
 | 依赖清单 | `requirements.txt`（langgraph==1.2.11 / pytest==9.1.1 / httpx==0.28.1 / pydantic==2.13.5，安装到 D 盘 `.venv`） |
 | 规划文档 | `docs/{STATUS_AND_RISKS,TASK_SPLIT,ARCHITECTURE,TESTING_BASELINE}.md` |
 
@@ -81,3 +82,4 @@
 - v0.5（2026-09-04）—— 阶段 5A（受控 LLM 运行时/能力矩阵/影子评测）完成：全量 171 passed；离线影子意图准确率 1.0；候选模型因未配置 Key 保持"未实测"（安全降级、未联网）；新增任务卡 F、docs/MODEL_EVALUATION.md。
 - v0.6（2026-09-04）—— 阶段 5B（Supervisor 只读子 Agent 实验）完成：全量 182 passed；A/B 对照两模式均 11/11 → 默认维持单 Agent（ADR-002 回退条款），Supervisor 保留可选运行时；新增任务卡 G、docs/MULTI_AGENT_EXPERIMENT.md。
 - v0.7（2026-09-04）—— 阶段 6（Mule Agent Bridge）完成：全量 194 passed；桥接层仅只读 + 发起请求（无审批/执行），身份/租户/Schema/超时/熔断/审计安全边界测试 12 项全过；新增任务卡 H、docs/MULE_BRIDGE.md。阶段 0–6 主线全部完成。
+- v0.8（2026-09-04）—— 可恢复持久化原型（SQLite）完成：全量 200 passed；service 导出/恢复 + append-only journal + 恢复会话（保真/续跑/损坏拒绝测试 6 项 + 演示）；新增任务卡 I、docs/PERSISTENCE.md。生产路线：PostgreSQL/alembic（规划）。

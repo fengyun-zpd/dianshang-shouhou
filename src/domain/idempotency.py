@@ -36,3 +36,13 @@ class IdempotencyStore:
 
     def register(self, key: str, payload_hash_: str, refund_id: str) -> None:
         self._records[key] = IdempotencyRecord(payload_hash=payload_hash_, refund_id=refund_id)
+
+    # ---------- 可恢复持久化（原型）支持 ----------
+
+    def export_records(self) -> dict[str, IdempotencyRecord]:
+        """导出全部幂等记录（供快照持久化；语义不受影响）。"""
+        return dict(self._records)
+
+    def import_records(self, records: dict[str, IdempotencyRecord]) -> None:
+        """从导出记录恢复（仅用于恢复路径；不改变查/注册语义）。"""
+        self._records = dict(records)
