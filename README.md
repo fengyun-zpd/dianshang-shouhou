@@ -202,14 +202,15 @@ RAG、控制台、微调、观测：均标记「规划中」，V1 不前置实�
 - **阶段 2 单 Agent 闭环** `src/agents/`（LangGraph 1.2.11）：状态 Schema、意图识别与缺参澄清（interrupt）、只读证据编排、草稿落库后人工审批 interrupt、恢复时重读领域事实源、拒绝零副作用、重复 resume / 重复请求幂等、`operation_unknown` 仅原操作编号查询与对账；33 项单测 + 演示脚本 `scripts/demo_interrupt_resume.py`；
 - **阶段 3 工具契约 + TenantContext + RAG**：`src/platform/tooling.py`（严格 JSON Schema 工具注册表 + 超时/审计/输出校验）、`src/rag/`（政策文档分块、关键词 + 可插拔向量混合检索、引用校验、提示注入双向防护）、`src/agents/toolkit.py` 只读工具集；35 项单测；
 - **阶段 4 可靠性与评测**：`src/platform/reliability.py`（重试/熔断/只读降级/接管标记）＋ 黄金集评测（`evals/golden/golden_v1.json` 11 条 + `evals/replay.py` → 11/11 通过，报告 `evals/reports/golden_v1_report.md`）；13 项单测；
+- **阶段 5A 受控 LLM 运行时** `src/models/`：可替换/可降级的 OpenAI-compatible 适配层（统一 Client 协议、结构化输出 Schema、能力矩阵——tool_calling/high_risk_draft 默认禁用、内容安全守卫、发送前 PII 脱敏与证据注入拒绝、Base URL 白名单）；影子评测 `evals/run_model_shadow_eval.py`（offline 实测意图准确率 1.0；candidate 需显式安全 Key，未配置即安全降级不联网并标注"未实测"）；32 项单测 + `docs/MODEL_EVALUATION.md`；
 - **平台层最小落地** `src/platform/`：PII 脱敏（手机/邮箱/身份证）与整行脱敏日志 formatter；8 项单测；
 - **测试工具链**：`scripts/run_tests.py` 分层回归、`tests/conftest.py`（固定种子 42）、pytest markers、`.github/workflows/ci.yml` 模板；
-- 回归：`.venv` 下 `python -m pytest tests/` → **139 passed**；`python scripts/run_tests.py` → `REGRESSION PASS`；黄金集 `.venv\Scripts\python.exe evals\replay.py` → 11/11。
+- 回归：`.venv` 下 `python -m pytest tests/` → **171 passed**；`python scripts/run_tests.py` → `REGRESSION PASS`；黄金集 `.venv\Scripts\python.exe evals\replay.py` → 11/11；影子 `.venv\Scripts\python.exe evals\run_model_shadow_eval.py --mode offline` → 意图准确率 1.0。
 
 ### 13.2 规划中（未实现，不写成已实现）
 
-- 阶段 5 多 Agent / 微调（Supervisor+子 Agent、CrewAI 可选、Graphiti/Neo4j、LoRA 对照）、阶段 6 Mule Agent Bridge（ADR-002~006 提议状态）；控制台 / 前端亦规划中。
-- MCP 跨服务协议、外部向量库（pgvector/Milvus）、真实 LLM 适配器：规划中（本阶段为本地基线 + 可插拔协议）。
+- 阶段 5 其余（多 Agent Supervisor 拆分、LoRA/QLoRA/DPO 微调对照——无对照数据禁止）与阶段 6 Mule Agent Bridge（ADR-002~006 提议状态）；控制台 / 前端亦规划中。
+- 真实模型候选接入（需安全 Key 与白名单 Base URL 后实测回填指标）；MCP 跨服务协议、外部向量库（pgvector/Milvus）。
 - 数据库持久化（PostgreSQL 唯一事实源 + alembic）与物流查询接入：规划中（当前内存仓储 + 显式"未接入"）。
 
 ### 13.3 本地仓库与环境约定

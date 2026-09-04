@@ -1,3 +1,5 @@
 # 运行依赖（安装到 D 盘项目虚拟环境 .venv，见 docs/STATUS_AND_RISKS.md 安装约定）
 langgraph==1.2.11
 pytest==9.1.1
+httpx==0.28.1
+pydantic==2.13.5

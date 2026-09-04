@@ -84,8 +84,16 @@
 - 验收命令：`.venv\Scripts\python.exe evals\replay.py` → 11/11 通过；报告写入 evals/reports/。
 - 评测结果（2026-09-04，golden-v1）：任务完成率 1.0、意图准确率 1.0、引用正确率 1.0、注入拦截通过、安全不变量 0。
 
+### 任务卡 F：受控 LLM 运行时 + 能力矩阵 + 影子评测（阶段 5A，✅ 已完成）
+
+- 交付：`src/models/`（config/base/schemas/prompts/offline/openai_compatible/router + `__init__`）；能力矩阵六项（tool_calling/high_risk_draft 高风险默认禁用）；`ModelGateway` 降级链（主模型失败 → 离线规则，degraded=True）；内容安全守卫（金额/审批/状态/执行指令拒绝）；发送前 PII 脱敏 + 证据块注入拒绝发送；影子入口 `evals/run_model_shadow_eval.py --mode offline|candidate`；报告 `evals/reports/shadow_eval_<mode>.md`；`docs/MODEL_EVALUATION.md`。
+- 测试：`tests/unit/models/`（config 6 / offline 5 / openai_compatible 14 / router 5 / shadow_script 3 = 32 项）。
+- 验收命令：`.venv\Scripts\python.exe -m pytest tests/ -v`（171 passed）；`.venv\Scripts\python.exe evals\replay.py`（11/11）；`.venv\Scripts\python.exe evals\run_model_shadow_eval.py --mode offline`（意图准确率 1.0）；`--mode candidate` 未配置 Key → 安全降级、标注"未实测"、未联网。
+- 诚实边界：真实模型候选未实测（本环境无 Key）；微调/LoRA/DPO 需对照数据后另行门禁。
+
 ## 5. 修订记录
 
 - v0.1（本会话）—— 建立模块任务拆分、目录规划、所有权矩阵与任务卡 A/B/C。
 - v0.2（2026-09-04）—— 任务卡 A/C 完成（阶段 0/1）；任务卡 B（阶段 2）完成：LangGraph 1.2.11 单 Agent 工作流，全量 95 passed。
 - v0.3（2026-09-04）—— 任务卡 D（阶段 3 工具契约 + TenantContext + RAG）与任务卡 E（阶段 4 可靠性与评测）完成：全量 139 passed；黄金集 11/11。
+- v0.4（2026-09-04）—— 任务卡 F（阶段 5A 受控 LLM 运行时/能力矩阵/影子评测）完成：全量 171 passed；离线影子意图准确率 1.0，候选模型"未实测"（未配 Key、未联网）。
