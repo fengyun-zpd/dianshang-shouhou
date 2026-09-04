@@ -172,6 +172,16 @@ class AfterSalesService:
             if t.tenant_id == tenant_id and t.customer_id == customer_id
         ]
 
+    def entity_tenant(self, entity_type: str, entity_id: str) -> Optional[str]:
+        """审计/查询用：返回实体所属租户（不存在返回 None）。"""
+        if entity_type == "ticket":
+            t = self._tickets.get(entity_id)
+            return t.tenant_id if t else None
+        if entity_type == "operation":
+            op = self._operations.get(entity_id)
+            return op.tenant_id if op else None
+        return None
+
     # ---------- 确定性退款计划（金额由领域规则计算，Agent 只搬运） ----------
 
     def compute_refund_plan(
@@ -215,21 +225,6 @@ class AfterSalesService:
         # 订单核验：存在 / 租户归属 / 状态可售后
         order = self._require_eligible_order(cmd.tenant_id, cmd.order_id)
 
-        # 政策证据：无适用政策 → 证据不足转人工；冲突政策 → 转人工
-        matched = match_policies(
-            self._policies, cmd.tenant_id, cmd.request_type, cmd.reason_tags, order.days_since_sign,
-        )
-        if not matched:
-            raise AfterSalesError(
-                AfterSalesErrorCode.POLICY_NOT_FOUND,
-                f"无适用政策（tenant={cmd.tenant_id}, tags={cmd.reason_tags}），证据不足，建议转人工",
-            )
-        if detect_conflict(matched) is not None:
-            raise AfterSalesError(
-                AfterSalesErrorCode.POLICY_CONFLICT,
-                f"多条适用政策退款比例不一致（{len(matched)} 条），冲突需转人工",
-            )
-
         # 原子幂等（任务卡 J）：per-key 锁内 check-then-act；
         # 同键同载荷返回原工单；同键异载荷拒绝；失败释放占位（<pending>）
         with self._idempotency.lock_for(cmd.idempotency_key):
@@ -249,6 +244,21 @@ class AfterSalesService:
                 raise AfterSalesError(AfterSalesErrorCode.IDEMPOTENCY_CONFLICT, "同键异载荷：工单创建被拒绝")
 
             try:
+                # 政策证据（锁内、幂等命中之后）：无适用政策 → 证据不足转人工；冲突 → 转人工
+                matched = match_policies(
+                    self._policies, cmd.tenant_id, cmd.request_type,
+                    cmd.reason_tags, order.days_since_sign,
+                )
+                if not matched:
+                    raise AfterSalesError(
+                        AfterSalesErrorCode.POLICY_NOT_FOUND,
+                        f"无适用政策（tenant={cmd.tenant_id}, tags={cmd.reason_tags}），证据不足，建议转人工",
+                    )
+                if detect_conflict(matched) is not None:
+                    raise AfterSalesError(
+                        AfterSalesErrorCode.POLICY_CONFLICT,
+                        f"多条适用政策退款比例不一致（{len(matched)} 条），冲突需转人工",
+                    )
                 self._seq += 1
                 ticket = AfterSalesTicket(
                     ticket_id=f"TKT-{self._seq:05d}",
