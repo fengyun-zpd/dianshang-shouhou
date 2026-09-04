@@ -98,6 +98,14 @@
 - 实验结论（ADR-002）：两模式黄金集均 11/11、outcome 与退款 100% 一致 → **默认路径维持单 Agent**；Supervisor 保留为可选实验运行时（并行只读证据、子 Agent 模块化、未来多模型挂载点）。
 - 验收命令：`.venv\Scripts\python.exe -m pytest tests/ -v`（182 passed）；`.venv\Scripts\python.exe evals\compare_agents.py`；`.venv\Scripts\python.exe evals\replay.py`（11/11）；`git diff --check`。
 
+### 任务卡 H：Mule Agent Bridge（阶段 6，✅ 已完成）
+
+- 交付：`src/bridge/models.py`（BridgeIdentity/IdentityRegistry、BridgeAction 白名单、入/出站 Schema、BridgeLogEntry、FORBIDDEN_ACTIONS）+ `src/bridge/bridge.py`（`MuleAgentBridge.invoke`：身份→白名单→租户注入→Schema→熔断→执行→出站校验→审计；超时 3s；注入拒绝）；`docs/MULE_BRIDGE.md`。
+- 安全边界：白名单仅只读查询 + `submit_after_sales_request`（客服入口语义，AGENT 草稿 + 人工审批）；approve/reject/execute/close_ticket/change_address/high_risk_draft/refund_now 在协议中**不存在**（测试断言不可达）；跨租户注入拒绝；审计无 PII/请求体。
+- 测试：`tests/unit/bridge/test_bridge.py`（12 项）。全量 194 passed。
+- 验收命令：`.venv\Scripts\python.exe -m pytest tests/ -v`；`.venv\Scripts\python.exe evals\replay.py`（11/11）；`git diff --check`。
+- 边界：未接真实 MuleSoft/MCP server（规划）；身份映射为内存配置。
+
 ## 5. 修订记录
 
 - v0.1（本会话）—— 建立模块任务拆分、目录规划、所有权矩阵与任务卡 A/B/C。
@@ -105,3 +113,4 @@
 - v0.3（2026-09-04）—— 任务卡 D（阶段 3 工具契约 + TenantContext + RAG）与任务卡 E（阶段 4 可靠性与评测）完成：全量 139 passed；黄金集 11/11。
 - v0.4（2026-09-04）—— 任务卡 F（阶段 5A 受控 LLM 运行时/能力矩阵/影子评测）完成：全量 171 passed；离线影子意图准确率 1.0，候选模型"未实测"（未配 Key、未联网）。
 - v0.5（2026-09-04）—— 任务卡 G（阶段 5B Supervisor 实验）完成：全量 182 passed；A/B 对照两模式均 11/11 → 默认维持单 Agent（ADR-002 回退条款），Supervisor 保留可选运行时。
+- v0.6（2026-09-04）—— 任务卡 H（阶段 6 Mule Agent Bridge）完成：全量 194 passed；桥接仅只读 + 发起请求（无审批/执行）。阶段 0–6 主线全部完成。
