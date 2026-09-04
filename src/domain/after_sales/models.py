@@ -145,6 +145,18 @@ class Order:
         self.paid_amount = parse_money(self.paid_amount)
 
 
+@dataclass(frozen=True)
+class RefundPlan:
+    """确定性退款计划（Agent 仅搬运此结果用于展示/草稿参数，不得自行决定金额）。
+
+    amount = 实付 × 适用政策 refund_ratio（分精度）；由领域服务 compute_refund_plan 产出。
+    """
+    amount: Decimal
+    refund_ratio: Decimal
+    policy_id: str
+    order_id: str
+
+
 @dataclass
 class AfterSalesTicket:
     """售后工单实体：承载工单生命周期状态与诉求证据。"""

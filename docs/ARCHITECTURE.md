@@ -21,15 +21,15 @@
 ## 2. 分层架构（目标）
 
 ```text
-接入层    FastAPI + 审批/审计界面            （规划，阶段 2+）
-编排层    LangGraph 状态机（interrupt/resume）（规划，任务卡 B）
-决策层    Agent：意图/澄清/检索/草稿/话术      （规划）
-领域层    确定性服务：权限/金额/状态/幂等/审计  （阶段 1：src/domain/after_sales）
-数据层    PostgreSQL 唯一事实源（先内存/SQLite 可插拔，阶段 1 用内存仓储）
+接入层    FastAPI + 审批/审计界面            （规划，阶段 3+）
+编排层    LangGraph 状态机（interrupt/resume）（✅ 阶段 2：src/agents）
+决策层    Agent：意图/澄清/检索/草稿/话术      （✅ 规则化 V1；LLM 适配接口规划中）
+领域层    确定性服务：权限/金额/状态/幂等/审计  （✅ 阶段 1：src/domain/after_sales）
+数据层    PostgreSQL 唯一事实源（先内存/SQLite 可插拔，当前内存仓储）
 横切     日志脱敏 · 评测黄金集 · 安全不变量
 ```
 
-当前已实现仅到"领域层最小闭环"：`src/domain/refund_service.py`（退款草稿→提交→审批→执行 + 审计），14 项测试通过。上图中编排层以上均未实现。
+当前已实现：领域层售后插件（阶段 1）＋ 编排层 LangGraph 单 Agent 工作流（阶段 2，33 项测试），全量 95 项通过；checkpoint 仅存流程状态，业务事实一律重读领域服务。接入层/LLM 决策层/数据持久化仍未实现（规划中）。
 
 ## 3. 本地目录职责（现状与目标）
 
@@ -37,16 +37,18 @@
 
 ## 4. 启动方式
 
-阶段 0/1（当前）：
+阶段 0/1/2（当前；依赖装在 D 盘 `.venv`）：
 
 ```powershell
 cd D:\workplace\PyCharmMiscProject\私域
-python -m pytest tests/ -v            # 全量回归（现有 14 项 + 新增）
-python -m pytest tests/unit/domain/after_sales -v   # 售后插件（任务卡 A）
-python scripts/run_tests.py           # 分层回归脚本（任务卡 C 交付后）
+.venv\Scripts\python.exe -m pytest tests/ -v                 # 全量回归（95 项）
+.venv\Scripts\python.exe -m pytest tests/unit/agents -v     # 单 Agent 工作流（任务卡 B，33 项）
+.venv\Scripts\python.exe -m pytest tests/unit/domain/after_sales -v   # 售后插件（任务卡 A）
+.venv\Scripts\python.exe scripts\run_tests.py                # 分层回归脚本
+.venv\Scripts\python.exe scripts\demo_interrupt_resume.py    # interrupt/resume 演示
 ```
 
-无第三方依赖（仅标准库 + pytest）。数据库层当前为内存仓储（`RefundService` 内嵌），生产替换为 PostgreSQL（规划，阶段 2+ 引入 FastAPI/pgvector 时落地）。
+依赖：`langgraph==1.2.11` + `pytest==9.1.1`（`requirements.txt`；PyPI 走清华镜像）。数据库层当前为内存仓储，生产替换为 PostgreSQL（规划，阶段 3+ 引入 FastAPI/pgvector 时落地）。
 
 ## 5. 第一版验收清单（阶段 0 + 阶段 1）
 

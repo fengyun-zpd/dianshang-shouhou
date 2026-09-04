@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import Optional
+from typing import Optional, Tuple
 
 from ..idempotency import IdempotencyStore, payload_hash
 from .models import (
@@ -35,6 +35,7 @@ from .models import (
     OrderStatus,
     ReconcileCommand,
     RejectCommand,
+    RefundPlan,
     RequestType,
     Role,
     SubmitCommand,
@@ -89,6 +90,49 @@ class AfterSalesService:
 
     def audit_log(self) -> list[AuditEvent]:
         return list(self._audit)
+
+    def get_order_by_id(self, tenant_id: str, order_id: str) -> Order:
+        """只读订单查询（阶段 2 Agent 证据编排用）：租户归属校验，不暴露跨租户订单。"""
+        order = self._orders.get(order_id)
+        if order is None:
+            raise AfterSalesError(AfterSalesErrorCode.ORDER_NOT_FOUND, f"订单 {order_id} 不存在")
+        if order.tenant_id != tenant_id:
+            raise AfterSalesError(AfterSalesErrorCode.TENANT_MISMATCH, f"订单 {order_id} 不属于租户 {tenant_id}")
+        return order
+
+    def list_customer_tickets(self, tenant_id: str, customer_id: str) -> list[AfterSalesTicket]:
+        """只读历史工单查询（证据/审计追溯用）：仅返回同租户下该客户的工单。"""
+        return [
+            t for t in self._tickets.values()
+            if t.tenant_id == tenant_id and t.customer_id == customer_id
+        ]
+
+    # ---------- 确定性退款计划（金额由领域规则计算，Agent 只搬运） ----------
+
+    def compute_refund_plan(
+        self,
+        tenant_id: str,
+        order_id: str,
+        request_type: RequestType,
+        reason_tags: Tuple[str, ...],
+    ) -> RefundPlan:
+        """确定性退款金额计算。
+
+        适用政策单一且无冲突 → amount = 实付 × refund_ratio（分精度）；
+        无适用政策 → POLICY_NOT_FOUND；冲突政策 → POLICY_CONFLICT（均转人工）。
+        本方法只读、不落库；create_refund 仍会做金额/幂等/权限校验兜底。
+        """
+        order = self._require_eligible_order(tenant_id, order_id)
+        matched = match_policies(self._policies, tenant_id, request_type, reason_tags, order.days_since_sign)
+        if not matched:
+            raise AfterSalesError(AfterSalesErrorCode.POLICY_NOT_FOUND, "无适用政策，证据不足，建议转人工")
+        if detect_conflict(matched) is not None:
+            raise AfterSalesError(AfterSalesErrorCode.POLICY_CONFLICT, "适用政策冲突，需转人工")
+        ratio = matched[0].refund_ratio
+        amount = (order.paid_amount * ratio).quantize(Decimal("0.01"))
+        return RefundPlan(
+            amount=amount, refund_ratio=ratio, policy_id=matched[0].policy_id, order_id=order.order_id,
+        )
 
     # ---------- 工单生命周期 ----------
 

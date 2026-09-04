@@ -2,7 +2,7 @@
 
 > 归属：电商售后多智能体工单系统（OpsPilot After-Sales，目标远程 `fengyun-zpd/dianshang-shouhou`）
 > 性质：总负责人 Agent 的侦察与实施基线记录。本文档只陈述事实与判断，不把规划写成已实现；实时状态以此文件与测试输出为准。
-> 版本：v0.2（阶段 0 完成 / 阶段 1 完成，2026-09-04）
+> 版本：v0.3（阶段 0/1/2 完成，2026-09-04）
 
 ## 1. 工作区与目录角色
 
@@ -14,22 +14,25 @@
 
 ## 2. 运行环境与仓库（实测）
 
-- Python 3.12.10 / pip 25.0.1 / pytest 9.1.1 / git 2.55.0；Node/Docker 可用。
-- GitHub 直连失败；用户全局配置 `url.https://ghfast.top/https://github.com/.insteadof https://github.com/`（代理镜像）。`git remote -v` 显示 origin 已带 ghfast.top 前缀。远程仓库本机未验证内容（设计文档记载其"待初始化"）。
-- 本地 git：`main` 分支，基线提交 `5877ce9`（决策项 D1 已执行，未推送）。
+- Python 3.12.10（C 盘，仅解释器）＋ **D 盘虚拟环境 `.venv`**：`D:\workplace\PyCharmMiscProject\私域\.venv\Scripts\python.exe`（项目依赖一律装此，含 langgraph 1.2.11 / pytest 9.1.1）。
+- **安装约定（用户直接指令）**：此后任何程序/依赖一律安装到 D 盘并汇报全部路径与最显眼文件。已执行：C 盘全局 langgraph 系列已卸载清理（site-packages 无残留），依赖迁至 D 盘 `.venv`；pip 缓存仍在 C 盘 `c:\users\zao'pei'de\appdata\local\pip\cache`（未迁移，如需可清）。
+- GitHub 直连失败；用户全局配置 ghfast.top 代理镜像（`url.https://ghfast.top/https://github.com/.insteadof https://github.com/`）；PyPI 直连超时，安装使用清华镜像 `-i https://pypi.tuna.tsinghua.edu.cn/simple`。
+- 本地 git：`main` 分支；基线提交 `5877ce9`，阶段 0/1 提交 `aee6fbb`（未推送，D4 未决）。
 
 ## 3. 状态矩阵（已实现 / 实验中 / 规划中）
 
 ### ✅ 已实现（有代码 + 测试证据）
 
-| 项 | 证据（`python -m pytest tests/` → **53 passed**） |
+| 项 | 证据（`.venv` 下 `python -m pytest tests/` → **95 passed**） |
 | --- | --- |
 | 工程宪法 `AGENTS.md` v0.2；README 设计基线 + 实施进度节 | 文件存在 |
 | 退款最小闭环（确定性领域服务） | `src/domain/{models,idempotency,refund_service}.py` + `tests/test_refund_service.py`（14 项） |
-| 售后领域插件（阶段 1） | `src/domain/after_sales/`：实体/状态机/错误码（models.py）、政策规则与冲突检测（policies.py）、确定性服务（service.py：订单核验、资格、退款上限、工单/操作状态机、幂等、operation_unknown 对账、审计）；测试 31 项覆盖正常/部分退款/关单守卫/缺参/订单核验/政策冲突/窗口/金额/权限矩阵/幂等/非法迁移/unknown 恢复 |
-| 平台层最小落地 | `src/platform/redact.py`（手机/邮箱/身份证脱敏）、`logging_config.py`（整行脱敏 formatter）；测试 8 项 |
-| 测试工具链 | `scripts/run_tests.py`（分层回归，`REGRESSION PASS`）、`tests/conftest.py`（固定种子 42）、pytest.ini（markers + `-p no:cacheprovider`）、`docs/TESTING_BASELINE.md` |
+| 售后领域插件（阶段 1） | `src/domain/after_sales/`：实体/状态机/错误码、政策规则与冲突检测、确定性服务；测试覆盖正常/部分退款/关单守卫/缺参/订单核验/政策冲突/窗口/金额/权限矩阵/幂等/非法迁移/unknown 恢复；阶段 2 追加只读查询与确定性退款计划（`get_order_by_id` / `list_customer_tickets` / `compute_refund_plan`），共 40 项 |
+| 平台层最小落地 | `src/platform/redact.py`（PII 脱敏）、`logging_config.py`（整行脱敏 formatter）；测试 8 项 |
+| **阶段 2 单 Agent 闭环（LangGraph 1.2.11）** | `src/agents/`：状态 Schema（13 必含字段）、规则化意图识别、受控网关（写角色固定）、StateGraph 节点与条件路由、审批 interrupt/resume（草稿落库后挂起、恢复重读领域事实源）、高层运行器；测试 33 项（Schema/路由/澄清/转人工/审批拒绝/伪造审批/非法恢复/重复 resume 幂等/unknown/审计边界/金额注入防护）；演示脚本 `scripts/demo_interrupt_resume.py` 三条路径真实执行 |
+| 测试工具链 | `scripts/run_tests.py`（分层回归，`REGRESSION PASS`）、`tests/conftest.py`（固定种子 42）、pytest.ini、`docs/TESTING_BASELINE.md` |
 | CI 模板 | `.github/workflows/ci.yml`（云端激活后验证，属"已提交未在云端运行"） |
+| 依赖清单 | `requirements.txt`（langgraph==1.2.11 / pytest==9.1.1，安装到 D 盘 `.venv`） |
 | 规划文档 | `docs/{STATUS_AND_RISKS,TASK_SPLIT,ARCHITECTURE,TESTING_BASELINE}.md` |
 
 ### 🧪 实验中
@@ -40,7 +43,6 @@
 
 | 模块 | 内容 | 依据 |
 | --- | --- | --- |
-| 阶段 2 单 Agent 闭环 | LangGraph 意图→澄清→只读检索→草稿→审批中断→恢复→审计；任务卡 B（待 D3 确认启动） | `仓储/docs/02_agents`、ADR-002 |
 | 阶段 3 工具与 RAG | JSON Schema 工具、TenantContext、注入防护、检索引用 | `仓储/docs/03_tools`、ADR-003 |
 | 阶段 4 可靠性与评测 | 黄金集回放、P50/P95、Token/成本、安全不变量报告 | `仓储/docs/06_reliability`、`08_evaluation`、ADR-006 |
 | 阶段 5 多 Agent/微调 | Supervisor+子 Agent、CrewAI 可选、Graphiti/Neo4j、LoRA 对照 | ADR-002/004/005 |
@@ -58,16 +60,18 @@
 | R5 | 退款最小闭环与售后插件并存 | 中 | 独立目录互不修改；合并与否待用户 |
 | R6 | 无 CI | 低 | ✅ 模板已建；云端运行待仓库推送后验证 |
 | R7 | 合成数据被误读为真实收益 | 宪法 | 统一声明固定种子合成数据 |
-| R8 | 子代理执行卡滞（无产出） | 中 | ✅ 已处理：中断两个卡滞子代理，由总负责人接管完成交付（本轮记录） |
+| R8 | 子代理执行卡滞（无产出） | 中 | ✅ 已处理：中断两个卡滞子代理，由总负责人接管完成交付（阶段 0/1 记录） |
+| R9 | 当前无 LLM 运行时，意图识别为规则实现 | 中 | 接口化：`src/agents/intent.py` 纯函数可替换为 LLM 适配器（阶段 3+ 前不引入） |
 
 ## 5. 决策项状态
 
 - **D1** ✅ 已执行：`git init -b main` + remote origin（ghfast.top 代理前缀）+ 本地提交 `5877ce9`。
 - **D2** ✅ 已批准：README 追加"实施进度"节（历史基线保留）。
-- **D3** ⏳ 未决：任务卡 B（单 Agent 闭环）启动时机。
+- **D3** ✅ 已执行：用户于阶段 1 完成后直接下达任务卡 B（阶段 2）指令，单 Agent 闭环已实现（LangGraph 1.2.11，33 项测试）。
 - **D4** ⏳ 未决：推送/远程同步方式（本地开发 + 文档化提交，由用户推送 / 或修复网络后由本 Agent 推送）。
 
 ## 6. 修订记录
 
 - v0.1（2026-09-04）—— 首次侦察：工作区、Git、环境、基线测试 14/14；目录角色与状态矩阵；风险与决策清单。
 - v0.2（2026-09-04）—— 阶段 0/1 完成：售后领域插件 + 平台脱敏日志 + 测试工具链落地，全量 53 passed；D1 执行、D2 批准；新增 R8 与验收证据。
+- v0.3（2026-09-04）—— 阶段 2 完成：LangGraph 1.2.11 单 Agent 工作流（src/agents + 33 项测试 + 演示脚本），全量 95 passed；依赖迁至 D 盘 `.venv` 并记录安装约定；D3 执行；新增 R9。

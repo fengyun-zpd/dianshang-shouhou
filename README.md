@@ -198,16 +198,18 @@ RAG、控制台、微调、观测：均标记「规划中」，V1 不前置实�
 ### 13.1 已实现（有代码 + 测试证据）
 
 - 退款最小闭环（确定性领域服务）`src/domain/`，14 项单测；
-- **售后领域插件（阶段 1）** `src/domain/after_sales/`：订单核验、售后资格（结构化政策规则）、退款上限、工单/操作状态机、幂等命令、`operation_unknown` 对账收口、审计；31 项单测；
+- **售后领域插件（阶段 1）** `src/domain/after_sales/`：订单核验、售后资格（结构化政策规则）、退款上限、工单/操作状态机、幂等命令、`operation_unknown` 对账收口、审计；并追加只读查询与确定性退款计划（`compute_refund_plan`，金额唯一来源）；40 项单测；
+- **阶段 2 单 Agent 闭环** `src/agents/`（LangGraph 1.2.11）：状态 Schema、意图识别与缺参澄清（interrupt）、只读证据编排、草稿落库后人工审批 interrupt、恢复时重读领域事实源、拒绝零副作用、重复 resume / 重复请求幂等、`operation_unknown` 仅原操作编号查询与对账；33 项单测 + 演示脚本 `scripts/demo_interrupt_resume.py`；
 - **平台层最小落地** `src/platform/`：PII 脱敏（手机/邮箱/身份证）与整行脱敏日志 formatter；8 项单测；
 - **测试工具链**：`scripts/run_tests.py` 分层回归、`tests/conftest.py`（固定种子 42）、pytest markers、`.github/workflows/ci.yml` 模板；
-- 回归：`python -m pytest tests/` → **53 passed**；`python scripts/run_tests.py` → `REGRESSION PASS`。
+- 回归：`.venv` 下 `python -m pytest tests/` → **95 passed**（14 + 40 + 33 + 8）；`python scripts/run_tests.py` → `REGRESSION PASS`。
 
 ### 13.2 规划中（未实现，不写成已实现）
 
-- 阶段 2 单 Agent 闭环（LangGraph）：任务卡 B，待 `docs/STATUS_AND_RISKS.md` 决策项 D3 确认后启动；
-- RAG / 评测黄金集 / 控制台 / 多 Agent / 微调 / Mule Agent Bridge：均规划中（ADR-002~006 提议状态）。
+- 阶段 3 工具契约与 RAG、阶段 4 可靠性与评测（黄金集）、阶段 5 多 Agent / 微调、阶段 6 Mule Agent Bridge：均规划中（ADR-002~006 提议状态）；控制台 / 前端亦规划中。
+- 数据库持久化（PostgreSQL 唯一事实源 + alembic）与物流查询接入：规划中（当前内存仓储 + 显式"未接入"）。
 
-### 13.3 本地仓库
+### 13.3 本地仓库与环境约定
 
-- `git init -b main` + remote `origin`（`dianshang-shouhou`，经 ghfast.top 代理前缀）；基线提交 `5877ce9`；**尚未推送**（决策项 D1/D4）。
+- `git init -b main` + remote `origin`（`dianshang-shouhou`，经 ghfast.top 代理前缀）；基线提交 `5877ce9`、阶段 0/1 `aee6fbb`；**尚未推送**（决策项 D1/D4）。
+- **运行方式（D 盘依赖约定）**：解释器 `.venv\Scripts\python.exe`（依赖 langgraph==1.2.11 / pytest==9.1.1，见 `requirements.txt`；PyPI 走清华镜像）。安装任何程序一律到 D 盘，路径与最显眼文件以 `docs/STATUS_AND_RISKS.md` §2 为准。

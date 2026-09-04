@@ -52,31 +52,25 @@
 
 ## 4. 优先任务卡
 
-### 任务卡 A：售后领域插件（阶段 1，执行中）
+### 任务卡 A：售后领域插件（阶段 1，✅ 已完成）
 
-- 负责 Agent：A（领域插件工程师）
-- 负责目录：`src/domain/after_sales/` 与 `tests/unit/domain/after_sales/`（新建）
-- **禁改文件**：`README.md`、`AGENTS.md`、`pytest.ini`、`docs/`（只读引用）、`src/domain/{models,idempotency,refund_service}.py`、`tests/test_refund_service.py`、`tests/conftest.py`、`scripts/`、`仓储/**`
-- 交付：售后核心实体最小建模；确定性服务（订单核验、售后资格、退款上限含累计部分退款、工单/操作状态机、幂等命令、审计）；政策 V1 用结构化规则（非 RAG）；测试覆盖正常/缺参/冲突政策/越权/重复请求（同键同载荷/异载荷）/非法状态迁移/未知操作只查原键
-- 验收命令：`python -m pytest tests/unit/domain/after_sales -v` 全绿，且 `python -m pytest tests/ -v` 原有 14 项仍全绿
-- 依赖：无第三方新依赖（仅标准库 + pytest）；金额用 Decimal 禁 float
+- 状态：阶段 0/1 已交付（提交 `aee6fbb`）；阶段 2 追加只读查询与确定性退款计划（`get_order_by_id` / `list_customer_tickets` / `compute_refund_plan` + `RefundPlan`），`tests/unit/domain/after_sales` 共 **40 项全绿**。
+- 验收命令：`.venv\Scripts\python.exe -m pytest tests/unit/domain/after_sales -v` 全绿，且全量回归通过。
 
-### 任务卡 B：单 Agent 闭环（阶段 2，暂缓启动）
+### 任务卡 B：单 Agent 闭环（阶段 2，✅ 已完成）
 
-- 负责 Agent：B（编排工程师）—— 阶段 1 验收通过、决策项 D3 确认后启动
-- 负责目录：`src/agents/`（规划）+ `tests/unit/agents/`
-- 交付：LangGraph 或等价状态机单 Agent：意图识别 → 澄清 → 只读工具检索 → 动作草稿 → 审批 interrupt → 恢复 → 审计；checkpoint 仅存流程状态
-- 验收命令（规划）：对应单测 + 一条端到端冒烟；随后接黄金集
+- 状态：已交付（用户 D3 指令启动）。LangGraph **1.2.11**（D 盘 `.venv`）。
+- 负责目录：`src/agents/`（state / intent / ports / nodes / graph / runner）+ `tests/unit/agents/`（33 项全绿）。
+- 交付：状态 Schema（13 必含字段）；规则化意图识别与缺参澄清（interrupt）；只读证据编排（订单/历史工单/物流未接入显式标注）；确定性退款计划（Agent 不决定金额）；草稿落库后审批 interrupt（approval_id 与 operation_id 独立）；恢复时重读领域事实源；拒绝零副作用；重复 resume / 重复请求幂等；operation_unknown 仅原 operation_id 查询与对账；审计事件 id 收集；伪造审批与非法恢复被拒。
+- 验收命令：`.venv\Scripts\python.exe -m pytest tests/unit/agents -v`（33 通过）；`.venv\Scripts\python.exe -m pytest tests/ -v`（95 通过）；演示：`.venv\Scripts\python.exe scripts\demo_interrupt_resume.py`。
+- 后续接黄金集（阶段 4）。
 
-### 任务卡 C：测试基线工具链（阶段 0 尾部 / 横向，执行中）
+### 任务卡 C：测试基线工具链（阶段 0 尾部 / 横向，✅ 已完成）
 
-- 负责 Agent：C（测试基线工程师）
-- 负责目录：`scripts/`、`docs/TESTING_BASELINE.md`、`tests/conftest.py`、`pytest.ini`（扩展 markers，保留现有内容）
-- **禁改文件**：`README.md`、`AGENTS.md`、`src/**`（含 domain 现有与新插件）、`tests/test_refund_service.py`、`tests/unit/**`、`docs/{STATUS_AND_RISKS,TASK_SPLIT,ARCHITECTURE}.md`、`仓储/**`
-- 交付：分层回归脚本（默认 `-p no:cacheprovider`，规避中文路径 cache 失败）；回归报告模板（模型/Prompt/数据/代码版本、通过/失败、安全不变量）；固定随机种子与合成数据辅助（conftest 最小化）；pytest markers（unit/integration/e2e/property/security）
-- 验收命令：`python scripts/run_tests.py` 返回 0 且 14 项原有测试通过；`python -m pytest tests/ -v` 正常收集
-- 依赖：无第三方新依赖
+- 状态：已交付（`scripts/run_tests.py`、`docs/TESTING_BASELINE.md`、`tests/conftest.py`、pytest.ini markers）。
+- 验收命令：`.venv\Scripts\python.exe scripts\run_tests.py` → `REGRESSION PASS`。
 
 ## 5. 修订记录
 
 - v0.1（本会话）—— 建立模块任务拆分、目录规划、所有权矩阵与任务卡 A/B/C。
+- v0.2（2026-09-04）—— 任务卡 A/C 完成（阶段 0/1）；任务卡 B（阶段 2）完成：LangGraph 1.2.11 单 Agent 工作流，全量 95 passed。
