@@ -47,6 +47,6 @@ MCP（Model Context Protocol）作为跨服务/跨 Agent 网络协议属**规划
 - 测试：`tests/unit/bridge/test_bridge.py`（12 项）：身份拒绝/越权拒绝/高危动作不可达/
   未知动作/跨租户注入拒绝/租户一致容忍/Schema/正常查询/政策注入拒绝/发起请求到审批
   （零执行、零退款）/熔断 fail-closed/审计无 PII 与请求体。
-- 全量回归：`.venv\Scripts\python.exe -m pytest tests/` → 209 passed（含安全修复回归）。
+- 全量回归：`.venv\Scripts\python.exe -m pytest tests/` → 248 passed（2026-09-04 K2 收敛后实测）。
 - 未接入真实 MuleSoft / 网络端点（无凭据、不连外部）；身份映射为内存配置（生产可换 DB/配置）。
 - 修订：v1.1（2026-09-04）补充角色矩阵与未知结果对账语义。

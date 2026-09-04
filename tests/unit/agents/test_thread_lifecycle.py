@@ -27,7 +27,7 @@ def test_finished_thread_rejects_different_request():
 
     with pytest.raises(ThreadConflictError):
         runner.start("T1", "订单 ORD-1 少件，要求退款", thread_id="t-j1")
-    assert svc.refunded_amount("ORD-1") == Decimal("0.00") or True
+    assert svc.refunded_amount("ORD-1") == Decimal("100.00")  # 拒绝未改变已执行退款
 
 
 def test_pending_thread_rejects_different_request_before_mixing():

@@ -201,14 +201,14 @@ RAG、控制台、微调、观测：均标记「规划中」，V1 不前置实�
 - **售后领域插件（阶段 1）** `src/domain/after_sales/`：订单核验、售后资格（结构化政策规则）、退款上限、工单/操作状态机、幂等命令、`operation_unknown` 对账收口、审计；并追加只读查询与确定性退款计划（`compute_refund_plan`，金额唯一来源）；40 项单测；
 - **阶段 2 单 Agent 闭环** `src/agents/`（LangGraph 1.2.11）：状态 Schema、意图识别与缺参澄清（interrupt）、只读证据编排、草稿落库后人工审批 interrupt、恢复时重读领域事实源、拒绝零副作用、重复 resume / 重复请求幂等、`operation_unknown` 仅原操作编号查询与对账；33 项单测 + 演示脚本 `scripts/demo_interrupt_resume.py`；
 - **阶段 3 工具契约 + TenantContext + RAG**：`src/platform/tooling.py`（严格 JSON Schema 工具注册表 + 超时/审计/输出校验）、`src/rag/`（政策文档分块、关键词 + 可插拔向量混合检索、引用校验、提示注入双向防护）、`src/agents/toolkit.py` 只读工具集；35 项单测；
-- **阶段 4 可靠性与评测**：`src/platform/reliability.py`（重试/熔断/只读降级/接管标记）＋ 黄金集评测（`evals/golden/golden_v1.json` 11 条 + `evals/replay.py` → 11/11 通过，报告 `evals/reports/golden_v1_report.md`）；13 项单测；
+- **阶段 4 可靠性与评测**：`src/platform/reliability.py`（重试/熔断/只读降级/接管标记）＋ 黄金集评测（`evals/golden/golden_v1.json` 11 条 + `evals/replay.py` → 11/11 通过（K2 收敛后）；引用探针准确率 0.6667，能识别错误版本/适用范围，非恒一；报告 `evals/reports/golden_v1_report.md`）；13 项单测；
 - **阶段 5A 受控 LLM 运行时** `src/models/`：可替换/可降级的 OpenAI-compatible 适配层（统一 Client 协议、结构化输出 Schema、能力矩阵——tool_calling/high_risk_draft 默认禁用、内容安全守卫、发送前 PII 脱敏与证据注入拒绝、Base URL 白名单）；影子评测 `evals/run_model_shadow_eval.py`（offline 实测意图准确率 1.0；candidate 需显式安全 Key，未配置即安全降级不联网并标注"未实测"）；32 项单测 + `docs/MODEL_EVALUATION.md`；
 - **阶段 5B Supervisor 多 Agent 实验** `src/agents/{subagents,supervisor}.py`：只读子 Agent（order/history/policy，工具白名单 + TenantContext，无写路径）+ `SupervisorRunner`；A/B 对照 `evals/compare_agents.py` → 两模式黄金集均 11/11、outcome/退款 100% 一致 → **按 ADR-002 默认维持单 Agent**，Supervisor 保留可选运行时；11 项单测 + `docs/MULTI_AGENT_EXPERIMENT.md`；
 - **阶段 6 Mule Agent Bridge** `src/bridge/`：外部 Agent 网络适配器（身份映射/角色矩阵/租户注入/入出站 Schema/超时/审计/熔断 fail-closed/注入拒绝）；动作白名单仅只读查询 + `submit_after_sales_request`（无审批/执行，`FORBIDDEN_ACTIONS` 不可达）；14 项单测 + `docs/MULE_BRIDGE.md`；
 - **可恢复持久化原型（SQLite）** `src/persistence/`：`service.export_state/restore_state` + `idempotency.export/import_records`（不改规则）、JSON 安全编解码、SQLite append-only journal（checksum 校验、损坏 fail-closed）、`RecoverableSession` 重启恢复可续跑；6 项单测 + 演示 `scripts/demo_persistence.py` + `docs/PERSISTENCE.md`；
 - **平台层最小落地** `src/platform/`：PII 脱敏（手机/邮箱/身份证）与整行脱敏日志 formatter；8 项单测；
 - **测试工具链**：`scripts/run_tests.py` 分层回归、`tests/conftest.py`（固定种子 42）、pytest markers、`.github/workflows/ci.yml` 模板；
-- 回归：`.venv` 下 `python -m pytest tests/` → **209 passed**；`python scripts/run_tests.py` → `REGRESSION PASS`；黄金集 `.venv\Scripts\python.exe evals\replay.py` → 11/11；影子 `.venv\Scripts\python.exe evals\run_model_shadow_eval.py --mode offline` → 意图准确率 1.0；A/B `.venv\Scripts\python.exe evals\compare_agents.py` → 单 Agent 与 Supervisor 均 11/11（默认单 Agent）。
+- 回归（2026-09-04 K2 收敛后实测）：`.venv` 下 `python -m pytest tests/` → **248 passed**；`python scripts/run_tests.py` → `REGRESSION PASS`；黄金集 `.venv\Scripts\python.exe evals\replay.py` → 11/11（引用探针准确率 0.6667）；影子 `.venv\Scripts\python.exe evals\run_model_shadow_eval.py --mode offline` → 意图准确率 1.0；A/B `.venv\Scripts\python.exe evals\compare_agents.py` → 单 Agent 与 Supervisor 均 11/11（默认单 Agent）。
 
 ### 13.2 规划中（未实现，不写成已实现）
 
@@ -216,5 +216,5 @@ RAG、控制台、微调、观测：均标记「规划中」，V1 不前置实�
 
 ### 13.3 本地仓库与环境约定
 
-- `git init -b main` + remote `origin`（`dianshang-shouhou`，经 ghfast.top 代理前缀）；当前工作区基于提交 `c2d8550`，含未提交安全修复（阶段 0–6、持久化原型）；**尚未推送**（决策项 D1/D4）。
+- `git init -b main` + remote `origin`（`dianshang-shouhou`，经 ghfast.top 代理前缀）；项目以本地提交演进（最新提交见 `git log --oneline -1`）；**尚未推送**（决策项 D1/D4）。
 - **运行方式（D 盘依赖约定）**：解释器 `.venv\Scripts\python.exe`（依赖 langgraph==1.2.11 / pytest==9.1.1，见 `requirements.txt`；PyPI 走清华镜像）。安装任何程序一律到 D 盘，路径与最显眼文件以 `docs/STATUS_AND_RISKS.md` §2 为准。

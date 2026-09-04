@@ -75,7 +75,7 @@
     "tenant": "T1",
     "approval": "approved",
     "repeat_same_thread": true,
-    "expected": {"outcome": "refunded", "repeat_outcome": "already_executed", "refunded": "100.00", "intent": "refund"}
+    "expected": {"outcome": "refunded", "repeat_outcome": "refunded", "refunded": "100.00", "intent": "refund"}
   },
   {
     "id": "g11-forged-resume-safe",

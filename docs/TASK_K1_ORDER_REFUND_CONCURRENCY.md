@@ -41,7 +41,7 @@
 ## 5. 验证
 
 - RED→GREEN：`tests/unit/domain/after_sales/test_order_refund_concurrency.py`（7 项：顺序超退拒绝 / 并发执行单成功 / unknown 对账 vs 执行竞争 / 换键拒绝 / 同键重复零副作用 / 超额执行不累计 / timeout 不累计）。
-- 全量：`.venv\Scripts\python.exe -m pytest tests/ -q` → **242 passed**；`scripts/run_tests.py` → `REGRESSION PASS`；`evals/replay.py` → 黄金集 11/11。
+- 全量：`.venv\Scripts\python.exe -m pytest tests/ -q` → **242 passed**；`scripts/run_tests.py` → `REGRESSION PASS`；`evals/replay.py` → 当时 **10/11**（g10 重复请求契约过期：业务已收敛为“重复请求返回原结果”，契约仍期望 `already_executed`）；该契约在 K2 评测收敛后已同步，恢复 11/11。
 
 ## 6. 未验证 / 后续
 

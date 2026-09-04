@@ -42,7 +42,7 @@
 .venv\Scripts\python.exe -m pytest tests/unit/persistence -v   # 22 项（6 原型 + 12 校验 + 4 原子恢复）
 ```
 
-全量回归：`.venv\Scripts\python.exe -m pytest tests/` → 235 passed。
+全量回归：`.venv\Scripts\python.exe -m pytest tests/` → 248 passed（2026-09-04 K2 收敛后实测）。
 
 ## 5. 限制与下一步（诚实边界）
 

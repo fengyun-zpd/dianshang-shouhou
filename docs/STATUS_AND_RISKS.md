@@ -2,7 +2,7 @@
 
 > 归属：电商售后多智能体工单系统（OpsPilot After-Sales，目标远程 `fengyun-zpd/dianshang-shouhou`）
 > 性质：总负责人 Agent 的侦察与实施基线记录。本文档只陈述事实与判断，不把规划写成已实现；实时状态以此文件与测试输出为准。
-> 版本：v0.12（阶段 0–6 + 持久化原型 + 任务卡 J/K1 完成，2026-09-04）
+> 版本：v0.13（阶段 0–6 + 持久化原型 + 任务卡 J/K1 + K2 评测收敛，2026-09-04）
 
 ## 1. 工作区与目录角色
 
@@ -17,13 +17,13 @@
 - Python 3.12.10（C 盘，仅解释器）＋ **D 盘虚拟环境 `.venv`**：`D:\workplace\PyCharmMiscProject\私域\.venv\Scripts\python.exe`（项目依赖一律装此，含 langgraph 1.2.11 / pytest 9.1.1）。
 - **安装约定（用户直接指令）**：此后任何程序/依赖一律安装到 D 盘并汇报全部路径与最显眼文件。已执行：C 盘全局 langgraph 系列已卸载清理（site-packages 无残留），依赖迁至 D 盘 `.venv`；pip 缓存仍在 C 盘 `c:\users\zao'pei'de\appdata\local\pip\cache`（未迁移，如需可清）。
 - GitHub 直连失败；用户全局配置 ghfast.top 代理镜像（`url.https://ghfast.top/https://github.com/.insteadof https://github.com/`）；PyPI 直连超时，安装使用清华镜像 `-i https://pypi.tuna.tsinghua.edu.cn/simple`。
-- 本地 git：`main` 分支；当前工作区基于提交 `c2d8550`，含未提交安全修复（阶段 0–6、持久化原型；未推送，D4 未决）。
+- 本地 git：`main` 分支；项目以本地提交演进（最新提交见 `git log --oneline -1`），工作区与 HEAD 一致；**尚未推送**，D4 未决。
 
 ## 3. 状态矩阵（已实现 / 实验中 / 规划中）
 
 ### ✅ 已实现（有代码 + 测试证据）
 
-| 项 | 证据（`.venv` 下 `python -m pytest tests/` → **242 passed**） |
+| 项 | 证据（`.venv` 下 `python -m pytest tests/` → **248 passed**，2026-09-04 K2 收敛后实测） |
 | --- | --- |
 | 工程宪法 `AGENTS.md` v0.2；README 设计基线 + 实施进度节 | 文件存在 |
 | 退款最小闭环（确定性领域服务） | `src/domain/{models,idempotency,refund_service}.py` + `tests/test_refund_service.py`（14 项） |
@@ -89,3 +89,4 @@
 - v0.10（2026-09-04）—— 增加 checkpoint 租户命名空间与跨运行器恢复回归，当前全量测试 209 passed。
 - v0.11（2026-09-04）—— 任务卡 J（一致性与恢复安全）完成：全量 235 passed（新增 26 项）；线程请求指纹/冲突拒绝/重复返回原结果；快照严格校验 + 原子恢复；幂等 per-key CAS 并发单飞；收敛既有重复请求语义为“返回原结果”。
 - v0.12（2026-09-04）—— Task K1（订单级退款并发一致性）完成：全量 242 passed（新增 7 项）；订单级锁 + 执行阶段原子容量校验修复同订单不同键并发超退（60+60>100）；unknown 对账竞争、换键拒绝、幂等优先语义回归覆盖。
+- v0.13（2026-09-04）—— K2 评测与文档收敛：golden g10 重复请求契约与业务语义同步（重复返回原结果，回放恢复 11/11）；citation 指标改为可区分实现（错误版本/适用范围计 miss，引用探针准确率 0.6667 而非恒 1.0）；删除恒真断言；删除全项目过时数字与声明（README/STATUS/TASK_SPLIT/PERSISTENCE/MULE_BRIDGE）；当前全量 248 passed。

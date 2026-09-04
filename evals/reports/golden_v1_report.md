@@ -8,11 +8,11 @@
 
 ## 结果
 
-- 用例总数：11｜通过：10｜失败：1
-- 任务完成率：0.9091
+- 用例总数：11｜通过：11｜失败：0
+- 任务完成率：1.0
 - 意图准确率：1.0
 - 必要澄清率：0.0909
-- 引用正确率：1.0（校验 3 条查询，注入拦截=True）
+- 引用正确率：0.6667（校验 4 条查询，注入拦截=True）
 - P50 耗时：0.0 ms｜P95 耗时：16.0 ms
 - Token / 成本：N/A（无 LLM）
 
@@ -27,10 +27,11 @@
 
 ## 失败用例
 
-- g10-repeat-request-idempotent（重复请求不重复副作用）：重复请求 outcome=refunded；repeat_outcome=refunded != 期望 already_executed
+- 无
 
 ## RAG 抽查明细
 
-- query='商品破损怎么处理' top_policy=P-DAMAGED-FULL expect=P-DAMAGED-FULL OK
-- query='少件漏发怎么补' top_policy=P-MISSING-FULL expect=P-MISSING-FULL OK
+- query='商品破损签收后 7 天内申请补偿退款' hit=True (正例：应命中现行 v2) ok
+- query='少件漏发怎么补发或退款' hit=True (正例：命中少件政策) ok
+- query='签收后 30 天内商品破损可全额退款' hit=False (版本探针：词面命中 v1（30 天全额），期望现行 v2 → 应 miss) version=1 != 期望 2
 - 注入查询拦截=OK

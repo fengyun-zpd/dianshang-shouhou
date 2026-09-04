@@ -48,11 +48,14 @@ def test_run_case_rejected_passes():
     assert result["outcome"] == "rejected"
 
 
-def test_rag_checks_block_injection_and_cite_valid():
+def test_rag_checks_block_injection_and_cite_distinguishable():
+    """引用指标必须能区分错误（版本探针 miss），不能恒为 1.0。"""
     rag = replay.rag_checks()
     assert rag["injection_blocked"] is True
-    assert rag["citation_accuracy"] == 1.0
-    assert rag["checked_citations"] > 0
+    assert rag["checked_citations"] == 3
+    assert 0.0 < rag["citation_accuracy"] < 1.0     # 含版本探针 miss → 指标可区分
+    assert rag["correct"] >= 1                       # 至少一个正确命中
+    assert any("version" in d for d in rag["detail"])  # 错误版本被识别并列出
 
 
 def test_golden_file_loads_and_all_cases_have_expected():
