@@ -70,7 +70,22 @@
 - 状态：已交付（`scripts/run_tests.py`、`docs/TESTING_BASELINE.md`、`tests/conftest.py`、pytest.ini markers）。
 - 验收命令：`.venv\Scripts\python.exe scripts\run_tests.py` → `REGRESSION PASS`。
 
+### 任务卡 D：工具契约 + TenantContext + RAG（阶段 3，✅ 已完成）
+
+- 交付：`src/platform/tooling.py`（pydantic 入/出参模型 → 严格 JSON Schema；ToolRegistry 调用链：角色权限 → 防跨租户参数 → 入参校验 → 超时执行 → 出参校验 → 审计）；`src/rag/`（PolicyDocument 分块、关键词倒排 + 可插拔 VectorBackend（进程内字典余弦）、RRF 混合检索、引用校验、提示注入双向防护、无证据语义）；`src/agents/toolkit.py`（只读工具 get_order/get_ticket/list_customer_tickets/retrieve_policy，租户来自 TenantContext 强绑定，领域错误原样透传，RAG 无证据 → NO_EVIDENCE、注入 → INJECTION_DETECTED）。
+- 测试：`tests/unit/platform/test_tooling.py`（12）、`tests/unit/rag/test_rag_store.py`（14）、`tests/unit/agents/test_toolkit.py`（9）。
+- 验收命令：`.venv\Scripts\python.exe -m pytest tests/unit/platform/test_tooling.py tests/unit/rag tests/unit/agents/test_toolkit.py -v`（全绿）；全量 139 passed。
+- 边界：MCP 跨服务协议为规划接口（ADR-003）；外部向量库经 VectorBackend 协议接入（规划）。
+
+### 任务卡 E：可靠性与评测（阶段 4，✅ 已完成）
+
+- 交付：`src/platform/reliability.py`（有限重试 / 熔断 closed-open-half_open / 只读降级 fallback / fail-closed / 人工接管标记 AuditMarkers）；黄金集 `evals/golden/golden_v1.json`（11 条固定种子用例：正常/拒绝/澄清/转人工×4/unknown 对账/重复请求/伪造审批）；回放器 `evals/replay.py`（驱动 WorkflowRunner interrupt/resume 自动审批 → 确定性断言 → 报告 `evals/reports/golden_v1_report.md`：任务完成率/意图准确率/引用正确率/必要澄清率/P50-P95/安全不变量）。
+- 测试：`tests/unit/platform/test_reliability.py`（8）、`tests/unit/evals/test_replay_smoke.py`（5）。
+- 验收命令：`.venv\Scripts\python.exe evals\replay.py` → 11/11 通过；报告写入 evals/reports/。
+- 评测结果（2026-09-04，golden-v1）：任务完成率 1.0、意图准确率 1.0、引用正确率 1.0、注入拦截通过、安全不变量 0。
+
 ## 5. 修订记录
 
 - v0.1（本会话）—— 建立模块任务拆分、目录规划、所有权矩阵与任务卡 A/B/C。
 - v0.2（2026-09-04）—— 任务卡 A/C 完成（阶段 0/1）；任务卡 B（阶段 2）完成：LangGraph 1.2.11 单 Agent 工作流，全量 95 passed。
+- v0.3（2026-09-04）—— 任务卡 D（阶段 3 工具契约 + TenantContext + RAG）与任务卡 E（阶段 4 可靠性与评测）完成：全量 139 passed；黄金集 11/11。

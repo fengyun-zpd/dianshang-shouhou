@@ -13,6 +13,7 @@ from typing import Optional, Sequence, Tuple
 
 from src.domain.after_sales import (
     AfterSalesError,
+    AfterSalesErrorCode,
     AfterSalesService,
     AfterSalesTicket,
     ApproveCommand,
@@ -43,6 +44,16 @@ class AfterSalesGateway:
 
     def get_order(self, tenant_id: str, order_id: str) -> Order:
         return self._svc.get_order_by_id(tenant_id, order_id)
+
+    def get_ticket_for(self, tenant_id: str, ticket_id: str) -> AfterSalesTicket:
+        """租户内只读工单查询：跨租户访问显式拒绝（TENANT_MISMATCH）。"""
+        ticket = self._svc.get_ticket(ticket_id)
+        if ticket.tenant_id != tenant_id:
+            raise AfterSalesError(
+                AfterSalesErrorCode.TENANT_MISMATCH,
+                f"工单 {ticket_id} 不属于租户 {tenant_id}",
+            )
+        return ticket
 
     def customer_id_of_order(self, tenant_id: str, order_id: str) -> str:
         return self.get_order(tenant_id, order_id).customer_id
