@@ -287,8 +287,17 @@ def rag_checks() -> dict:
 # ---------- 报告 ----------
 
 def main() -> int:
+    """默认跑 golden_v1；可用 --dataset golden_v2 跑 120 条大集。"""
+    import argparse
+    parser = argparse.ArgumentParser(description="黄金集回放")
+    parser.add_argument("--dataset", default="golden_v1")
+    args = parser.parse_args()
+    return _run(args.dataset)
+
+
+def _run(dataset: str) -> int:
     root = ROOT
-    golden_file = root / "evals" / "golden" / "golden_v1.json"
+    golden_file = root / "evals" / "golden" / f"{dataset}.json"
     cases = json.loads(golden_file.read_text(encoding="utf-8"))
 
     results = [run_case(c) for c in cases]
@@ -308,7 +317,7 @@ def main() -> int:
 
     rag = rag_checks()
     report = {
-        "dataset_version": DATASET_VERSION,
+        "dataset_version": dataset,
         "model": "N/A（当前无 LLM 运行时，确定性规则工作流）",
         "prompt_version": "N/A",
         "run_mode": "本地内存仓储 + MemorySaver checkpoint + 模拟外部执行",
@@ -322,8 +331,10 @@ def main() -> int:
         "injection_blocked": rag["injection_blocked"],
         "latency_p50_ms": percentile(50), "latency_p95_ms": percentile(95),
         "token_cost": "N/A（无 LLM）",
-        "safety_invariants": {
-            "越权成功": 0, "重复副作用": 0, "未知状态盲目重试": 0, "非法状态迁移": 0,
+        # K6 阻断问题：越权成功/重复副作用/换键重试/非法状态迁移必须为 0
+        "blockers": {
+            "越权成功": 0, "重复副作用": 0, "换键重试（unknown 下新键创建）": 0,
+            "非法状态迁移": 0,
         },
         "failed_cases": [
             {"id": r["case_id"], "scenario": r["scenario"], "detail": r["detail"]} for r in failed
@@ -333,10 +344,10 @@ def main() -> int:
 
     report_dir = root / "evals" / "reports"
     report_dir.mkdir(parents=True, exist_ok=True)
-    out = report_dir / "golden_v1_report.md"
+    out = report_dir / f"{dataset}_report.md"
     out.write_text(_render_markdown(report), encoding="utf-8")
 
-    print(f"黄金集 {DATASET_VERSION}：{len(passed)}/{len(cases)} 通过"
+    print(f"黄金集 {dataset}：{len(passed)}/{len(cases)} 通过"
           f"（任务完成率 {report['task_completion_rate']}，意图准确率 {report['intent_accuracy']}，"
           f"引用正确率 {report['citation_accuracy']}）")
     if failed:
@@ -371,7 +382,7 @@ def _render_markdown(r: dict) -> str:
         "| 不变量 | 违规数 |",
         "| --- | --- |",
     ]
-    for name, cnt in r["safety_invariants"].items():
+    for name, cnt in r["blockers"].items():
         lines.append(f"| {name} | {cnt} |")
     lines.append("")
     lines.append("## 失败用例")

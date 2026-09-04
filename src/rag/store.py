@@ -38,6 +38,7 @@ _INJECTION_PATTERNS: tuple[str, ...] = (
     "ignore previous", "ignore above", "ignore all", "disregard",
     "你现在是", "你是一个", "重新设定", "以上作废", "以上规则作废",
     "system prompt", "注入", "扮演",
+    "不要遵循", "系统规则", "全部文档",
 )
 
 

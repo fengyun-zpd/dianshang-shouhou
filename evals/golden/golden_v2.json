@@ -1,0 +1,1592 @@
+[
+  {
+    "id": "g2-0001",
+    "tenant": "T1",
+    "scenario": "clarify-missing-order",
+    "request": "商品破损，要求退款",
+    "expected": {
+      "outcome": "clarify",
+      "refunded": "0.00"
+    }
+  },
+  {
+    "id": "g2-0002",
+    "tenant": "T1",
+    "scenario": "no-applicable-policy",
+    "request": "订单 ORD-1 收到后发现缺件，要求退款",
+    "expected": {
+      "outcome": "escalated",
+      "refunded": "0.00",
+      "error_code": "AFTER_SALES_POLICY_NOT_FOUND",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0003",
+    "tenant": "T1",
+    "scenario": "refund-approved",
+    "request": "订单 ORD-1 质量破损想退掉",
+    "approval": "approved",
+    "expected": {
+      "outcome": "refunded",
+      "refunded": "100.00",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0004",
+    "tenant": "T1",
+    "scenario": "refund-rejected",
+    "request": "订单 ORD-1 质量破损想退掉",
+    "approval": "rejected",
+    "expected": {
+      "outcome": "rejected",
+      "refunded": "0.00",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0005",
+    "tenant": "T1",
+    "scenario": "unknown-intent",
+    "request": "你好",
+    "expected": {
+      "outcome": "escalated",
+      "refunded": "0.00",
+      "intent": "unknown"
+    }
+  },
+  {
+    "id": "g2-0006",
+    "tenant": "T1",
+    "scenario": "forged-resume-safe",
+    "request": "订单 ORD-1 商品破损，要求退款",
+    "expected": {
+      "outcome": "refunded",
+      "refunded": "100.00",
+      "forged_was_ignored": true,
+      "intent": "refund"
+    },
+    "approval": "approved",
+    "forged_resume_first": true
+  },
+  {
+    "id": "g2-0007",
+    "tenant": "T1",
+    "scenario": "conflict-policy",
+    "request": "订单 ORD-1 质量破损想退掉",
+    "extra_policies": [
+      [
+        "P-DAMAGED-HALF",
+        [
+          "damaged"
+        ],
+        "0.50",
+        30
+      ]
+    ],
+    "expected": {
+      "outcome": "escalated",
+      "refunded": "0.00",
+      "error_code": "AFTER_SALES_POLICY_CONFLICT",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0008",
+    "tenant": "T1",
+    "scenario": "repeat-request",
+    "request": "订单 ORD-1 商品破损，要求退款",
+    "expected": {
+      "outcome": "refunded",
+      "repeat_outcome": "refunded",
+      "refunded": "100.00",
+      "intent": "refund"
+    },
+    "approval": "approved",
+    "repeat_same_thread": true
+  },
+  {
+    "id": "g2-0009",
+    "tenant": "T1",
+    "scenario": "unknown-intent",
+    "request": "你好",
+    "expected": {
+      "outcome": "escalated",
+      "refunded": "0.00",
+      "intent": "unknown"
+    }
+  },
+  {
+    "id": "g2-0010",
+    "tenant": "T1",
+    "scenario": "no-applicable-policy",
+    "request": "订单 ORD-1 少件漏发，要求退款",
+    "expected": {
+      "outcome": "escalated",
+      "refunded": "0.00",
+      "error_code": "AFTER_SALES_POLICY_NOT_FOUND",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0011",
+    "tenant": "T1",
+    "scenario": "refund-approved",
+    "request": "订单 ORD-1 质量破损想退掉",
+    "approval": "approved",
+    "expected": {
+      "outcome": "refunded",
+      "refunded": "100.00",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0012",
+    "tenant": "T1",
+    "scenario": "refund-rejected",
+    "request": "订单 ORD-1 收到的东西坏了，要退钱",
+    "approval": "rejected",
+    "expected": {
+      "outcome": "rejected",
+      "refunded": "0.00",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0013",
+    "tenant": "T1",
+    "scenario": "no-applicable-policy",
+    "request": "订单 ORD-1 收到后发现缺件，要求退款",
+    "expected": {
+      "outcome": "escalated",
+      "refunded": "0.00",
+      "error_code": "AFTER_SALES_POLICY_NOT_FOUND",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0014",
+    "tenant": "T1",
+    "scenario": "clarify-missing-order",
+    "request": "东西坏了要退钱",
+    "expected": {
+      "outcome": "clarify",
+      "refunded": "0.00"
+    }
+  },
+  {
+    "id": "g2-0015",
+    "tenant": "T1",
+    "scenario": "exchange-escalated",
+    "request": "订单 ORD-1 我想换货",
+    "expected": {
+      "outcome": "escalated",
+      "refunded": "0.00",
+      "intent": "exchange"
+    }
+  },
+  {
+    "id": "g2-0016",
+    "tenant": "T1",
+    "scenario": "refund-unknown-reconcile",
+    "request": "订单 ORD-1 商品破损，要求退款",
+    "approval": "approved",
+    "simulate_external": "timeout",
+    "reconcile_after_unknown": "success",
+    "expected": {
+      "outcome": "operation_unknown",
+      "refunded": "0.00",
+      "refunded_after_reconcile": "100.00",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0017",
+    "tenant": "T1",
+    "scenario": "exchange-escalated",
+    "request": "订单 ORD-1 麻烦换一个",
+    "expected": {
+      "outcome": "escalated",
+      "refunded": "0.00",
+      "intent": "exchange"
+    }
+  },
+  {
+    "id": "g2-0018",
+    "tenant": "T1",
+    "scenario": "repeat-request",
+    "request": "订单 ORD-1 商品破损，要求退款",
+    "expected": {
+      "outcome": "refunded",
+      "repeat_outcome": "refunded",
+      "refunded": "100.00",
+      "intent": "refund"
+    },
+    "approval": "approved",
+    "repeat_same_thread": true
+  },
+  {
+    "id": "g2-0019",
+    "tenant": "T1",
+    "scenario": "refund-unknown-reconcile",
+    "request": "订单 ORD-1 商品破损，要求退款",
+    "approval": "approved",
+    "simulate_external": "timeout",
+    "reconcile_after_unknown": "success",
+    "expected": {
+      "outcome": "operation_unknown",
+      "refunded": "0.00",
+      "refunded_after_reconcile": "100.00",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0020",
+    "tenant": "T1",
+    "scenario": "refund-approved",
+    "request": "订单 ORD-1 质量破损想退掉",
+    "approval": "approved",
+    "expected": {
+      "outcome": "refunded",
+      "refunded": "100.00",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0021",
+    "tenant": "T1",
+    "scenario": "refund-unknown-reconcile",
+    "request": "订单 ORD-1 质量破损想退掉",
+    "approval": "approved",
+    "simulate_external": "timeout",
+    "reconcile_after_unknown": "success",
+    "expected": {
+      "outcome": "operation_unknown",
+      "refunded": "0.00",
+      "refunded_after_reconcile": "100.00",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0022",
+    "tenant": "T1",
+    "scenario": "conflict-policy",
+    "request": "订单 ORD-1 商品破损，要求退款",
+    "extra_policies": [
+      [
+        "P-DAMAGED-HALF",
+        [
+          "damaged"
+        ],
+        "0.50",
+        30
+      ]
+    ],
+    "expected": {
+      "outcome": "escalated",
+      "refunded": "0.00",
+      "error_code": "AFTER_SALES_POLICY_CONFLICT",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0023",
+    "tenant": "T1",
+    "scenario": "unknown-intent",
+    "request": "你好",
+    "expected": {
+      "outcome": "escalated",
+      "refunded": "0.00",
+      "intent": "unknown"
+    }
+  },
+  {
+    "id": "g2-0024",
+    "tenant": "T1",
+    "scenario": "clarify-missing-order",
+    "request": "东西坏了要退钱",
+    "expected": {
+      "outcome": "clarify",
+      "refunded": "0.00"
+    }
+  },
+  {
+    "id": "g2-0025",
+    "tenant": "T1",
+    "scenario": "clarify-missing-order",
+    "request": "东西坏了要退钱",
+    "expected": {
+      "outcome": "clarify",
+      "refunded": "0.00"
+    }
+  },
+  {
+    "id": "g2-0026",
+    "tenant": "T1",
+    "scenario": "exchange-escalated",
+    "request": "订单 ORD-1 麻烦换一个",
+    "expected": {
+      "outcome": "escalated",
+      "refunded": "0.00",
+      "intent": "exchange"
+    }
+  },
+  {
+    "id": "g2-0027",
+    "tenant": "T1",
+    "scenario": "exchange-escalated",
+    "request": "订单 ORD-1 麻烦换一个",
+    "expected": {
+      "outcome": "escalated",
+      "refunded": "0.00",
+      "intent": "exchange"
+    }
+  },
+  {
+    "id": "g2-0028",
+    "tenant": "T1",
+    "scenario": "refund-unknown-reconcile",
+    "request": "订单 ORD-1 质量破损想退掉",
+    "approval": "approved",
+    "simulate_external": "timeout",
+    "reconcile_after_unknown": "success",
+    "expected": {
+      "outcome": "operation_unknown",
+      "refunded": "0.00",
+      "refunded_after_reconcile": "100.00",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0029",
+    "tenant": "T1",
+    "scenario": "refund-rejected",
+    "request": "订单 ORD-1 商品破损，要求退款",
+    "approval": "rejected",
+    "expected": {
+      "outcome": "rejected",
+      "refunded": "0.00",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0030",
+    "tenant": "T1",
+    "scenario": "refund-unknown-reconcile",
+    "request": "订单 ORD-1 质量破损想退掉",
+    "approval": "approved",
+    "simulate_external": "timeout",
+    "reconcile_after_unknown": "success",
+    "expected": {
+      "outcome": "operation_unknown",
+      "refunded": "0.00",
+      "refunded_after_reconcile": "100.00",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0031",
+    "tenant": "T1",
+    "scenario": "refund-rejected",
+    "request": "订单 ORD-1 质量破损想退掉",
+    "approval": "rejected",
+    "expected": {
+      "outcome": "rejected",
+      "refunded": "0.00",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0032",
+    "tenant": "T1",
+    "scenario": "exchange-escalated",
+    "request": "订单 ORD-1 麻烦换一个",
+    "expected": {
+      "outcome": "escalated",
+      "refunded": "0.00",
+      "intent": "exchange"
+    }
+  },
+  {
+    "id": "g2-0033",
+    "tenant": "T1",
+    "scenario": "clarify-missing-order",
+    "request": "商品破损，要求退款",
+    "expected": {
+      "outcome": "clarify",
+      "refunded": "0.00"
+    }
+  },
+  {
+    "id": "g2-0034",
+    "tenant": "T1",
+    "scenario": "clarify-missing-order",
+    "request": "商品破损，要求退款",
+    "expected": {
+      "outcome": "clarify",
+      "refunded": "0.00"
+    }
+  },
+  {
+    "id": "g2-0035",
+    "tenant": "T1",
+    "scenario": "conflict-policy",
+    "request": "订单 ORD-1 商品破损，要求退款",
+    "extra_policies": [
+      [
+        "P-DAMAGED-HALF",
+        [
+          "damaged"
+        ],
+        "0.50",
+        30
+      ]
+    ],
+    "expected": {
+      "outcome": "escalated",
+      "refunded": "0.00",
+      "error_code": "AFTER_SALES_POLICY_CONFLICT",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0036",
+    "tenant": "T1",
+    "scenario": "refund-rejected",
+    "request": "订单 ORD-1 收到的东西坏了，要退钱",
+    "approval": "rejected",
+    "expected": {
+      "outcome": "rejected",
+      "refunded": "0.00",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0037",
+    "tenant": "T1",
+    "scenario": "exchange-escalated",
+    "request": "订单 ORD-1 麻烦换一个",
+    "expected": {
+      "outcome": "escalated",
+      "refunded": "0.00",
+      "intent": "exchange"
+    }
+  },
+  {
+    "id": "g2-0038",
+    "tenant": "T1",
+    "scenario": "no-applicable-policy",
+    "request": "订单 ORD-1 收到后发现缺件，要求退款",
+    "expected": {
+      "outcome": "escalated",
+      "refunded": "0.00",
+      "error_code": "AFTER_SALES_POLICY_NOT_FOUND",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0039",
+    "tenant": "T1",
+    "scenario": "no-applicable-policy",
+    "request": "订单 ORD-1 收到后发现缺件，要求退款",
+    "expected": {
+      "outcome": "escalated",
+      "refunded": "0.00",
+      "error_code": "AFTER_SALES_POLICY_NOT_FOUND",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0040",
+    "tenant": "T1",
+    "scenario": "conflict-policy",
+    "request": "订单 ORD-1 收到的东西坏了，要退钱",
+    "extra_policies": [
+      [
+        "P-DAMAGED-HALF",
+        [
+          "damaged"
+        ],
+        "0.50",
+        30
+      ]
+    ],
+    "expected": {
+      "outcome": "escalated",
+      "refunded": "0.00",
+      "error_code": "AFTER_SALES_POLICY_CONFLICT",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0041",
+    "tenant": "T1",
+    "scenario": "conflict-policy",
+    "request": "订单 ORD-1 收到的东西坏了，要退钱",
+    "extra_policies": [
+      [
+        "P-DAMAGED-HALF",
+        [
+          "damaged"
+        ],
+        "0.50",
+        30
+      ]
+    ],
+    "expected": {
+      "outcome": "escalated",
+      "refunded": "0.00",
+      "error_code": "AFTER_SALES_POLICY_CONFLICT",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0042",
+    "tenant": "T1",
+    "scenario": "unknown-intent",
+    "request": "请问在吗",
+    "expected": {
+      "outcome": "escalated",
+      "refunded": "0.00",
+      "intent": "unknown"
+    }
+  },
+  {
+    "id": "g2-0043",
+    "tenant": "T1",
+    "scenario": "no-applicable-policy",
+    "request": "订单 ORD-1 收到后发现缺件，要求退款",
+    "expected": {
+      "outcome": "escalated",
+      "refunded": "0.00",
+      "error_code": "AFTER_SALES_POLICY_NOT_FOUND",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0044",
+    "tenant": "T1",
+    "scenario": "refund-approved",
+    "request": "订单 ORD-1 商品破损，要求退款",
+    "approval": "approved",
+    "expected": {
+      "outcome": "refunded",
+      "refunded": "100.00",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0045",
+    "tenant": "T1",
+    "scenario": "exchange-escalated",
+    "request": "订单 ORD-1 我想换货",
+    "expected": {
+      "outcome": "escalated",
+      "refunded": "0.00",
+      "intent": "exchange"
+    }
+  },
+  {
+    "id": "g2-0046",
+    "tenant": "T1",
+    "scenario": "clarify-missing-order",
+    "request": "商品破损，要求退款",
+    "expected": {
+      "outcome": "clarify",
+      "refunded": "0.00"
+    }
+  },
+  {
+    "id": "g2-0047",
+    "tenant": "T1",
+    "scenario": "clarify-missing-order",
+    "request": "商品破损，要求退款",
+    "expected": {
+      "outcome": "clarify",
+      "refunded": "0.00"
+    }
+  },
+  {
+    "id": "g2-0048",
+    "tenant": "T1",
+    "scenario": "refund-rejected",
+    "request": "订单 ORD-1 收到的东西坏了，要退钱",
+    "approval": "rejected",
+    "expected": {
+      "outcome": "rejected",
+      "refunded": "0.00",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0049",
+    "tenant": "T1",
+    "scenario": "refund-approved",
+    "request": "订单 ORD-1 商品破损，要求退款",
+    "approval": "approved",
+    "expected": {
+      "outcome": "refunded",
+      "refunded": "100.00",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0050",
+    "tenant": "T1",
+    "scenario": "conflict-policy",
+    "request": "订单 ORD-1 收到的东西坏了，要退钱",
+    "extra_policies": [
+      [
+        "P-DAMAGED-HALF",
+        [
+          "damaged"
+        ],
+        "0.50",
+        30
+      ]
+    ],
+    "expected": {
+      "outcome": "escalated",
+      "refunded": "0.00",
+      "error_code": "AFTER_SALES_POLICY_CONFLICT",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0051",
+    "tenant": "T1",
+    "scenario": "clarify-missing-order",
+    "request": "商品破损，要求退款",
+    "expected": {
+      "outcome": "clarify",
+      "refunded": "0.00"
+    }
+  },
+  {
+    "id": "g2-0052",
+    "tenant": "T1",
+    "scenario": "refund-rejected",
+    "request": "订单 ORD-1 收到的东西坏了，要退钱",
+    "approval": "rejected",
+    "expected": {
+      "outcome": "rejected",
+      "refunded": "0.00",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0053",
+    "tenant": "T1",
+    "scenario": "refund-unknown-reconcile",
+    "request": "订单 ORD-1 商品破损，要求退款",
+    "approval": "approved",
+    "simulate_external": "timeout",
+    "reconcile_after_unknown": "success",
+    "expected": {
+      "outcome": "operation_unknown",
+      "refunded": "0.00",
+      "refunded_after_reconcile": "100.00",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0054",
+    "tenant": "T1",
+    "scenario": "no-applicable-policy",
+    "request": "订单 ORD-1 少件漏发，要求退款",
+    "expected": {
+      "outcome": "escalated",
+      "refunded": "0.00",
+      "error_code": "AFTER_SALES_POLICY_NOT_FOUND",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0055",
+    "tenant": "T1",
+    "scenario": "refund-unknown-reconcile",
+    "request": "订单 ORD-1 收到的东西坏了，要退钱",
+    "approval": "approved",
+    "simulate_external": "timeout",
+    "reconcile_after_unknown": "success",
+    "expected": {
+      "outcome": "operation_unknown",
+      "refunded": "0.00",
+      "refunded_after_reconcile": "100.00",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0056",
+    "tenant": "T1",
+    "scenario": "refund-rejected",
+    "request": "订单 ORD-1 质量破损想退掉",
+    "approval": "rejected",
+    "expected": {
+      "outcome": "rejected",
+      "refunded": "0.00",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0057",
+    "tenant": "T1",
+    "scenario": "clarify-missing-order",
+    "request": "东西坏了要退钱",
+    "expected": {
+      "outcome": "clarify",
+      "refunded": "0.00"
+    }
+  },
+  {
+    "id": "g2-0058",
+    "tenant": "T1",
+    "scenario": "refund-approved",
+    "request": "订单 ORD-1 商品破损，要求退款",
+    "approval": "approved",
+    "expected": {
+      "outcome": "refunded",
+      "refunded": "100.00",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0059",
+    "tenant": "T1",
+    "scenario": "no-applicable-policy",
+    "request": "订单 ORD-1 少件漏发，要求退款",
+    "expected": {
+      "outcome": "escalated",
+      "refunded": "0.00",
+      "error_code": "AFTER_SALES_POLICY_NOT_FOUND",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0060",
+    "tenant": "T1",
+    "scenario": "no-applicable-policy",
+    "request": "订单 ORD-1 少件漏发，要求退款",
+    "expected": {
+      "outcome": "escalated",
+      "refunded": "0.00",
+      "error_code": "AFTER_SALES_POLICY_NOT_FOUND",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0061",
+    "tenant": "T1",
+    "scenario": "conflict-policy",
+    "request": "订单 ORD-1 商品破损，要求退款",
+    "extra_policies": [
+      [
+        "P-DAMAGED-HALF",
+        [
+          "damaged"
+        ],
+        "0.50",
+        30
+      ]
+    ],
+    "expected": {
+      "outcome": "escalated",
+      "refunded": "0.00",
+      "error_code": "AFTER_SALES_POLICY_CONFLICT",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0062",
+    "tenant": "T1",
+    "scenario": "unknown-intent",
+    "request": "你好",
+    "expected": {
+      "outcome": "escalated",
+      "refunded": "0.00",
+      "intent": "unknown"
+    }
+  },
+  {
+    "id": "g2-0063",
+    "tenant": "T1",
+    "scenario": "exchange-escalated",
+    "request": "订单 ORD-1 我想换货",
+    "expected": {
+      "outcome": "escalated",
+      "refunded": "0.00",
+      "intent": "exchange"
+    }
+  },
+  {
+    "id": "g2-0064",
+    "tenant": "T1",
+    "scenario": "refund-unknown-reconcile",
+    "request": "订单 ORD-1 质量破损想退掉",
+    "approval": "approved",
+    "simulate_external": "timeout",
+    "reconcile_after_unknown": "success",
+    "expected": {
+      "outcome": "operation_unknown",
+      "refunded": "0.00",
+      "refunded_after_reconcile": "100.00",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0065",
+    "tenant": "T1",
+    "scenario": "refund-unknown-reconcile",
+    "request": "订单 ORD-1 商品破损，要求退款",
+    "approval": "approved",
+    "simulate_external": "timeout",
+    "reconcile_after_unknown": "success",
+    "expected": {
+      "outcome": "operation_unknown",
+      "refunded": "0.00",
+      "refunded_after_reconcile": "100.00",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0066",
+    "tenant": "T1",
+    "scenario": "conflict-policy",
+    "request": "订单 ORD-1 质量破损想退掉",
+    "extra_policies": [
+      [
+        "P-DAMAGED-HALF",
+        [
+          "damaged"
+        ],
+        "0.50",
+        30
+      ]
+    ],
+    "expected": {
+      "outcome": "escalated",
+      "refunded": "0.00",
+      "error_code": "AFTER_SALES_POLICY_CONFLICT",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0067",
+    "tenant": "T1",
+    "scenario": "forged-resume-safe",
+    "request": "订单 ORD-1 商品破损，要求退款",
+    "expected": {
+      "outcome": "refunded",
+      "refunded": "100.00",
+      "forged_was_ignored": true,
+      "intent": "refund"
+    },
+    "approval": "approved",
+    "forged_resume_first": true
+  },
+  {
+    "id": "g2-0068",
+    "tenant": "T1",
+    "scenario": "conflict-policy",
+    "request": "订单 ORD-1 收到的东西坏了，要退钱",
+    "extra_policies": [
+      [
+        "P-DAMAGED-HALF",
+        [
+          "damaged"
+        ],
+        "0.50",
+        30
+      ]
+    ],
+    "expected": {
+      "outcome": "escalated",
+      "refunded": "0.00",
+      "error_code": "AFTER_SALES_POLICY_CONFLICT",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0069",
+    "tenant": "T1",
+    "scenario": "unknown-intent",
+    "request": "你好",
+    "expected": {
+      "outcome": "escalated",
+      "refunded": "0.00",
+      "intent": "unknown"
+    }
+  },
+  {
+    "id": "g2-0070",
+    "tenant": "T1",
+    "scenario": "conflict-policy",
+    "request": "订单 ORD-1 质量破损想退掉",
+    "extra_policies": [
+      [
+        "P-DAMAGED-HALF",
+        [
+          "damaged"
+        ],
+        "0.50",
+        30
+      ]
+    ],
+    "expected": {
+      "outcome": "escalated",
+      "refunded": "0.00",
+      "error_code": "AFTER_SALES_POLICY_CONFLICT",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0071",
+    "tenant": "T1",
+    "scenario": "refund-unknown-reconcile",
+    "request": "订单 ORD-1 商品破损，要求退款",
+    "approval": "approved",
+    "simulate_external": "timeout",
+    "reconcile_after_unknown": "success",
+    "expected": {
+      "outcome": "operation_unknown",
+      "refunded": "0.00",
+      "refunded_after_reconcile": "100.00",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0072",
+    "tenant": "T1",
+    "scenario": "unknown-intent",
+    "request": "请问在吗",
+    "expected": {
+      "outcome": "escalated",
+      "refunded": "0.00",
+      "intent": "unknown"
+    }
+  },
+  {
+    "id": "g2-0073",
+    "tenant": "T1",
+    "scenario": "refund-rejected",
+    "request": "订单 ORD-1 收到的东西坏了，要退钱",
+    "approval": "rejected",
+    "expected": {
+      "outcome": "rejected",
+      "refunded": "0.00",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0074",
+    "tenant": "T1",
+    "scenario": "refund-unknown-reconcile",
+    "request": "订单 ORD-1 收到的东西坏了，要退钱",
+    "approval": "approved",
+    "simulate_external": "timeout",
+    "reconcile_after_unknown": "success",
+    "expected": {
+      "outcome": "operation_unknown",
+      "refunded": "0.00",
+      "refunded_after_reconcile": "100.00",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0075",
+    "tenant": "T1",
+    "scenario": "exchange-escalated",
+    "request": "订单 ORD-1 麻烦换一个",
+    "expected": {
+      "outcome": "escalated",
+      "refunded": "0.00",
+      "intent": "exchange"
+    }
+  },
+  {
+    "id": "g2-0076",
+    "tenant": "T1",
+    "scenario": "exchange-escalated",
+    "request": "订单 ORD-1 我想换货",
+    "expected": {
+      "outcome": "escalated",
+      "refunded": "0.00",
+      "intent": "exchange"
+    }
+  },
+  {
+    "id": "g2-0077",
+    "tenant": "T1",
+    "scenario": "refund-approved",
+    "request": "订单 ORD-1 质量破损想退掉",
+    "approval": "approved",
+    "expected": {
+      "outcome": "refunded",
+      "refunded": "100.00",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0078",
+    "tenant": "T1",
+    "scenario": "conflict-policy",
+    "request": "订单 ORD-1 质量破损想退掉",
+    "extra_policies": [
+      [
+        "P-DAMAGED-HALF",
+        [
+          "damaged"
+        ],
+        "0.50",
+        30
+      ]
+    ],
+    "expected": {
+      "outcome": "escalated",
+      "refunded": "0.00",
+      "error_code": "AFTER_SALES_POLICY_CONFLICT",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0079",
+    "tenant": "T1",
+    "scenario": "clarify-missing-order",
+    "request": "商品破损，要求退款",
+    "expected": {
+      "outcome": "clarify",
+      "refunded": "0.00"
+    }
+  },
+  {
+    "id": "g2-0080",
+    "tenant": "T1",
+    "scenario": "refund-rejected",
+    "request": "订单 ORD-1 收到的东西坏了，要退钱",
+    "approval": "rejected",
+    "expected": {
+      "outcome": "rejected",
+      "refunded": "0.00",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0081",
+    "tenant": "T1",
+    "scenario": "exchange-escalated",
+    "request": "订单 ORD-1 我想换货",
+    "expected": {
+      "outcome": "escalated",
+      "refunded": "0.00",
+      "intent": "exchange"
+    }
+  },
+  {
+    "id": "g2-0082",
+    "tenant": "T1",
+    "scenario": "unknown-intent",
+    "request": "你好",
+    "expected": {
+      "outcome": "escalated",
+      "refunded": "0.00",
+      "intent": "unknown"
+    }
+  },
+  {
+    "id": "g2-0083",
+    "tenant": "T1",
+    "scenario": "refund-rejected",
+    "request": "订单 ORD-1 质量破损想退掉",
+    "approval": "rejected",
+    "expected": {
+      "outcome": "rejected",
+      "refunded": "0.00",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0084",
+    "tenant": "T1",
+    "scenario": "unknown-intent",
+    "request": "请问在吗",
+    "expected": {
+      "outcome": "escalated",
+      "refunded": "0.00",
+      "intent": "unknown"
+    }
+  },
+  {
+    "id": "g2-0085",
+    "tenant": "T1",
+    "scenario": "refund-approved",
+    "request": "订单 ORD-1 收到的东西坏了，要退钱",
+    "approval": "approved",
+    "expected": {
+      "outcome": "refunded",
+      "refunded": "100.00",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0086",
+    "tenant": "T1",
+    "scenario": "exchange-escalated",
+    "request": "订单 ORD-1 我想换货",
+    "expected": {
+      "outcome": "escalated",
+      "refunded": "0.00",
+      "intent": "exchange"
+    }
+  },
+  {
+    "id": "g2-0087",
+    "tenant": "T1",
+    "scenario": "refund-approved",
+    "request": "订单 ORD-1 收到的东西坏了，要退钱",
+    "approval": "approved",
+    "expected": {
+      "outcome": "refunded",
+      "refunded": "100.00",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0088",
+    "tenant": "T1",
+    "scenario": "unknown-intent",
+    "request": "你好",
+    "expected": {
+      "outcome": "escalated",
+      "refunded": "0.00",
+      "intent": "unknown"
+    }
+  },
+  {
+    "id": "g2-0089",
+    "tenant": "T1",
+    "scenario": "refund-approved",
+    "request": "订单 ORD-1 质量破损想退掉",
+    "approval": "approved",
+    "expected": {
+      "outcome": "refunded",
+      "refunded": "100.00",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0090",
+    "tenant": "T1",
+    "scenario": "refund-rejected",
+    "request": "订单 ORD-1 收到的东西坏了，要退钱",
+    "approval": "rejected",
+    "expected": {
+      "outcome": "rejected",
+      "refunded": "0.00",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0091",
+    "tenant": "T1",
+    "scenario": "refund-approved",
+    "request": "订单 ORD-1 质量破损想退掉",
+    "approval": "approved",
+    "expected": {
+      "outcome": "refunded",
+      "refunded": "100.00",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0092",
+    "tenant": "T1",
+    "scenario": "refund-unknown-reconcile",
+    "request": "订单 ORD-1 商品破损，要求退款",
+    "approval": "approved",
+    "simulate_external": "timeout",
+    "reconcile_after_unknown": "success",
+    "expected": {
+      "outcome": "operation_unknown",
+      "refunded": "0.00",
+      "refunded_after_reconcile": "100.00",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0093",
+    "tenant": "T1",
+    "scenario": "conflict-policy",
+    "request": "订单 ORD-1 质量破损想退掉",
+    "extra_policies": [
+      [
+        "P-DAMAGED-HALF",
+        [
+          "damaged"
+        ],
+        "0.50",
+        30
+      ]
+    ],
+    "expected": {
+      "outcome": "escalated",
+      "refunded": "0.00",
+      "error_code": "AFTER_SALES_POLICY_CONFLICT",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0094",
+    "tenant": "T1",
+    "scenario": "conflict-policy",
+    "request": "订单 ORD-1 质量破损想退掉",
+    "extra_policies": [
+      [
+        "P-DAMAGED-HALF",
+        [
+          "damaged"
+        ],
+        "0.50",
+        30
+      ]
+    ],
+    "expected": {
+      "outcome": "escalated",
+      "refunded": "0.00",
+      "error_code": "AFTER_SALES_POLICY_CONFLICT",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0095",
+    "tenant": "T1",
+    "scenario": "exchange-escalated",
+    "request": "订单 ORD-1 我想换货",
+    "expected": {
+      "outcome": "escalated",
+      "refunded": "0.00",
+      "intent": "exchange"
+    }
+  },
+  {
+    "id": "g2-0096",
+    "tenant": "T1",
+    "scenario": "conflict-policy",
+    "request": "订单 ORD-1 商品破损，要求退款",
+    "extra_policies": [
+      [
+        "P-DAMAGED-HALF",
+        [
+          "damaged"
+        ],
+        "0.50",
+        30
+      ]
+    ],
+    "expected": {
+      "outcome": "escalated",
+      "refunded": "0.00",
+      "error_code": "AFTER_SALES_POLICY_CONFLICT",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0097",
+    "tenant": "T1",
+    "scenario": "clarify-missing-order",
+    "request": "东西坏了要退钱",
+    "expected": {
+      "outcome": "clarify",
+      "refunded": "0.00"
+    }
+  },
+  {
+    "id": "g2-0098",
+    "tenant": "T1",
+    "scenario": "refund-unknown-reconcile",
+    "request": "订单 ORD-1 质量破损想退掉",
+    "approval": "approved",
+    "simulate_external": "timeout",
+    "reconcile_after_unknown": "success",
+    "expected": {
+      "outcome": "operation_unknown",
+      "refunded": "0.00",
+      "refunded_after_reconcile": "100.00",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0099",
+    "tenant": "T1",
+    "scenario": "refund-unknown-reconcile",
+    "request": "订单 ORD-1 质量破损想退掉",
+    "approval": "approved",
+    "simulate_external": "timeout",
+    "reconcile_after_unknown": "success",
+    "expected": {
+      "outcome": "operation_unknown",
+      "refunded": "0.00",
+      "refunded_after_reconcile": "100.00",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0100",
+    "tenant": "T1",
+    "scenario": "refund-unknown-reconcile",
+    "request": "订单 ORD-1 商品破损，要求退款",
+    "approval": "approved",
+    "simulate_external": "timeout",
+    "reconcile_after_unknown": "success",
+    "expected": {
+      "outcome": "operation_unknown",
+      "refunded": "0.00",
+      "refunded_after_reconcile": "100.00",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0101",
+    "tenant": "T1",
+    "scenario": "refund-approved",
+    "request": "订单 ORD-1 收到的东西坏了，要退钱",
+    "approval": "approved",
+    "expected": {
+      "outcome": "refunded",
+      "refunded": "100.00",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0102",
+    "tenant": "T1",
+    "scenario": "no-applicable-policy",
+    "request": "订单 ORD-1 收到后发现缺件，要求退款",
+    "expected": {
+      "outcome": "escalated",
+      "refunded": "0.00",
+      "error_code": "AFTER_SALES_POLICY_NOT_FOUND",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0103",
+    "tenant": "T1",
+    "scenario": "refund-rejected",
+    "request": "订单 ORD-1 质量破损想退掉",
+    "approval": "rejected",
+    "expected": {
+      "outcome": "rejected",
+      "refunded": "0.00",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0104",
+    "tenant": "T1",
+    "scenario": "unknown-intent",
+    "request": "你好",
+    "expected": {
+      "outcome": "escalated",
+      "refunded": "0.00",
+      "intent": "unknown"
+    }
+  },
+  {
+    "id": "g2-0105",
+    "tenant": "T1",
+    "scenario": "no-applicable-policy",
+    "request": "订单 ORD-1 少件漏发，要求退款",
+    "expected": {
+      "outcome": "escalated",
+      "refunded": "0.00",
+      "error_code": "AFTER_SALES_POLICY_NOT_FOUND",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0106",
+    "tenant": "T1",
+    "scenario": "exchange-escalated",
+    "request": "订单 ORD-1 我想换货",
+    "expected": {
+      "outcome": "escalated",
+      "refunded": "0.00",
+      "intent": "exchange"
+    }
+  },
+  {
+    "id": "g2-0107",
+    "tenant": "T1",
+    "scenario": "refund-rejected",
+    "request": "订单 ORD-1 商品破损，要求退款",
+    "approval": "rejected",
+    "expected": {
+      "outcome": "rejected",
+      "refunded": "0.00",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0108",
+    "tenant": "T1",
+    "scenario": "forged-resume-safe",
+    "request": "订单 ORD-1 商品破损，要求退款",
+    "expected": {
+      "outcome": "refunded",
+      "refunded": "100.00",
+      "forged_was_ignored": true,
+      "intent": "refund"
+    },
+    "approval": "approved",
+    "forged_resume_first": true
+  },
+  {
+    "id": "g2-0109",
+    "tenant": "T1",
+    "scenario": "refund-approved",
+    "request": "订单 ORD-1 商品破损，要求退款",
+    "approval": "approved",
+    "expected": {
+      "outcome": "refunded",
+      "refunded": "100.00",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0110",
+    "tenant": "T1",
+    "scenario": "clarify-missing-order",
+    "request": "东西坏了要退钱",
+    "expected": {
+      "outcome": "clarify",
+      "refunded": "0.00"
+    }
+  },
+  {
+    "id": "g2-0111",
+    "tenant": "T1",
+    "scenario": "clarify-missing-order",
+    "request": "商品破损，要求退款",
+    "expected": {
+      "outcome": "clarify",
+      "refunded": "0.00"
+    }
+  },
+  {
+    "id": "g2-0112",
+    "tenant": "T1",
+    "scenario": "clarify-missing-order",
+    "request": "商品破损，要求退款",
+    "expected": {
+      "outcome": "clarify",
+      "refunded": "0.00"
+    }
+  },
+  {
+    "id": "g2-0113",
+    "tenant": "T1",
+    "scenario": "refund-approved",
+    "request": "订单 ORD-1 收到的东西坏了，要退钱",
+    "approval": "approved",
+    "expected": {
+      "outcome": "refunded",
+      "refunded": "100.00",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0114",
+    "tenant": "T1",
+    "scenario": "refund-rejected",
+    "request": "订单 ORD-1 质量破损想退掉",
+    "approval": "rejected",
+    "expected": {
+      "outcome": "rejected",
+      "refunded": "0.00",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0115",
+    "tenant": "T1",
+    "scenario": "refund-approved",
+    "request": "订单 ORD-1 商品破损，要求退款",
+    "approval": "approved",
+    "expected": {
+      "outcome": "refunded",
+      "refunded": "100.00",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0116",
+    "tenant": "T1",
+    "scenario": "no-applicable-policy",
+    "request": "订单 ORD-1 少件漏发，要求退款",
+    "expected": {
+      "outcome": "escalated",
+      "refunded": "0.00",
+      "error_code": "AFTER_SALES_POLICY_NOT_FOUND",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0117",
+    "tenant": "T1",
+    "scenario": "unknown-intent",
+    "request": "你好",
+    "expected": {
+      "outcome": "escalated",
+      "refunded": "0.00",
+      "intent": "unknown"
+    }
+  },
+  {
+    "id": "g2-0118",
+    "tenant": "T1",
+    "scenario": "conflict-policy",
+    "request": "订单 ORD-1 商品破损，要求退款",
+    "extra_policies": [
+      [
+        "P-DAMAGED-HALF",
+        [
+          "damaged"
+        ],
+        "0.50",
+        30
+      ]
+    ],
+    "expected": {
+      "outcome": "escalated",
+      "refunded": "0.00",
+      "error_code": "AFTER_SALES_POLICY_CONFLICT",
+      "intent": "refund"
+    }
+  },
+  {
+    "id": "g2-0119",
+    "tenant": "T1",
+    "scenario": "exchange-escalated",
+    "request": "订单 ORD-1 麻烦换一个",
+    "expected": {
+      "outcome": "escalated",
+      "refunded": "0.00",
+      "intent": "exchange"
+    }
+  },
+  {
+    "id": "g2-0120",
+    "tenant": "T1",
+    "scenario": "repeat-request",
+    "request": "订单 ORD-1 商品破损，要求退款",
+    "expected": {
+      "outcome": "refunded",
+      "repeat_outcome": "refunded",
+      "refunded": "100.00",
+      "intent": "refund"
+    },
+    "approval": "approved",
+    "repeat_same_thread": true
+  }
+]

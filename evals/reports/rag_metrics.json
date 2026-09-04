@@ -1,0 +1,16 @@
+{
+  "dataset": "rag-gold-v1",
+  "seed": 42,
+  "queries": 100,
+  "total": 100,
+  "recall_at_1": 0.37,
+  "recall_at_k": 0.8,
+  "mrr": 0.5283,
+  "k": 3,
+  "injected": 3,
+  "rejected": 3,
+  "rejection_rate": 1.0,
+  "top1_valid_citations": 100,
+  "citation_accuracy": 0.37,
+  "unmeasured": []
+}
