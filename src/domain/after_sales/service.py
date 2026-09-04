@@ -93,17 +93,45 @@ class AfterSalesService:
         }
 
     def restore_state(self, state: dict) -> None:
-        """从导出状态恢复（仅用于持久化恢复路径；不改变权限/状态机/幂等语义）。"""
-        if int(state.get("schema_version", 0)) != 1:
-            raise ValueError(f"未知快照 schema_version：{state.get('schema_version')}")
-        self._orders = dict(state["orders"])
-        self._policies = list(state["policies"])
-        self._tickets = dict(state["tickets"])
-        self._operations = dict(state["operations"])
-        self._refunded_by_order = dict(state["refunded"])
-        self._audit = list(state["audit"])
-        self._seq = int(state["seq"])
-        self._idempotency.import_records(state["idempotency"])
+        """从导出状态恢复（原子：先构造全部局部容器并预检，通过后一次性替换内部状态）。
+
+        语义校验由持久化层 validate_snapshot_state 完成；此处只做结构预检与原子替换，
+        任何失败都不会部分改变当前业务状态（K3）。
+        """
+        expected_keys = {
+            "schema_version", "seq", "orders", "policies", "tickets",
+            "operations", "refunded", "audit", "idempotency",
+        }
+        if not isinstance(state, dict) or set(state.keys()) != expected_keys:
+            raise ValueError(f"快照顶层字段不符：{set(state.keys()) if isinstance(state, dict) else type(state)}")
+        if type(state["schema_version"]) is not int or state["schema_version"] != 1:
+            raise ValueError(f"schema_version 必须是 int 且为 1，收到 {state['schema_version']!r}")
+        if type(state["seq"]) is not int or state["seq"] < 0:
+            raise ValueError(f"seq 必须是 int 且 ≥0，收到 {state['seq']!r}")
+        for k in ("orders", "tickets", "operations", "refunded", "idempotency"):
+            if not isinstance(state[k], dict):
+                raise TypeError(f"快照字段 {k} 必须是 dict，收到 {type(state[k]).__name__}")
+        for k in ("policies", "audit"):
+            if not isinstance(state[k], list):
+                raise TypeError(f"快照字段 {k} 必须是 list，收到 {type(state[k]).__name__}")
+
+        # 全部先构造到局部，构造完成后一次替换（原子）
+        new_orders = dict(state["orders"])
+        new_policies = list(state["policies"])
+        new_tickets = dict(state["tickets"])
+        new_operations = dict(state["operations"])
+        new_refunded = dict(state["refunded"])
+        new_audit = list(state["audit"])
+        new_seq = state["seq"]
+        new_idem = dict(state["idempotency"])
+        self._orders = new_orders
+        self._policies = new_policies
+        self._tickets = new_tickets
+        self._operations = new_operations
+        self._refunded_by_order = new_refunded
+        self._audit = new_audit
+        self._seq = new_seq
+        self._idempotency.import_records(new_idem)
 
     # ---------- 只读查询 ----------
 

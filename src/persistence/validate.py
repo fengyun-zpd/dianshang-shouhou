@@ -64,8 +64,21 @@ def validate_snapshot_state(state: dict) -> bool:
         extra = keys - _REQUIRED_TOP_KEYS
         missing = _REQUIRED_TOP_KEYS - keys
         raise _bad(f"顶层字段集合不符（多出 {sorted(extra)}，缺失 {sorted(missing)}）")
+
+    # ---- 顶层类型严格（K3）：schema_version/seq 仅合法 int，拒小数截断/str/bool ----
+    for numeric_key in ("schema_version", "seq"):
+        value = state[numeric_key]
+        if type(value) is not int or isinstance(value, bool):
+            raise _bad(f"{numeric_key} 必须是 int（收到 {type(value).__name__}：{value!r}，拒绝截断/类型转换）")
     if int(state["schema_version"]) != 1:
         raise _bad(f"schema_version 必须为 1，收到 {state['schema_version']}")
+    dict_keys = ("orders", "tickets", "operations", "refunded", "idempotency")
+    for k in dict_keys:
+        if not isinstance(state[k], dict):
+            raise _bad(f"顶层字段 {k} 必须是 dict，收到 {type(state[k]).__name__}")
+    for k in ("policies", "audit"):
+        if not isinstance(state[k], list):
+            raise _bad(f"顶层字段 {k} 必须是 list，收到 {type(state[k]).__name__}")
 
     orders: dict[str, Order] = state["orders"]
     policies: list[PolicyRule] = state["policies"]
@@ -74,7 +87,7 @@ def validate_snapshot_state(state: dict) -> bool:
     refunded: dict[str, Decimal] = state["refunded"]
     audit: list[AuditEvent] = state["audit"]
     idem: dict[str, IdempotencyRecord] = state["idempotency"]
-    seq = int(state["seq"])
+    seq = state["seq"]
     if seq < 0:
         raise _bad(f"seq 不可为负：{seq}")
 
@@ -104,6 +117,8 @@ def validate_snapshot_state(state: dict) -> bool:
             raise _bad(f"政策 {p.policy_id} refund_ratio 超出 [0,1]")
         if p.window_days < 0:
             raise _bad(f"政策 {p.policy_id} window_days 不可为负")
+        if not isinstance(p.reason_tags, tuple) or not all(isinstance(t, str) for t in p.reason_tags):
+            raise _bad(f"政策 {p.policy_id} reason_tags 必须是 str 元组")
 
     # ---- 工单 / 操作引用与租户 ----
     order_tenant: dict[str, str] = {oid: o.tenant_id for oid, o in orders.items()}
@@ -111,6 +126,8 @@ def validate_snapshot_state(state: dict) -> bool:
     for tid, ticket in tickets.items():
         if not isinstance(ticket, AfterSalesTicket):
             raise _bad(f"工单 {tid} 结构错误")
+        if not isinstance(ticket.reason_tags, tuple) or not all(isinstance(t, str) for t in ticket.reason_tags):
+            raise _bad(f"工单 {tid} reason_tags 必须是 str 元组")
         if ticket.order_id not in orders:
             raise _bad(f"工单 {tid} 引用不存在的订单 {ticket.order_id}")
         if ticket.tenant_id != order_tenant[ticket.order_id]:

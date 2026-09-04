@@ -39,17 +39,18 @@
 
 ```powershell
 .venv\Scripts\python.exe scripts\demo_persistence.py
-.venv\Scripts\python.exe -m pytest tests/unit/persistence -v   # 22 项（6 原型 + 12 校验 + 4 原子恢复）
+.venv\Scripts\python.exe -m pytest tests/unit/persistence -v   # 37 项（原型 6 + 校验 12 + 原子恢复 4 + K3 严格类型/恢复安全 15）
 ```
 
-全量回归：`.venv\Scripts\python.exe -m pytest tests/` → 248 passed（2026-09-04 K2 收敛后实测）。
+全量回归：`.venv\Scripts\python.exe -m pytest tests/` → 265 passed（2026-09-04 K2/K3 后实测）。
 
 ## 5. 限制与下一步（诚实边界）
 
-- 本原型是**内存领域服务 + 全量快照落库**，非真正的事务型持久化：
-  单命令粒度原子性、并发与行级锁由未来 PostgreSQL 实现；
+- **SQLite 仅为恢复原型，不是生产唯一事实源**：内存领域服务 + 全量快照落库，
+  非事务型持久化；未实现 PostgreSQL（K4）之前不得声称生产持久化能力；
+- 单命令粒度原子性、并发与行级锁由未来 PostgreSQL 实现；
 - 快照为全量（非增量 WAL）；幂等唯一约束仍在应用层（PostgreSQL 唯一约束为规划）；
-- per-key 锁为进程内（单实例）；跨进程并发需数据库唯一约束（规划）；
+- per-key/订单级锁为进程内（单实例）；跨进程并发需数据库行锁（规划）；
 - 生产路线：SQLAlchemy/Alembic + PostgreSQL（含 pgvector），把本层接口作为迁移契约；
 - 未改变任何既有领域规则与安全不变量。
 
@@ -57,3 +58,4 @@
 
 - v1.0（2026-09-04）—— 首版：导出/恢复接口、SQLite append-only 存储、恢复会话与演示。
 - v1.1（2026-09-04）—— 任务卡 J：快照严格校验、原子恢复（restore_into）、幂等 per-key 原子语义。
+- v1.2（2026-09-04）—— K3：顶层字段类型严格（schema_version/seq 仅合法 int，拒小数截断/str/bool；集合类型校验）；reason_tags/嵌套结构与跨租户校验；`restore_state` 原子（先构造后替换，失败零部分变更）；新增损坏/伪造 checkpoint（指纹篡改）/跨租户/重复/并发恢复测试；明确 SQLite 仅为恢复原型。
