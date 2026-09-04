@@ -60,7 +60,7 @@ def test_invalid_resume_with_fake_operation_id():
 
     # 注入伪造操作编号（模拟 checkpoint 被篡改/误恢复）
     runner.graph.update_state(
-        {"configurable": {"thread_id": "t-fakeop"}}, {"operation_id": "OP-FAKE-000"}
+        runner._cfg("t-fakeop"), {"operation_id": "OP-FAKE-000"}
     )
     r2 = runner.resume("t-fakeop")
     assert r2.finished is True

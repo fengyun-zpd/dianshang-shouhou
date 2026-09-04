@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import os
+from urllib.parse import urlsplit
 from dataclasses import dataclass, field
 from typing import Optional, Sequence
 
@@ -88,12 +89,38 @@ def load_llm_settings(env=None) -> LLMSettings:
 
 
 def is_allowed_base_url(base_url: Optional[str], allowed: Sequence[str]) -> bool:
-    """Base URL 白名单校验（前缀匹配，防止指向非白名单端点）。"""
+    """严格按 scheme/hostname/端口/路径边界校验 Base URL，拒绝 userinfo 与伪后缀域名。"""
     if not base_url:
         return False
-    for prefix in allowed:
-        if base_url.startswith(prefix):
+    try:
+        candidate = urlsplit(base_url)
+        if candidate.scheme not in {"http", "https"} or not candidate.hostname:
+            return False
+        if candidate.username is not None or candidate.password is not None:
+            return False
+        for entry in allowed:
+            rule = urlsplit(entry)
+            if rule.scheme not in {"http", "https"} or not rule.hostname:
+                continue
+            if candidate.scheme != rule.scheme or candidate.hostname.lower() != rule.hostname.lower():
+                continue
+            # 远程白名单按协议默认端口归一化；回环地址可保留任意本地测试端口。
+            if rule.hostname.lower() not in {"127.0.0.1", "localhost", "::1"}:
+                candidate_port = candidate.port or (443 if candidate.scheme == "https" else 80)
+                rule_port = rule.port or (443 if rule.scheme == "https" else 80)
+                if candidate_port != rule_port:
+                    continue
+            elif rule.port is not None and candidate.port != rule.port:
+                continue
+            rule_path = rule.path.rstrip("/")
+            candidate_path = candidate.path.rstrip("/")
+            if rule_path and not (candidate_path == rule_path or candidate_path.startswith(rule_path + "/")):
+                continue
+            if candidate.query or candidate.fragment:
+                continue
             return True
+    except ValueError:
+        return False
     return False
 
 

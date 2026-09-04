@@ -57,6 +57,22 @@ def test_tenant_isolation():
     assert store.search("T2", "商品破损如何退款") == []  # 跨租户不返回
 
 
+def test_same_policy_key_isolated_per_tenant():
+    store = PolicyStore()
+    t1 = store.register(_doc(tenant="T1", content="T1 专属破损政策"))
+    t2 = store.register(_doc(tenant="T2", content="T2 专属破损政策"))
+    assert t1 and t2 and t1[0].text != t2[0].text
+    assert store.validate_citation("T1", "P-DAMAGED@1#0").tenant_id == "T1"
+    assert store.validate_citation("T2", "P-DAMAGED@1#0").tenant_id == "T2"
+
+
+def test_same_tenant_policy_key_conflict_rejected():
+    store = PolicyStore()
+    store.register(_doc(tenant="T1", content="原政策"))
+    with pytest.raises(ValueError, match="内容冲突"):
+        store.register(_doc(tenant="T1", content="被篡改政策"))
+
+
 def test_no_evidence_returns_empty():
     store = PolicyStore()
     store.register(_doc())

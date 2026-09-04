@@ -95,14 +95,30 @@ def assert_output_safe(text: str) -> None:
 
 
 def assert_payload_safe(payload: BaseModel) -> None:
-    """对结构化输出的全部字符串字段执行内容守卫。"""
-    for value in payload.model_dump().values():
+    """递归检查结构化输出，避免嵌套 dict/list 藏匿动作或金额指令。"""
+    def walk(value, seen: set[int]) -> None:
         if isinstance(value, str):
             assert_output_safe(value)
-        elif isinstance(value, list):
+            return
+        if isinstance(value, BaseModel):
+            value = value.model_dump()
+        if isinstance(value, dict):
+            marker = id(value)
+            if marker in seen:
+                return
+            seen.add(marker)
+            for item in value.values():
+                walk(item, seen)
+            return
+        if isinstance(value, (list, tuple, set)):
+            marker = id(value)
+            if marker in seen:
+                return
+            seen.add(marker)
             for item in value:
-                if isinstance(item, str):
-                    assert_output_safe(item)
+                walk(item, seen)
+
+    walk(payload, set())
 
 
 def estimate_tokens(text: str) -> int:

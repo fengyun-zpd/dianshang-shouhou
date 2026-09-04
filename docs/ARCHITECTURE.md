@@ -1,7 +1,7 @@
 # 目标架构、启动方式与第一版验收清单
 
 > 归属：电商售后多智能体工单系统（目标远程 `fengyun-zpd/dianshang-shouhou`，本地工作区 `D:\workplace\PyCharmMiscProject\私域`）
-> 版本：v0.1。本文档整合本地工作区已确认事实与阶段 0 要求输出的"架构图 / 启动方式 / 验收清单"，作为 README 更新（决策项 D2）前的中间文档。规划能力不写成已实现。
+> 版本：v0.2。本文档整合本地工作区已确认事实与当前 V1 实现的"架构图 / 启动方式 / 验收清单"。规划能力不写成已实现。
 
 ## 1. 业务闭环（目标）
 
@@ -29,7 +29,7 @@
 横切     日志脱敏 · 评测黄金集 · 安全不变量
 ```
 
-当前已实现：领域层售后插件（阶段 1）＋ 编排层 LangGraph 单 Agent 工作流（阶段 2，33 项测试），全量 95 项通过；checkpoint 仅存流程状态，业务事实一律重读领域服务。接入层/LLM 决策层/数据持久化仍未实现（规划中）。
+当前已实现：领域层售后插件、LangGraph 单 Agent 工作流、工具/RAG、可靠性评测、受控 LLM 适配、Supervisor 实验、Mule Bridge、SQLite 可恢复原型；checkpoint 仅存流程状态，业务事实一律重读领域服务。PostgreSQL、真实外部网络端点和控制台仍为规划。
 
 ## 3. 本地目录职责（现状与目标）
 
@@ -37,12 +37,12 @@
 
 ## 4. 启动方式
 
-阶段 0/1/2（当前；依赖装在 D 盘 `.venv`）：
+V1 当前验证（依赖装在 D 盘 `.venv`）：
 
 ```powershell
 cd D:\workplace\PyCharmMiscProject\私域
-.venv\Scripts\python.exe -m pytest tests/ -v                 # 全量回归（95 项）
-.venv\Scripts\python.exe -m pytest tests/unit/agents -v     # 单 Agent 工作流（任务卡 B，33 项）
+.venv\Scripts\python.exe -m pytest tests/ -v                 # 全量回归（209 项）
+.venv\Scripts\python.exe -m pytest tests/unit/agents -v     # 单 Agent 工作流
 .venv\Scripts\python.exe -m pytest tests/unit/domain/after_sales -v   # 售后插件（任务卡 A）
 .venv\Scripts\python.exe scripts\run_tests.py                # 分层回归脚本
 .venv\Scripts\python.exe scripts\demo_interrupt_resume.py    # interrupt/resume 演示

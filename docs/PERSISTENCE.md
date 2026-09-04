@@ -23,23 +23,37 @@
 - 损坏/篡改（payload 改坏、checksum 不匹配、JSON 非法）→ 拒绝恢复（fail-closed），绝不半恢复；
 - 跨数据库文件隔离。
 
-## 3. 运行
+## 3. 严格校验与原子恢复（任务卡 J）
+
+- `src/persistence/validate.py`：快照在恢复前经历**完整结构/语义校验**——顶层键集合精确、
+  引用关系（工单→订单、操作→工单/订单一致）、租户一致、金额为有限 Decimal 且非负/为正、
+  refunded == 已执行求和且 ≤ 实付、seq 单调、`executed` 与状态一致、工单关闭时操作均终态、
+  审计与幂等记录引用存在、无 `<pending>` 占位；
+- 任何解码/校验/恢复错误统一为 `SnapshotCorruptionError`（fail-closed）；
+- `RecoverableSession.restore_into(svc, snapshot)`：先解码+校验，失败时**原服务状态完全不变**，
+  通过后 `restore_state` 一次性替换（原子恢复）；
+- 幂等记录支持 `lock_for`（per-key）/`get_or_reserve`/`commit`/`release`，
+  `create_ticket`/`create_refund` 在 per-key 锁内 check-then-act（原子幂等，并发同键只产生一个对象）。
+
+## 4. 运行
 
 ```powershell
 .venv\Scripts\python.exe scripts\demo_persistence.py
-.venv\Scripts\python.exe -m pytest tests/unit/persistence -v   # 6 项
+.venv\Scripts\python.exe -m pytest tests/unit/persistence -v   # 22 项（6 原型 + 12 校验 + 4 原子恢复）
 ```
 
-全量回归：`pytest tests/` → 200 passed（194 + 6）。
+全量回归：`.venv\Scripts\python.exe -m pytest tests/` → 235 passed。
 
-## 4. 限制与下一步（诚实边界）
+## 5. 限制与下一步（诚实边界）
 
 - 本原型是**内存领域服务 + 全量快照落库**，非真正的事务型持久化：
   单命令粒度原子性、并发与行级锁由未来 PostgreSQL 实现；
 - 快照为全量（非增量 WAL）；幂等唯一约束仍在应用层（PostgreSQL 唯一约束为规划）；
+- per-key 锁为进程内（单实例）；跨进程并发需数据库唯一约束（规划）；
 - 生产路线：SQLAlchemy/Alembic + PostgreSQL（含 pgvector），把本层接口作为迁移契约；
 - 未改变任何既有领域规则与安全不变量。
 
-## 5. 修订记录
+## 6. 修订记录
 
 - v1.0（2026-09-04）—— 首版：导出/恢复接口、SQLite append-only 存储、恢复会话与演示。
+- v1.1（2026-09-04）—— 任务卡 J：快照严格校验、原子恢复（restore_into）、幂等 per-key 原子语义。

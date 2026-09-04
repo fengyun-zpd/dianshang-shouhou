@@ -19,7 +19,8 @@ from pydantic import BaseModel, ValidationError
 
 from src.agents import WorkflowRunner
 from src.domain.after_sales import AfterSalesError, AfterSalesService
-from src.platform.reliability import CircuitBreaker
+from src.platform.reliability import CircuitBreaker, CircuitOpenError
+from src.domain.models import Role
 from src.rag import PolicyStore
 
 from .models import (
@@ -89,6 +90,17 @@ class MuleAgentBridge:
             return self._finish(principal, action, identity.tenant_id, "FORBIDDEN",
                                 started, f"身份 {principal} 无权调用 {action}", payload)
 
+        allowed_roles = {
+            BridgeAction.query_order: {Role.AGENT, Role.APPROVER, Role.SYSTEM},
+            BridgeAction.query_ticket: {Role.AGENT, Role.APPROVER, Role.SYSTEM},
+            BridgeAction.list_customer_tickets: {Role.AGENT, Role.APPROVER, Role.SYSTEM},
+            BridgeAction.retrieve_policy: {Role.AGENT, Role.APPROVER, Role.SYSTEM},
+            BridgeAction.submit_after_sales_request: {Role.CUSTOMER, Role.AGENT},
+        }
+        if identity.local_role not in allowed_roles.get(act, set()):
+            return self._finish(principal, action, identity.tenant_id, "FORBIDDEN", started,
+                                f"本地角色 {identity.local_role.value} 不得调用 {action}", payload)
+
         # 租户注入：请求级 tenant_id 必须与身份映射一致（不一致直接拒绝，杜绝跨租户）
         tenant_id = identity.tenant_id
         explicit = payload.get("tenant_id")
@@ -119,6 +131,9 @@ class MuleAgentBridge:
         except CircuitOpenError:
             envelope = BridgeEnvelope(action=act, ok=False, error_code="CIRCUIT_OPEN",
                                       error_detail="桥接熔断打开（fail-closed）")
+        except BridgeExecutionError as e:
+            envelope = BridgeEnvelope(action=act, ok=False, error_code=e.code,
+                                      error_detail=e.message)
 
         self._logs.append(BridgeLogEntry(
             principal=principal, action=act.value, tenant_id=tenant_id,
@@ -140,7 +155,11 @@ class MuleAgentBridge:
         try:
             data = future.result(timeout=self._timeout)
         except FutureTimeout:
-            raise RuntimeError("BRIDGE_TIMEOUT")
+            future.cancel()  # 运行中的任务无法强杀；提交类动作结果按未知状态处理
+            raise BridgeExecutionError(
+                "BRIDGE_TIMEOUT",
+                "桥接执行超时；若动作可能产生副作用，必须按原 operation_id 对账，禁止换键重试",
+            )
         except BridgeExecutionError as e:
             return BridgeEnvelope(action=act, ok=False, error_code=e.code,
                                   error_detail=e.message)

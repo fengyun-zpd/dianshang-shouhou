@@ -7,10 +7,10 @@
 
 | 环节 | 实现 |
 | --- | --- |
-| 身份映射 | `IdentityRegistry`：外部 principal → 本地租户/角色/动作白名单；未注册 → `AUTH_ERROR` 拒绝 |
+| 身份映射 | `IdentityRegistry`：外部 principal → 本地租户/角色/动作白名单；未注册 → `AUTH_ERROR` 拒绝；每个动作还要通过本地角色矩阵（查询只读角色，发起请求允许客服/客户，审批与执行永不进入桥接层） |
 | 租户注入 | 请求级 `tenant_id` 与身份映射不一致 → `TENANT_MISMATCH` 拒绝；一致则剥离（租户只来自映射） |
 | Schema 校验 | 入站 `INBOUND_SCHEMAS` / 出站 `OUTBOUND_SCHEMAS`（Pydantic，非法 → `VALIDATION_ERROR` / `OUTPUT_SCHEMA_ERROR`） |
-| 超时 | 执行默认 3s（`ThreadPoolExecutor` + future timeout）→ `BRIDGE_TIMEOUT` |
+| 超时 | 执行默认 3s（`ThreadPoolExecutor` + future timeout）→ `BRIDGE_TIMEOUT`；无法确认副作用时只能按原 `operation_id` 对账，禁止换键重试 |
 | 审计 | `BridgeLogEntry`：身份/动作/租户/状态/耗时/错误码；**不含 PII、密钥、请求体原文**（测试断言） |
 | 断路 | 复用 `platform.reliability.CircuitBreaker`：打开时 fail-closed → `CIRCUIT_OPEN` |
 | 注入防护 | 政策检索查询命中提示注入 → `INJECTION_DETECTED`（不返回文档） |
@@ -47,6 +47,6 @@ MCP（Model Context Protocol）作为跨服务/跨 Agent 网络协议属**规划
 - 测试：`tests/unit/bridge/test_bridge.py`（12 项）：身份拒绝/越权拒绝/高危动作不可达/
   未知动作/跨租户注入拒绝/租户一致容忍/Schema/正常查询/政策注入拒绝/发起请求到审批
   （零执行、零退款）/熔断 fail-closed/审计无 PII 与请求体。
-- 全量回归：`pytest tests/` → 194 passed（182 + 12，无回归）。
+- 全量回归：`.venv\Scripts\python.exe -m pytest tests/` → 209 passed（含安全修复回归）。
 - 未接入真实 MuleSoft / 网络端点（无凭据、不连外部）；身份映射为内存配置（生产可换 DB/配置）。
-- 修订：v1.0（2026-09-04）首版。
+- 修订：v1.1（2026-09-04）补充角色矩阵与未知结果对账语义。

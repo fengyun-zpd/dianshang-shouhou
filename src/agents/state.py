@@ -46,6 +46,10 @@ class AgentState(TypedDict, total=False):
     reply: Optional[str]             # 面向用户的最终话术（V1 由模板生成，非 LLM）
     approval_summary: Optional[str]  # 展示给审批人的可读摘要
 
+    # 线程生命周期（任务卡 J）：请求指纹（tenant + 规范化请求哈希），
+    # checkpoint 中不可变——同一 thread 只能继续原请求。
+    thread_request_fingerprint: Optional[dict]
+
 
 def new_state() -> AgentState:
     """流程状态初始值（列表/字典字段默认）。"""

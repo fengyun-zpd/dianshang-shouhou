@@ -1,7 +1,7 @@
 # 第一版模块任务拆分与任务卡
 
 > 归属：电商售后多智能体工单系统（目标远程 `fengyun-zpd/dianshang-shouhou`，本地工作区 `D:\workplace\PyCharmMiscProject\私域`）
-> 版本：v0.1。本文档为"任务分配与文件所有权"的事实源；实现状态以 `docs/STATUS_AND_RISKS.md` 与测试输出为准。
+> 版本：v0.2。本文档为"任务分配与文件所有权"的事实源；实现状态以 `docs/STATUS_AND_RISKS.md` 与测试输出为准。
 
 ## 1. 协作规则（每个执行者必须遵守）
 
@@ -30,7 +30,7 @@
 │   ├── test_refund_service.py # 现有基线（保留，只读）
 │   ├── conftest.py            # 任务卡 C
 │   └── unit/domain/after_sales/  # 任务卡 A
-├── evals/                     # 规划（阶段 4，黄金集）
+├── evals/                     # 黄金集与模型评测（阶段 4/5，已实现）
 ├── scripts/                   # 任务卡 C（run_tests / 回归模板）
 ├── docs/                      # 本目录：状态、拆分、架构、回归模板
 └── 仓储 → 外部参考基线，禁止写入
@@ -40,13 +40,13 @@
 
 | 阶段 | 模块 | 交付物 | 状态 |
 | --- | --- | --- | --- |
-| 0 | 项目基线 | 目录/配置/日志/错误码/迁移/夹具/CI + README/架构/启动/验收清单 | 规划中（本文档与 `docs/ARCHITECTURE.md` 已落地一部分） |
-| 1 | 售后领域插件 | 实体、订单核验、资格、退款上限、工单状态机、幂等命令、政策 V1、测试 | 规划中 → 任务卡 A（进行中） |
-| 2 | 单 Agent 闭环 | LangGraph 单图、澄清、只读工具、草稿、审批 interrupt/resume | 规划中 → 任务卡 B（待 A 验收后启动） |
-| 3 | 工具与 RAG | JSON Schema 工具、TenantContext、注入防护、检索+引用 | 规划中 |
-| 4 | 可靠性与评测 | 重试/熔断/降级/`operation_unknown`、黄金集回放 | 规划中 |
-| 5 | 多 Agent/模型优化 | Supervisor+子 Agent、CrewAI 可选、Graphiti、微调对照 | 规划中（ADR-002/004/005） |
-| 6 | 外部 Agent 网络 | Mule Agent Bridge 适配器 | 规划中（ADR-003） |
+| 0 | 项目基线 | 目录/配置/日志/错误码/迁移/夹具/CI + README/架构/启动/验收清单 | ✅ 已完成 |
+| 1 | 售后领域插件 | 实体、订单核验、资格、退款上限、工单状态机、幂等命令、政策 V1、测试 | ✅ 已完成 |
+| 2 | 单 Agent 闭环 | LangGraph 单图、澄清、只读工具、草稿、审批 interrupt/resume | ✅ 已完成 |
+| 3 | 工具与 RAG | JSON Schema 工具、TenantContext、注入防护、检索+引用 | ✅ 已完成 |
+| 4 | 可靠性与评测 | 重试/熔断/降级/`operation_unknown`、黄金集回放 | ✅ 已完成 |
+| 5 | 多 Agent/模型优化 | Supervisor+子 Agent、离线/兼容 LLM 适配、微调对照路线 | 🧪 Supervisor 已完成；微调规划 |
+| 6 | 外部 Agent 网络 | Mule Agent Bridge 适配器 | ✅ 已完成（MCP/A2A 实接规划） |
 
 实施顺序固定：0 → 1 → 2 → 3 → 4 → 5 → 6（用户指令与 ADR-002 一致；先单 Agent 稳定再谈多 Agent）。
 
@@ -96,22 +96,33 @@
 - 交付：`src/agents/subagents.py`（`ReadOnlySubAgent` + order/history/policy 白名单；构造时断言全只读）、`supervisor.py`（`SupervisorRunner`：API/状态/审批语义与单 Agent 一致，仅证据节点替换为并行子 Agent 编排）、`graph.py` 支持 `evidence_node` 切换；A/B 对照 `evals/compare_agents.py`；`docs/MULTI_AGENT_EXPERIMENT.md`。
 - 测试：`tests/unit/agents/test_supervisor.py`（11 项：只读边界/无写工具/跨租户/正确性一致（approved+rejected）/政策引用/审批 resume/拒绝/重复 resume 幂等/unknown 原键对账/伪造忽略/零副作用）。
 - 实验结论（ADR-002）：两模式黄金集均 11/11、outcome 与退款 100% 一致 → **默认路径维持单 Agent**；Supervisor 保留为可选实验运行时（并行只读证据、子 Agent 模块化、未来多模型挂载点）。
-- 验收命令：`.venv\Scripts\python.exe -m pytest tests/ -v`（182 passed）；`.venv\Scripts\python.exe evals\compare_agents.py`；`.venv\Scripts\python.exe evals\replay.py`（11/11）；`git diff --check`。
+- 验收命令：`.venv\Scripts\python.exe -m pytest tests/ -v`（当前全量 209 passed）；`.venv\Scripts\python.exe evals\compare_agents.py`；`.venv\Scripts\python.exe evals\replay.py`（11/11）；`git diff --check`。
 
 ### 任务卡 H：Mule Agent Bridge（阶段 6，✅ 已完成）
 
 - 交付：`src/bridge/models.py`（BridgeIdentity/IdentityRegistry、BridgeAction 白名单、入/出站 Schema、BridgeLogEntry、FORBIDDEN_ACTIONS）+ `src/bridge/bridge.py`（`MuleAgentBridge.invoke`：身份→白名单→租户注入→Schema→熔断→执行→出站校验→审计；超时 3s；注入拒绝）；`docs/MULE_BRIDGE.md`。
 - 安全边界：白名单仅只读查询 + `submit_after_sales_request`（客服入口语义，AGENT 草稿 + 人工审批）；approve/reject/execute/close_ticket/change_address/high_risk_draft/refund_now 在协议中**不存在**（测试断言不可达）；跨租户注入拒绝；审计无 PII/请求体。
-- 测试：`tests/unit/bridge/test_bridge.py`（12 项）。全量 194 passed。
+- 测试：`tests/unit/bridge/test_bridge.py`（当前 14 项，含角色矩阵与超时回归）。全量 209 passed。
 - 验收命令：`.venv\Scripts\python.exe -m pytest tests/ -v`；`.venv\Scripts\python.exe evals\replay.py`（11/11）；`git diff --check`。
 - 边界：未接真实 MuleSoft/MCP server（规划）；身份映射为内存配置。
 
 ### 任务卡 I：可恢复持久化原型（SQLite，✅ 已完成）
 
 - 交付：`service.export_state/restore_state` 与 `idempotency.export/import_records`（只读/恢复增量，不改规则）；`src/persistence/{codec,store,session}.py`；`RecoverableSession`；演示 `scripts/demo_persistence.py`；`docs/PERSISTENCE.md`。
-- 测试：`tests/unit/persistence/test_snapshot.py`（6 项：roundtrip 保真+续跑 / 幂等恢复 / JSON 可序列化 / 损坏拒绝 fail-closed / checksum 篡改检测 / 跨库隔离）。全量 200 passed。
+- 测试：`tests/unit/persistence/test_snapshot.py`（6 项：roundtrip 保真+续跑 / 幂等恢复 / JSON 可序列化 / 损坏拒绝 fail-closed / checksum 篡改检测 / 跨库隔离）。全量 209 passed。
 - 验收命令：`.venv\Scripts\python.exe scripts\demo_persistence.py`；`.venv\Scripts\python.exe -m pytest tests/ -v`。
 - 限制：全量快照（非 WAL/事务型）；生产路线 PostgreSQL + alembic（规划，未实现）。
+
+### 任务卡 J：一致性与恢复安全（✅ 已完成）
+
+- 范围：`src/agents/runner.py`、`src/persistence/`、`src/domain/idempotency.py`、`src/domain/after_sales/service.py` 与对应测试/文档；不动 Mule/RAG/LLM/AGENTS.md。
+- 交付：
+  - 线程生命周期：请求指纹（tenant + 规范化请求哈希）写入 checkpoint；同一 thread 只能继续原请求；结束线程提交不同请求 → `ThreadConflictError`；同请求重复提交返回**原结果**（不重放）；禁止新 order 与旧 ticket 混合；租户绑定不可变（租户命名空间，`THREAD_TENANT_CONFLICT`）。
+  - 快照安全：`src/persistence/validate.py` 严格校验（顶层键集合/引用关系/租户一致/金额有限非负/refunded==已执行求和且≤实付/seq 单调/状态组合/审计与幂等引用），所有解码与恢复错误统一 `SnapshotCorruptionError`。
+  - 原子恢复：`RecoverableSession.restore_into(svc, snapshot)` 先解码+校验、失败时原服务完全不变、通过后 `restore_state` 一次性替换。
+  - 原子幂等：`IdempotencyStore.lock_for`(per-key)/`get_or_reserve`/`commit`/`release`；`create_ticket`/`create_refund` 在 per-key 锁内 check-then-act（CAS），创建失败释放占位；并发 N 同请求只产生一个业务对象、同键异载荷恰一个成功。
+- 新增测试 26 项：`test_thread_lifecycle.py`(5)、`test_snapshot_validation.py`(12)、`test_atomic_restore.py`(4)、`test_idempotency_concurrency.py`(5)；收敛既有重复提交语义测试为“返回原结果”。
+- 验收：`.venv\Scripts\python.exe -m pytest tests/ -v`（**235 passed**）；`scripts/run_tests.py`；`evals/replay.py`（11/11）；`git diff --check`。
 
 ## 5. 修订记录
 
@@ -122,3 +133,4 @@
 - v0.5（2026-09-04）—— 任务卡 G（阶段 5B Supervisor 实验）完成：全量 182 passed；A/B 对照两模式均 11/11 → 默认维持单 Agent（ADR-002 回退条款），Supervisor 保留可选运行时。
 - v0.6（2026-09-04）—— 任务卡 H（阶段 6 Mule Agent Bridge）完成：全量 194 passed；桥接仅只读 + 发起请求（无审批/执行）。阶段 0–6 主线全部完成。
 - v0.7（2026-09-04）—— 任务卡 I（可恢复持久化原型 SQLite）完成：全量 200 passed；恢复保真/续跑/损坏拒绝测试 6 项 + 演示。
+- v0.8（2026-09-04）—— 任务卡 J（一致性与恢复安全）完成：全量 235 passed；线程指纹/冲突拒绝/重复返回原结果、快照严格校验 + 原子恢复、幂等 per-key CAS 并发单飞；26 项新测试。

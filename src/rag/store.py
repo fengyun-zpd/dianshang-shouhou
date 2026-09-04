@@ -122,23 +122,26 @@ class PolicyStore:
         self._chunks: dict[str, EvidenceChunk] = {}          # chunk_id -> chunk
         self._chunk_vectors: dict[str, SparseVector] = {}    # chunk_id -> token freq
         self._keyword: dict[str, dict[str, int]] = {}        # token -> {chunk_id: count}
-        self._docs: dict[tuple[str, int], PolicyDocument] = {}  # (policy_id, version) -> doc
+        # 租户是政策身份的一部分；相同 policy_id/version 可以安全存在于不同租户。
+        self._docs: dict[tuple[str, str, int], PolicyDocument] = {}  # (tenant_id, policy_id, version) -> doc
         self._poisoned: list[str] = []                        # 被内容注入排除的 chunk_id
 
     # ---------- 写入（文档注册） ----------
 
     def register(self, doc: PolicyDocument) -> list[EvidenceChunk]:
         """注册文档并分块建索引；同 (policy_id, version) 幂等；停用文档不建索引。"""
-        key = (doc.policy_id, doc.version)
+        key = (doc.tenant_id, doc.policy_id, doc.version)
         if key in self._docs:
-            return self._chunks_of(doc.policy_id, doc.version)
+            if self._docs[key] != doc:
+                raise ValueError(f"政策 {doc.tenant_id}/{doc.policy_id}@{doc.version} 内容冲突")
+            return self._chunks_of(doc.tenant_id, doc.policy_id, doc.version)
         self._docs[key] = doc
         if not doc.active:
             return []  # 停用文档不进入检索（validate/search 不命中）
         created: list[EvidenceChunk] = []
         for seq, text in enumerate(_chunk_text(doc.content)):
             chunk = EvidenceChunk(
-                chunk_id=f"{doc.policy_id}:{doc.version}:c{seq}",
+                chunk_id=f"{doc.tenant_id}:{doc.policy_id}:{doc.version}:c{seq}",
                 policy_id=doc.policy_id, tenant_id=doc.tenant_id,
                 version=doc.version, seq=seq, text=text,
             )
@@ -227,11 +230,11 @@ class PolicyStore:
             version, seq = int(version_str), int(seq_str)
         except ValueError:
             return None
-        doc = self._docs.get((left, version))
-        if doc is None or not doc.active or doc.tenant_id != tenant_id:
+        doc = self._docs.get((tenant_id, left, version))
+        if doc is None or not doc.active:
             return None
-        chunk = self._chunks.get(f"{left}:{version}:c{seq}")
-        if chunk is None or chunk.tenant_id != tenant_id:
+        chunk = self._chunks.get(f"{tenant_id}:{left}:{version}:c{seq}")
+        if chunk is None:
             return None
         return chunk
 
@@ -240,8 +243,8 @@ class PolicyStore:
 
     # ---------- 内部 ----------
 
-    def _chunks_of(self, policy_id: str, version: int) -> list[EvidenceChunk]:
-        prefix = f"{policy_id}:{version}:c"
+    def _chunks_of(self, tenant_id: str, policy_id: str, version: int) -> list[EvidenceChunk]:
+        prefix = f"{tenant_id}:{policy_id}:{version}:c"
         return sorted(
             (c for cid, c in self._chunks.items() if cid.startswith(prefix)),
             key=lambda c: c.seq,

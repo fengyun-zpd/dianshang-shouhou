@@ -35,7 +35,7 @@ def test_double_resume_does_not_repeat_side_effects():
 
 
 def test_repeat_start_same_thread_no_duplicate_draft():
-    """同一 thread 重复启动（重复请求）不得重复建单/建草稿/重复退款。"""
+    """同一 thread 重复启动相同请求：返回原结果（不重放），无重复建单/退款/审计。"""
     svc, runner = make_runner()
     r1 = runner.start("T1", REQUEST_DAMAGED, thread_id="t-repeat")
     approve_and_resume(runner, "t-repeat", r1.state["operation_id"])
@@ -43,12 +43,12 @@ def test_repeat_start_same_thread_no_duplicate_draft():
     ops_before = len(svc.operations_of(r1.state["ticket_id"]))
     audit_before = len(svc.audit_log())
 
-    # 再次以同 thread 发起相同请求：直接返回已处理结果，不新增草稿/副作用
+    # 任务卡 J：同请求重复提交返回原结果（refunded），不重放、无新副作用
     r2 = runner.start("T1", REQUEST_DAMAGED, thread_id="t-repeat")
     assert r2.finished is True
-    assert r2.outcome == "already_executed"
+    assert r2.outcome == "refunded"                       # 原结果（而非 already_executed 重放标记）
     assert len(svc.operations_of(r1.state["ticket_id"])) == ops_before
-    assert len(svc.audit_log()) == audit_before          # 无新增审计（无重复副作用）
+    assert len(svc.audit_log()) == audit_before           # 无新增审计（无重复副作用）
     assert svc.refunded_amount("ORD-1") == Decimal("100.00")
 
 

@@ -165,6 +165,32 @@ def test_submit_request_reaches_approval_without_bridge_approval_power():
     assert svc.refunded_amount("ORD-1") == Decimal("0.00")
 
 
+def test_system_role_cannot_submit_after_sales_request():
+    reg = IdentityRegistry()
+    reg.register(BridgeIdentity(
+        external_principal="system-bot", tenant_id="T1", local_role=Role.SYSTEM,
+        allowed_actions=frozenset({BridgeAction.submit_after_sales_request}),
+    ))
+    bridge = MuleAgentBridge(service=make_service(), identities=reg)
+    result = bridge.invoke("system-bot", "submit_after_sales_request", {"request_text": "订单 ORD-1 破损"})
+    assert result.ok is False and result.error_code == "FORBIDDEN"
+
+
+def test_bridge_timeout_is_structured_and_audited():
+    import time
+    class SlowRunner:
+        def start(self, *args, **kwargs):
+            time.sleep(0.05)
+            return None
+    bridge = MuleAgentBridge(
+        service=make_service(), identities=make_registry(), timeout_seconds=0.001,
+        runner_factory=lambda svc: SlowRunner(),
+    )
+    result = bridge.invoke("mule-support-A", "submit_after_sales_request", {"request_text": "订单 ORD-1 破损"})
+    assert result.ok is False and result.error_code == "BRIDGE_TIMEOUT"
+    assert bridge.audit_log()[-1].status == "error:BRIDGE_TIMEOUT"
+
+
 # ---------- 熔断（fail-closed） ----------
 
 def test_circuit_open_fails_closed():

@@ -1,26 +1,24 @@
 """可恢复会话：从 SQLite 快照重建领域服务并可继续工作流（可恢复持久化原型）。
 
-用法：
-    session = RecoverableSession(db_path=..., build_service=make_service)
-    svc = session.load()          # 有快照 → 恢复；否则全新
-    ... 执行领域/工作流命令 ...
-    session.persist(svc)          # 落库（append-only 快照）
+恢复管线（任务卡 J）：读取 → checksum 校验 → JSON 解码 → 严格结构/语义校验
+（validate_snapshot_state）→ 原子替换（restore_state 构造完成后一次性赋值）。
 
-恢复保真：订单/政策/工单/操作/累计退款/幂等记录/审计/序号 全部恢复，
-恢复后可继续审批/执行（状态机与幂等语义不变）。
+- 任何解码/校验/恢复错误统一转 SnapshotCorruptionError；
+- 校验失败时调用方提供的原服务状态完全不变（先验后换，原子恢复）。
 """
 from __future__ import annotations
 
-import sqlite3
+from decimal import InvalidOperation
 from typing import Callable, Optional
 
 from src.domain.after_sales import AfterSalesService
 
-from .codec import SnapshotCodecError, state_from_jsonable, state_to_jsonable
+from .codec import state_from_jsonable, state_to_jsonable
 from .store import SQLiteSnapshotStore, SnapshotCorruptionError
+from .validate import validate_snapshot_state
 
-__all__ = ["RecoverableSession", "SnapshotCodecError", "SnapshotCorruptionError",
-           "SQLiteSnapshotStore"]
+__all__ = ["RecoverableSession", "SnapshotCorruptionError", "SQLiteSnapshotStore",
+           "validate_snapshot_state"]
 
 
 class RecoverableSession:
@@ -29,21 +27,31 @@ class RecoverableSession:
         self._build_service = build_service or (lambda: AfterSalesService())
 
     def load(self) -> AfterSalesService:
-        """加载：有快照 → 校验并恢复；否则返回全新服务。"""
+        """加载：有快照则解码→校验→恢复；否则返回全新服务。"""
         snapshot = self._store.latest_snapshot()
         svc = self._build_service()
         if snapshot is not None:
-            try:
-                state = state_from_jsonable(snapshot)
-            except (KeyError, TypeError, ValueError) as e:
-                raise SnapshotCorruptionError(f"快照解码失败：{e}") from e
+            state = self._decode_and_validate(snapshot)
             svc.restore_state(state)
         return svc
+
+    def restore_into(self, svc: AfterSalesService, jsonable_snapshot: dict) -> None:
+        """把快照解码并严格校验后原子恢复到传入服务；失败时 svc 完全不变。"""
+        state = self._decode_and_validate(jsonable_snapshot)
+        svc.restore_state(state)
 
     def persist(self, svc: AfterSalesService) -> int:
         """把当前领域状态编码为可 JSON 快照并 append 落库。返回记录 id。"""
         jsonable = state_to_jsonable(svc.export_state())
         return self._store.save_snapshot(jsonable)
+
+    def _decode_and_validate(self, snapshot: dict) -> dict:
+        try:
+            state = state_from_jsonable(snapshot)
+        except (KeyError, TypeError, ValueError, InvalidOperation) as e:
+            raise SnapshotCorruptionError(f"快照解码失败：{e}") from e
+        validate_snapshot_state(state)  # 违规 → SnapshotCorruptionError
+        return state
 
     @property
     def store(self) -> SQLiteSnapshotStore:

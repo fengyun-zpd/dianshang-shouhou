@@ -2,7 +2,7 @@
 
 > 归属：电商售后多智能体工单系统（OpsPilot After-Sales，目标远程 `fengyun-zpd/dianshang-shouhou`）
 > 性质：总负责人 Agent 的侦察与实施基线记录。本文档只陈述事实与判断，不把规划写成已实现；实时状态以此文件与测试输出为准。
-> 版本：v0.8（阶段 0–6 + 可恢复持久化原型完成，2026-09-04）
+> 版本：v0.11（阶段 0–6 + 持久化原型 + 安全/命名空间修复 + 任务卡 J 完成，2026-09-04）
 
 ## 1. 工作区与目录角色
 
@@ -17,13 +17,13 @@
 - Python 3.12.10（C 盘，仅解释器）＋ **D 盘虚拟环境 `.venv`**：`D:\workplace\PyCharmMiscProject\私域\.venv\Scripts\python.exe`（项目依赖一律装此，含 langgraph 1.2.11 / pytest 9.1.1）。
 - **安装约定（用户直接指令）**：此后任何程序/依赖一律安装到 D 盘并汇报全部路径与最显眼文件。已执行：C 盘全局 langgraph 系列已卸载清理（site-packages 无残留），依赖迁至 D 盘 `.venv`；pip 缓存仍在 C 盘 `c:\users\zao'pei'de\appdata\local\pip\cache`（未迁移，如需可清）。
 - GitHub 直连失败；用户全局配置 ghfast.top 代理镜像（`url.https://ghfast.top/https://github.com/.insteadof https://github.com/`）；PyPI 直连超时，安装使用清华镜像 `-i https://pypi.tuna.tsinghua.edu.cn/simple`。
-- 本地 git：`main` 分支；基线提交 `5877ce9`，阶段 0/1 提交 `aee6fbb`（未推送，D4 未决）。
+- 本地 git：`main` 分支；当前工作区基于提交 `c2d8550`，含未提交安全修复（阶段 0–6、持久化原型；未推送，D4 未决）。
 
 ## 3. 状态矩阵（已实现 / 实验中 / 规划中）
 
 ### ✅ 已实现（有代码 + 测试证据）
 
-| 项 | 证据（`.venv` 下 `python -m pytest tests/` → **200 passed**） |
+| 项 | 证据（`.venv` 下 `python -m pytest tests/` → **235 passed**） |
 | --- | --- |
 | 工程宪法 `AGENTS.md` v0.2；README 设计基线 + 实施进度节 | 文件存在 |
 | 退款最小闭环（确定性领域服务） | `src/domain/{models,idempotency,refund_service}.py` + `tests/test_refund_service.py`（14 项） |
@@ -36,8 +36,9 @@
 | **阶段 4 可靠性与评测** | `src/platform/reliability.py`（有限重试/熔断/只读降级/fail-closed/接管标记）；黄金集 `evals/golden/golden_v1.json` + 回放器 `evals/replay.py` → **11/11 通过**，报告 `evals/reports/golden_v1_report.md`（完成率/意图/引用/澄清率/P50-P95/安全不变量）；测试 13 项 |
 | **阶段 5A 受控 LLM 运行时** | `src/models/`（config 白名单/Key 校验、base 协议+内容守卫、schemas 结构化输出、prompts 版本化、offline 规则适配器、openai_compatible HTTP 适配、router 能力矩阵+降级链）；影子评测 `evals/run_model_shadow_eval.py`（offline 实测 意图准确率 1.0；candidate 未配 Key → 安全降级未联网标注"未实测"）；`docs/MODEL_EVALUATION.md`；测试 32 项 |
 | **阶段 5B Supervisor 多 Agent 实验** | `src/agents/subagents.py`（只读子 Agent 白名单：order/history/policy）、`supervisor.py`（SupervisorRunner，与单 Agent 同 API/状态/审批语义）、graph 支持 evidence 节点替换；对照实验 `evals/compare_agents.py` → 两模式均 11/11、outcome/退款 100% 一致 → 按 ADR-002 **默认维持单 Agent**、Supervisor 保留可选运行时；`docs/MULTI_AGENT_EXPERIMENT.md`；测试 11 项 |
-| **阶段 6 Mule Agent Bridge** | `src/bridge/`（models 身份/动作白名单/入出站 Schema + bridge 适配器：身份映射、租户注入、超时、审计、熔断 fail-closed、注入拒绝；白名单仅只读查询 + submit_after_sales_request，无审批/执行）；`docs/MULE_BRIDGE.md`；测试 12 项；MCP/A2A 协议包装为规划 |
+| **阶段 6 Mule Agent Bridge** | `src/bridge/`（models 身份/动作白名单/入出站 Schema + bridge 适配器：身份映射、角色矩阵、租户注入、超时、审计、熔断 fail-closed、注入拒绝；白名单仅只读查询 + submit_after_sales_request，无审批/执行）；`docs/MULE_BRIDGE.md`；测试 14 项；MCP/A2A 协议包装为规划 |
 | **可恢复持久化原型（SQLite）** | service 新增 `export_state/restore_state`（不动规则）+ `idempotency.export/import_records`；`src/persistence/`（codec JSON 安全编解码、SQLite append-only journal + checksum、`RecoverableSession` load/persist）；恢复保真/幂等续跑/损坏 fail-closed/跨库隔离测试 6 项；演示 `scripts/demo_persistence.py`；`docs/PERSISTENCE.md` |
+| **任务卡 J 一致性与恢复安全** | 线程生命周期（请求指纹进 checkpoint：同 thread 只能继续原请求、结束线程不同请求拒绝、同请求重复提交返回原结果、禁止新 order 与旧 ticket 混合、租户绑定不可变）；快照严格校验（顶层键集合/引用关系/租户一致/金额有限且非负/refunded==已执行求和且≤实付/seq 单调/状态组合/审计与幂等引用，一律 SnapshotCorruptionError）；原子恢复（先验后换，失败原服务零改动；`restore_into`）；原子幂等（IdempotencyStore per-key 锁 + get-or-reserve/commit/release；create_ticket/create_refund 锁内 CAS，创建失败释放占位）；测试新增 26 项 |
 | 依赖清单 | `requirements.txt`（langgraph==1.2.11 / pytest==9.1.1 / httpx==0.28.1 / pydantic==2.13.5，安装到 D 盘 `.venv`） |
 | 规划文档 | `docs/{STATUS_AND_RISKS,TASK_SPLIT,ARCHITECTURE,TESTING_BASELINE}.md` |
 
@@ -64,7 +65,7 @@
 | R6 | 无 CI | 低 | ✅ 模板已建；云端运行待仓库推送后验证 |
 | R7 | 合成数据被误读为真实收益 | 宪法 | 统一声明固定种子合成数据 |
 | R8 | 子代理执行卡滞（无产出） | 中 | ✅ 已处理：中断两个卡滞子代理，由总负责人接管完成交付（阶段 0/1 记录） |
-| R9 | 当前无 LLM 运行时，意图识别为规则实现 | 中 | 接口化：`src/agents/intent.py` 纯函数可替换为 LLM 适配器（阶段 3+ 前不引入） |
+| R9 | 真实 LLM endpoint 尚未实测 | 中 | 已有离线规则客户端与 OpenAI-compatible 适配、URL/Key 安全校验；候选模式未配置 Key 时安全降级，不声称真实模型指标 |
 
 ## 5. 决策项状态
 
@@ -83,3 +84,6 @@
 - v0.6（2026-09-04）—— 阶段 5B（Supervisor 只读子 Agent 实验）完成：全量 182 passed；A/B 对照两模式均 11/11 → 默认维持单 Agent（ADR-002 回退条款），Supervisor 保留可选运行时；新增任务卡 G、docs/MULTI_AGENT_EXPERIMENT.md。
 - v0.7（2026-09-04）—— 阶段 6（Mule Agent Bridge）完成：全量 194 passed；桥接层仅只读 + 发起请求（无审批/执行），身份/租户/Schema/超时/熔断/审计安全边界测试 12 项全过；新增任务卡 H、docs/MULE_BRIDGE.md。阶段 0–6 主线全部完成。
 - v0.8（2026-09-04）—— 可恢复持久化原型（SQLite）完成：全量 200 passed；service 导出/恢复 + append-only journal + 恢复会话（保真/续跑/损坏拒绝测试 6 项 + 演示）；新增任务卡 I、docs/PERSISTENCE.md。生产路线：PostgreSQL/alembic（规划）。
+- v0.9（2026-09-04）—— 安全与可靠性缺陷修复：RAG 文档按租户隔离并拒绝同键异内容，远程 LLM Base URL 收紧端口/主机边界，模型输入递归防注入，证据计入 token 预算，工具/桥接超时 fail-closed 并取消 future，桥接动作增加角色矩阵，checkpoint 使用租户命名空间；新增针对性回归测试。
+- v0.10（2026-09-04）—— 增加 checkpoint 租户命名空间与跨运行器恢复回归，当前全量测试 209 passed。
+- v0.11（2026-09-04）—— 任务卡 J（一致性与恢复安全）完成：全量 235 passed（新增 26 项）；线程请求指纹/冲突拒绝/重复返回原结果；快照严格校验 + 原子恢复；幂等 per-key CAS 并发单飞；收敛既有重复请求语义为“返回原结果”。

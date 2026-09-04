@@ -13,10 +13,21 @@ from src.models.config import (
 
 def test_is_allowed_base_url_prefix_match():
     assert is_allowed_base_url("https://api.openai.com/v1", DEFAULT_ALLOWED_BASE_URLS)
+    assert is_allowed_base_url("https://api.openai.com:443/v1", DEFAULT_ALLOWED_BASE_URLS)
     assert is_allowed_base_url("http://127.0.0.1:8000/v1", DEFAULT_ALLOWED_BASE_URLS)
     assert not is_allowed_base_url("https://evil.example.com", DEFAULT_ALLOWED_BASE_URLS)
     assert not is_allowed_base_url(None, DEFAULT_ALLOWED_BASE_URLS)
     assert not is_allowed_base_url("", DEFAULT_ALLOWED_BASE_URLS)
+
+
+def test_base_url_rejects_domain_and_userinfo_bypass():
+    for url in (
+        "https://api.openai.com.evil.com/v1",
+        "https://api.openai.com@evil.com/v1",
+        "http://localhost.evil.com/v1",
+        "https://api.openai.com:8443/v1",
+    ):
+        assert not is_allowed_base_url(url, DEFAULT_ALLOWED_BASE_URLS)
 
 
 def test_assert_safe_network_missing_key():

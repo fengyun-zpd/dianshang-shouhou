@@ -155,8 +155,12 @@ class ToolRegistry:
             future = _EXECUTOR.submit(spec.executor, ctx, model)
             data = future.result(timeout=spec.timeout_ms / 1000.0)
         except FutureTimeout:
+            future.cancel()  # 运行中的任务无法强杀；其写副作用结果按未知状态处理
             self._record(spec, ctx, "error:TIMEOUT", args)
-            return ToolResult.error("TOOL_TIMEOUT", f"工具 {name} 执行超过 {spec.timeout_ms}ms")
+            detail = f"工具 {name} 执行超过 {spec.timeout_ms}ms"
+            if not spec.read_only:
+                detail += "；写操作结果未知，必须按原幂等键对账，禁止换键重试"
+            return ToolResult.error("TOOL_TIMEOUT", detail)
         except ToolCallError as e:
             self._record(spec, ctx, f"error:{e.code}", args, detail=e.message[:500])
             return ToolResult.error(e.code, e.message)

@@ -16,7 +16,11 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Optional, Tuple
 
-from ..idempotency import IdempotencyStore, payload_hash
+from ..idempotency import (
+    PENDING_REFUND_ID,
+    IdempotencyStore,
+    payload_hash,
+)
 from .models import (
     AfterSalesError,
     AfterSalesErrorCode,
@@ -194,37 +198,44 @@ class AfterSalesService:
                 f"多条适用政策退款比例不一致（{len(matched)} 条），冲突需转人工",
             )
 
-        # 幂等：同键同载荷返回原工单；异载荷拒绝
-        phash = payload_hash({
-            "tenant_id": cmd.tenant_id,
-            "order_id": cmd.order_id,
-            "customer_id": cmd.customer_id,
-            "request_type": cmd.request_type.value,
-            "reason": cmd.reason,
-            "reason_tags": list(cmd.reason_tags),
-        })
-        existing = self._idempotency.get(cmd.idempotency_key)
-        if existing is not None:
-            if existing.payload_hash == phash:
-                return self.get_ticket(existing.refund_id)  # 返回原工单
-            raise AfterSalesError(AfterSalesErrorCode.IDEMPOTENCY_CONFLICT, "同键异载荷：工单创建被拒绝")
+        # 原子幂等（任务卡 J）：per-key 锁内 check-then-act；
+        # 同键同载荷返回原工单；同键异载荷拒绝；失败释放占位（<pending>）
+        with self._idempotency.lock_for(cmd.idempotency_key):
+            phash = payload_hash({
+                "tenant_id": cmd.tenant_id,
+                "order_id": cmd.order_id,
+                "customer_id": cmd.customer_id,
+                "request_type": cmd.request_type.value,
+                "reason": cmd.reason,
+                "reason_tags": list(cmd.reason_tags),
+            })
+            occupied = self._idempotency.get_or_reserve(cmd.idempotency_key, phash)
+            if occupied is not None:
+                if occupied.payload_hash == phash and occupied.refund_id != PENDING_REFUND_ID:
+                    return self.get_ticket(occupied.refund_id)  # 返回原工单
+                self._idempotency.release(cmd.idempotency_key)
+                raise AfterSalesError(AfterSalesErrorCode.IDEMPOTENCY_CONFLICT, "同键异载荷：工单创建被拒绝")
 
-        self._seq += 1
-        ticket = AfterSalesTicket(
-            ticket_id=f"TKT-{self._seq:05d}",
-            tenant_id=cmd.tenant_id,
-            order_id=cmd.order_id,
-            customer_id=cmd.customer_id,
-            request_type=cmd.request_type,
-            reason=cmd.reason,
-            reason_tags=cmd.reason_tags,
-            status=TicketStatus.OPEN,
-            created_by=cmd.actor,
-        )
-        self._tickets[ticket.ticket_id] = ticket
-        self._idempotency.register(cmd.idempotency_key, phash, ticket.ticket_id)
-        self._record("create_ticket", "ticket", ticket.ticket_id, cmd.actor, None, TicketStatus.OPEN, cmd.idempotency_key)
-        return ticket
+            try:
+                self._seq += 1
+                ticket = AfterSalesTicket(
+                    ticket_id=f"TKT-{self._seq:05d}",
+                    tenant_id=cmd.tenant_id,
+                    order_id=cmd.order_id,
+                    customer_id=cmd.customer_id,
+                    request_type=cmd.request_type,
+                    reason=cmd.reason,
+                    reason_tags=cmd.reason_tags,
+                    status=TicketStatus.OPEN,
+                    created_by=cmd.actor,
+                )
+                self._tickets[ticket.ticket_id] = ticket
+                self._idempotency.commit(cmd.idempotency_key, phash, ticket.ticket_id)
+                self._record("create_ticket", "ticket", ticket.ticket_id, cmd.actor, None, TicketStatus.OPEN, cmd.idempotency_key)
+            except BaseException:
+                self._idempotency.release(cmd.idempotency_key)
+                raise
+            return ticket
 
     def close_ticket(self, cmd: CloseTicketCommand) -> AfterSalesTicket:
         # 权限：客服 Agent 或领域服务可关单
@@ -292,34 +303,42 @@ class AfterSalesService:
                 f"退款 {amount} 超过剩余可退 {remaining}（实付 {order.paid_amount}，已退 {self.refunded_amount(order.order_id)}）",
             )
 
-        phash = payload_hash({
-            "ticket_id": cmd.ticket_id,
-            "order_id": order.order_id,
-            "amount": str(amount),
-            "reason_detail": cmd.reason_detail,
-        })
-        existing = self._idempotency.get(cmd.idempotency_key)
-        if existing is not None:
-            if existing.payload_hash == phash:
-                return self.get_operation(existing.refund_id)
-            raise AfterSalesError(AfterSalesErrorCode.IDEMPOTENCY_CONFLICT, "同键异载荷：退款草稿被拒绝")
+        # 原子幂等（任务卡 J）：per-key 锁内 check-then-act；
+        # 同键同载荷返回原草稿；同键异载荷拒绝；创建失败释放占位
+        with self._idempotency.lock_for(cmd.idempotency_key):
+            phash = payload_hash({
+                "ticket_id": cmd.ticket_id,
+                "order_id": order.order_id,
+                "amount": str(amount),
+                "reason_detail": cmd.reason_detail,
+            })
+            occupied = self._idempotency.get_or_reserve(cmd.idempotency_key, phash)
+            if occupied is not None:
+                if occupied.payload_hash == phash and occupied.refund_id != PENDING_REFUND_ID:
+                    return self.get_operation(occupied.refund_id)
+                self._idempotency.release(cmd.idempotency_key)
+                raise AfterSalesError(AfterSalesErrorCode.IDEMPOTENCY_CONFLICT, "同键异载荷：退款草稿被拒绝")
 
-        self._seq += 1
-        op = Operation(
-            operation_id=f"OP-{self._seq:05d}",
-            ticket_id=cmd.ticket_id,
-            tenant_id=ticket.tenant_id,
-            order_id=order.order_id,
-            op_type=OperationType.REFUND,
-            amount=amount,
-            status=OperationStatus.DRAFT,
-            idempotency_key=cmd.idempotency_key,
-            created_by=cmd.actor,
-        )
-        self._operations[op.operation_id] = op
-        self._idempotency.register(cmd.idempotency_key, phash, op.operation_id)
-        self._record("create_refund", "operation", op.operation_id, cmd.actor, None, OperationStatus.DRAFT, cmd.idempotency_key)
-        return op
+            try:
+                self._seq += 1
+                op = Operation(
+                    operation_id=f"OP-{self._seq:05d}",
+                    ticket_id=cmd.ticket_id,
+                    tenant_id=ticket.tenant_id,
+                    order_id=order.order_id,
+                    op_type=OperationType.REFUND,
+                    amount=amount,
+                    status=OperationStatus.DRAFT,
+                    idempotency_key=cmd.idempotency_key,
+                    created_by=cmd.actor,
+                )
+                self._operations[op.operation_id] = op
+                self._idempotency.commit(cmd.idempotency_key, phash, op.operation_id)
+                self._record("create_refund", "operation", op.operation_id, cmd.actor, None, OperationStatus.DRAFT, cmd.idempotency_key)
+            except BaseException:
+                self._idempotency.release(cmd.idempotency_key)
+                raise
+            return op
 
     def submit(self, cmd: SubmitCommand) -> Operation:
         if cmd.actor != Role.AGENT:

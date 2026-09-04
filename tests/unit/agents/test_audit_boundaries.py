@@ -29,7 +29,7 @@ def test_action_draft_tampering_does_not_change_refund_amount():
 
     # 攻击者把展示草稿金额篡改为 1.00（checkpoint 是可被触碰的流程状态）
     runner.graph.update_state(
-        {"configurable": {"thread_id": "t-tamper"}},
+        runner._cfg("t-tamper"),
         {"action_draft": {"amount": "1.00", "op_type": "refund"}},
     )
     approve_and_resume(runner, "t-tamper", r.state["operation_id"])
