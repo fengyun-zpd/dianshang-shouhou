@@ -190,3 +190,24 @@ RAG、控制台、微调、观测：均标记「规划中」，V1 不前置实�
 
 - 工程宪法（自动代理工作规则）：[`AGENTS.md`](./AGENTS.md)
 - 官方资料：[LangGraph overview](https://docs.langchain.com/oss/python/langgraph/overview) · [Hugging Face TRL quickstart](https://huggingface.co/docs/trl/quickstart) · [QLoRA 论文](https://arxiv.org/abs/2305.14314) · [DPO 论文](https://arxiv.org/abs/2305.18290)
+
+## 13. 实施进度（2026-09-04 追加，历史基线保留）
+
+> 本节在 README 历史基线之上追加（用户决策 D2 批准）。早期章节为设计基线历史，保留不改；实时状态以 [`docs/STATUS_AND_RISKS.md`](./docs/STATUS_AND_RISKS.md) 为准。
+
+### 13.1 已实现（有代码 + 测试证据）
+
+- 退款最小闭环（确定性领域服务）`src/domain/`，14 项单测；
+- **售后领域插件（阶段 1）** `src/domain/after_sales/`：订单核验、售后资格（结构化政策规则）、退款上限、工单/操作状态机、幂等命令、`operation_unknown` 对账收口、审计；31 项单测；
+- **平台层最小落地** `src/platform/`：PII 脱敏（手机/邮箱/身份证）与整行脱敏日志 formatter；8 项单测；
+- **测试工具链**：`scripts/run_tests.py` 分层回归、`tests/conftest.py`（固定种子 42）、pytest markers、`.github/workflows/ci.yml` 模板；
+- 回归：`python -m pytest tests/` → **53 passed**；`python scripts/run_tests.py` → `REGRESSION PASS`。
+
+### 13.2 规划中（未实现，不写成已实现）
+
+- 阶段 2 单 Agent 闭环（LangGraph）：任务卡 B，待 `docs/STATUS_AND_RISKS.md` 决策项 D3 确认后启动；
+- RAG / 评测黄金集 / 控制台 / 多 Agent / 微调 / Mule Agent Bridge：均规划中（ADR-002~006 提议状态）。
+
+### 13.3 本地仓库
+
+- `git init -b main` + remote `origin`（`dianshang-shouhou`，经 ghfast.top 代理前缀）；基线提交 `5877ce9`；**尚未推送**（决策项 D1/D4）。
