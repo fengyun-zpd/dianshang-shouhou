@@ -124,6 +124,13 @@
 - 新增测试 26 项：`test_thread_lifecycle.py`(5)、`test_snapshot_validation.py`(12)、`test_atomic_restore.py`(4)、`test_idempotency_concurrency.py`(5)；收敛既有重复提交语义测试为“返回原结果”。
 - 验收：`.venv\Scripts\python.exe -m pytest tests/ -v`（**235 passed**）；`scripts/run_tests.py`；`evals/replay.py`（11/11）；`git diff --check`。
 
+### 任务卡 K1：订单级退款并发一致性（✅ 已完成）
+
+- 交付：订单级锁 `(tenant_id, order_id)` 覆盖 `create_refund`/`execute`/`reconcile`/`close_ticket`；执行与对账成功原子容量校验（已执行累计+本次 ≤ 实付，超额抛 `AMOUNT_EXCEEDS_REMAINING` 且不迁移不累计）；unknown 订单级守卫（换键拒 `OPERATION_UNKNOWN_CONFLICT`）；幂等命中先于金额/unknown 守卫；锁顺序订单锁→幂等键锁；设计说明 `docs/TASK_K1_ORDER_REFUND_CONCURRENCY.md`。
+- 测试：`tests/unit/domain/after_sales/test_order_refund_concurrency.py`（7 项：顺序超退拒绝 / 并发 execute 单成功 / unknown 对账 vs 执行竞争 / 换键拒绝 / 同键重复零副作用 / 超额执行不累计 / timeout 不累计）。全量 **242 passed**。
+- 验收命令：`.venv\Scripts\python.exe -m pytest tests/ -v`；`scripts/run_tests.py`；`evals/replay.py`（11/11）。
+- 边界：内存锁为进程内单实例语义；跨进程需 PostgreSQL 行锁迁移（规划，未实现/未声称）。
+
 ## 5. 修订记录
 
 - v0.1（本会话）—— 建立模块任务拆分、目录规划、所有权矩阵与任务卡 A/B/C。
@@ -134,3 +141,4 @@
 - v0.6（2026-09-04）—— 任务卡 H（阶段 6 Mule Agent Bridge）完成：全量 194 passed；桥接仅只读 + 发起请求（无审批/执行）。阶段 0–6 主线全部完成。
 - v0.7（2026-09-04）—— 任务卡 I（可恢复持久化原型 SQLite）完成：全量 200 passed；恢复保真/续跑/损坏拒绝测试 6 项 + 演示。
 - v0.8（2026-09-04）—— 任务卡 J（一致性与恢复安全）完成：全量 235 passed；线程指纹/冲突拒绝/重复返回原结果、快照严格校验 + 原子恢复、幂等 per-key CAS 并发单飞；26 项新测试。
+- v0.9（2026-09-04）—— Task K1（订单级退款并发一致性）完成：全量 242 passed；订单级锁 + 执行阶段原子容量校验修复同订单不同键并发超退；7 项新测试。

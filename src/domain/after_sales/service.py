@@ -13,6 +13,7 @@
 """
 from __future__ import annotations
 
+import threading
 from decimal import Decimal
 from typing import Optional, Tuple
 
@@ -63,6 +64,9 @@ class AfterSalesService:
         self._refunded_by_order: dict[str, Decimal] = {}  # order_id -> 已执行退款累计
         self._audit: list[AuditEvent] = []
         self._seq = 0
+        # 订单级锁（Task K1）：键=(tenant_id, order_id)。见 _order_lock。
+        self._order_guard = threading.RLock()
+        self._order_locks: dict[tuple[str, str], threading.Lock] = {}
 
     # ---------- 数据注入（固定随机种子合成数据；生产为 PostgreSQL，规划中） ----------
 
@@ -242,6 +246,11 @@ class AfterSalesService:
         if cmd.actor not in (Role.AGENT, Role.SYSTEM):
             raise AfterSalesError(AfterSalesErrorCode.PERMISSION_DENIED, "只有 Agent 或领域服务可以关闭工单")
         ticket = self.get_ticket(cmd.ticket_id)
+        with self._order_lock(ticket.tenant_id, ticket.order_id):
+            return self._close_ticket_locked(cmd)
+
+    def _close_ticket_locked(self, cmd: CloseTicketCommand) -> AfterSalesTicket:
+        ticket = self.get_ticket(cmd.ticket_id)
         if ticket.status == TicketStatus.CLOSED:
             raise AfterSalesError(AfterSalesErrorCode.INVALID_STATE_TRANSITION, "工单已关闭，终态不可再变更")
 
@@ -278,6 +287,16 @@ class AfterSalesService:
         if cmd.actor != Role.AGENT:
             raise AfterSalesError(AfterSalesErrorCode.PERMISSION_DENIED, "只有 Agent 可以创建退款草稿")
         ticket = self.get_ticket(cmd.ticket_id)
+        with self._order_lock(ticket.tenant_id, ticket.order_id):
+            return self._create_refund_locked(cmd)
+
+    def _create_refund_locked(self, cmd: CreateRefundCommand) -> Operation:
+        """create_refund 的锁内实现（订单级锁；Task K1）。
+
+        一致性顺序：工单状态 → 幂等命中（同键同载荷优先返回原操作，不因金额/unknown 重复误拒）
+        → 订单级 unknown 守卫 → 剩余金额校验 → 创建（per-key 锁内 CAS）。
+        """
+        ticket = self.get_ticket(cmd.ticket_id)
         if ticket.status == TicketStatus.CLOSED:
             raise AfterSalesError(AfterSalesErrorCode.INVALID_STATE_TRANSITION, "工单已关闭，禁止追加退款操作")
 
@@ -285,26 +304,10 @@ class AfterSalesService:
         if order is None:
             raise AfterSalesError(AfterSalesErrorCode.ORDER_NOT_FOUND, f"订单 {ticket.order_id} 不存在")
 
-        # operation_unknown 守卫：同订单存在未知态操作时禁止新建/换键重试
-        for op in self.operations_of(ticket.ticket_id):
-            if op.status == OperationStatus.UNKNOWN:
-                raise AfterSalesError(
-                    AfterSalesErrorCode.OPERATION_UNKNOWN_CONFLICT,
-                    f"订单 {order.order_id} 存在未知态操作 {op.operation_id}，只能以原幂等键查询对账，禁止换键重试",
-                )
-
         amount = parse_money(cmd.amount)
         if amount <= 0:
             raise AfterSalesError(AfterSalesErrorCode.AMOUNT_NOT_POSITIVE, "退款金额必须为正")
-        remaining = order.paid_amount - self.refunded_amount(order.order_id)
-        if amount > remaining:
-            raise AfterSalesError(
-                AfterSalesErrorCode.AMOUNT_EXCEEDS_REMAINING,
-                f"退款 {amount} 超过剩余可退 {remaining}（实付 {order.paid_amount}，已退 {self.refunded_amount(order.order_id)}）",
-            )
 
-        # 原子幂等（任务卡 J）：per-key 锁内 check-then-act；
-        # 同键同载荷返回原草稿；同键异载荷拒绝；创建失败释放占位
         with self._idempotency.lock_for(cmd.idempotency_key):
             phash = payload_hash({
                 "ticket_id": cmd.ticket_id,
@@ -315,11 +318,24 @@ class AfterSalesService:
             occupied = self._idempotency.get_or_reserve(cmd.idempotency_key, phash)
             if occupied is not None:
                 if occupied.payload_hash == phash and occupied.refund_id != PENDING_REFUND_ID:
-                    return self.get_operation(occupied.refund_id)
+                    return self.get_operation(occupied.refund_id)  # 同键同载荷：返回原结果（幂等优先）
                 self._idempotency.release(cmd.idempotency_key)
                 raise AfterSalesError(AfterSalesErrorCode.IDEMPOTENCY_CONFLICT, "同键异载荷：退款草稿被拒绝")
 
             try:
+                # 订单级 unknown 守卫：同订单存在未知态操作时禁止换新键创建（原键已在上方幂等返回）
+                if self._has_unknown_on_order(order.order_id):
+                    raise AfterSalesError(
+                        AfterSalesErrorCode.OPERATION_UNKNOWN_CONFLICT,
+                        f"订单 {order.order_id} 存在未知态操作，只能以原幂等键查询对账，禁止换键重试",
+                    )
+                remaining = order.paid_amount - self.refunded_amount(order.order_id)
+                if amount > remaining:
+                    raise AfterSalesError(
+                        AfterSalesErrorCode.AMOUNT_EXCEEDS_REMAINING,
+                        f"退款 {amount} 超过剩余可退 {remaining}（实付 {order.paid_amount}，已退 {self.refunded_amount(order.order_id)}）",
+                    )
+
                 self._seq += 1
                 op = Operation(
                     operation_id=f"OP-{self._seq:05d}",
@@ -370,50 +386,93 @@ class AfterSalesService:
         return op
 
     def execute(self, cmd: ExecuteCommand) -> Operation:
-        """执行已批准操作。external_result="timeout" 表示外部结果不明 → operation_unknown。"""
+        """执行已批准操作（订单级锁内：unknown 检查→容量校验→状态迁移→累计→审计）。
+
+        external_result="timeout" 表示外部结果不明 → operation_unknown（不累计）。
+        """
         if cmd.actor != Role.SYSTEM:
             raise AfterSalesError(AfterSalesErrorCode.PERMISSION_DENIED, "只有领域服务可以执行已批准动作")
-        op = self.get_operation(cmd.operation_id)
-        # 只有 approved 操作可执行；unknown 态只能通过 reconcile 对账收口，
-        # 禁止以 execute("success") 隐式"重试成功"，防止重复副作用。
-        if op.status != OperationStatus.APPROVED:
-            raise AfterSalesError(
-                AfterSalesErrorCode.INVALID_STATE_TRANSITION,
-                f"只有 approved 操作可执行，当前 {op.status.value}（unknown 态只能对账收口）",
-            )
-        if cmd.external_result == "success":
-            op, before = self._apply_op_transition(op, OperationStatus.EXECUTED)
-            self._refunded_by_order[op.order_id] = self._refunded_by_order.get(op.order_id, Decimal("0.00")) + (op.amount or Decimal("0.00"))
-            op.executed = True
-            self._record("execute", "operation", op.operation_id, cmd.actor, before, OperationStatus.EXECUTED)
-            return op
-        if cmd.external_result == "timeout":
-            op, before = self._apply_op_transition(op, OperationStatus.UNKNOWN)
-            self._record("execute_timeout", "operation", op.operation_id, cmd.actor, before, OperationStatus.UNKNOWN)
-            return op
-        raise AfterSalesError(AfterSalesErrorCode.MISSING_REQUIRED_FIELD, f"未知 external_result：{cmd.external_result!r}")
+        seed = self.get_operation(cmd.operation_id)
+        with self._order_lock(seed.tenant_id, seed.order_id):
+            # 锁内重读，保证与同订单其他执行/对账串行
+            op = self.get_operation(cmd.operation_id)
+            # 只有 approved 操作可执行；unknown 态只能通过 reconcile 对账收口
+            if op.status != OperationStatus.APPROVED:
+                raise AfterSalesError(
+                    AfterSalesErrorCode.INVALID_STATE_TRANSITION,
+                    f"只有 approved 操作可执行，当前 {op.status.value}（unknown 态只能对账收口）",
+                )
+            if cmd.external_result == "success":
+                # 原子容量校验：并发下已执行累计 + 本次不得超实付；超额 → 明确错误码，不迁移不累计
+                self._ensure_refund_capacity(op.order_id, op.amount or Decimal("0.00"))
+                op, before = self._apply_op_transition(op, OperationStatus.EXECUTED)
+                self._refunded_by_order[op.order_id] = self._refunded_by_order.get(op.order_id, Decimal("0.00")) + (op.amount or Decimal("0.00"))
+                op.executed = True
+                self._record("execute", "operation", op.operation_id, cmd.actor, before, OperationStatus.EXECUTED)
+                return op
+            if cmd.external_result == "timeout":
+                op, before = self._apply_op_transition(op, OperationStatus.UNKNOWN)
+                self._record("execute_timeout", "operation", op.operation_id, cmd.actor, before, OperationStatus.UNKNOWN)
+                return op
+            raise AfterSalesError(AfterSalesErrorCode.MISSING_REQUIRED_FIELD, f"未知 external_result：{cmd.external_result!r}")
 
     def reconcile(self, cmd: ReconcileCommand) -> Operation:
-        """operation_unknown 对账收口：只能原操作 success→EXECUTED / failed→FAILED。"""
+        """operation_unknown 对账收口（订单级锁内，容量校验；只能原操作 success→EXECUTED / failed→FAILED）。"""
         if cmd.actor != Role.SYSTEM:
             raise AfterSalesError(AfterSalesErrorCode.PERMISSION_DENIED, "只有领域服务可以对账")
-        op = self.get_operation(cmd.operation_id)
-        if op.status != OperationStatus.UNKNOWN:
+        seed = self.get_operation(cmd.operation_id)
+        with self._order_lock(seed.tenant_id, seed.order_id):
+            op = self.get_operation(cmd.operation_id)
+            if op.status != OperationStatus.UNKNOWN:
+                raise AfterSalesError(
+                    AfterSalesErrorCode.INVALID_STATE_TRANSITION,
+                    f"只有 unknown 态操作可对账，当前 {op.status.value}",
+                )
+            if cmd.result == "success":
+                # 对账成功等价于最终执行：容量校验防止多个 unknown 对账累计越界
+                self._ensure_refund_capacity(op.order_id, op.amount or Decimal("0.00"))
+                op, before = self._apply_op_transition(op, OperationStatus.EXECUTED)
+                self._refunded_by_order[op.order_id] = self._refunded_by_order.get(op.order_id, Decimal("0.00")) + (op.amount or Decimal("0.00"))
+                op.executed = True
+                self._record("reconcile_success", "operation", op.operation_id, cmd.actor, before, OperationStatus.EXECUTED)
+                return op
+            if cmd.result == "failed":
+                op, before = self._apply_op_transition(op, OperationStatus.FAILED)
+                self._record("reconcile_failed", "operation", op.operation_id, cmd.actor, before, OperationStatus.FAILED)
+                return op
+            raise AfterSalesError(AfterSalesErrorCode.MISSING_REQUIRED_FIELD, f"未知对账结果：{cmd.result!r}")
+
+    # ---------- 订单级一致性（Task K1） ----------
+
+    def _order_lock(self, tenant_id: str, order_id: str) -> threading.Lock:
+        """订单级锁：键=(tenant_id, order_id)。临界段覆盖 unknown 检查、剩余金额检查、
+        执行/对账成功状态迁移、refunded 累计与对应审计。
+
+        锁顺序约定：需要多把锁的路径一律先取订单锁、后取幂等键锁（create_refund），
+        避免死锁；不同订单互不阻塞。
+        """
+        with self._order_guard:
+            return self._order_locks.setdefault((tenant_id, order_id), threading.Lock())
+
+    def _has_unknown_on_order(self, order_id: str) -> bool:
+        """订单级 unknown 存在性（任何工单/操作），用于换键创建守卫。"""
+        return any(
+            op.order_id == order_id and op.status == OperationStatus.UNKNOWN
+            for op in self._operations.values()
+        )
+
+    def _ensure_refund_capacity(self, order_id: str, amount: Decimal) -> None:
+        """执行/对账成功前的原子容量校验（必须在订单锁内调用）。"""
+        order = self._orders.get(order_id)
+        if order is None:
+            raise AfterSalesError(AfterSalesErrorCode.ORDER_NOT_FOUND, f"订单 {order_id} 不存在")
+        already = self.refunded_amount(order_id)
+        if already + amount > order.paid_amount:
             raise AfterSalesError(
-                AfterSalesErrorCode.INVALID_STATE_TRANSITION,
-                f"只有 unknown 态操作可对账，当前 {op.status.value}",
+                AfterSalesErrorCode.AMOUNT_EXCEEDS_REMAINING,
+                f"执行时退款累计 {already + amount} 将超过实付 {order.paid_amount}"
+                f"（已执行 {already}，本次 {amount}），拒绝执行/对账成功；请先核对或人工处理",
             )
-        if cmd.result == "success":
-            op, before = self._apply_op_transition(op, OperationStatus.EXECUTED)
-            self._refunded_by_order[op.order_id] = self._refunded_by_order.get(op.order_id, Decimal("0.00")) + (op.amount or Decimal("0.00"))
-            op.executed = True
-            self._record("reconcile_success", "operation", op.operation_id, cmd.actor, before, OperationStatus.EXECUTED)
-            return op
-        if cmd.result == "failed":
-            op, before = self._apply_op_transition(op, OperationStatus.FAILED)
-            self._record("reconcile_failed", "operation", op.operation_id, cmd.actor, before, OperationStatus.FAILED)
-            return op
-        raise AfterSalesError(AfterSalesErrorCode.MISSING_REQUIRED_FIELD, f"未知对账结果：{cmd.result!r}")
 
     # ---------- 内部 ----------
 

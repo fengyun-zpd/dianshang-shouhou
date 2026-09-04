@@ -2,7 +2,7 @@
 
 > 归属：电商售后多智能体工单系统（OpsPilot After-Sales，目标远程 `fengyun-zpd/dianshang-shouhou`）
 > 性质：总负责人 Agent 的侦察与实施基线记录。本文档只陈述事实与判断，不把规划写成已实现；实时状态以此文件与测试输出为准。
-> 版本：v0.11（阶段 0–6 + 持久化原型 + 安全/命名空间修复 + 任务卡 J 完成，2026-09-04）
+> 版本：v0.12（阶段 0–6 + 持久化原型 + 任务卡 J/K1 完成，2026-09-04）
 
 ## 1. 工作区与目录角色
 
@@ -23,7 +23,7 @@
 
 ### ✅ 已实现（有代码 + 测试证据）
 
-| 项 | 证据（`.venv` 下 `python -m pytest tests/` → **235 passed**） |
+| 项 | 证据（`.venv` 下 `python -m pytest tests/` → **242 passed**） |
 | --- | --- |
 | 工程宪法 `AGENTS.md` v0.2；README 设计基线 + 实施进度节 | 文件存在 |
 | 退款最小闭环（确定性领域服务） | `src/domain/{models,idempotency,refund_service}.py` + `tests/test_refund_service.py`（14 项） |
@@ -39,6 +39,7 @@
 | **阶段 6 Mule Agent Bridge** | `src/bridge/`（models 身份/动作白名单/入出站 Schema + bridge 适配器：身份映射、角色矩阵、租户注入、超时、审计、熔断 fail-closed、注入拒绝；白名单仅只读查询 + submit_after_sales_request，无审批/执行）；`docs/MULE_BRIDGE.md`；测试 14 项；MCP/A2A 协议包装为规划 |
 | **可恢复持久化原型（SQLite）** | service 新增 `export_state/restore_state`（不动规则）+ `idempotency.export/import_records`；`src/persistence/`（codec JSON 安全编解码、SQLite append-only journal + checksum、`RecoverableSession` load/persist）；恢复保真/幂等续跑/损坏 fail-closed/跨库隔离测试 6 项；演示 `scripts/demo_persistence.py`；`docs/PERSISTENCE.md` |
 | **任务卡 J 一致性与恢复安全** | 线程生命周期（请求指纹进 checkpoint：同 thread 只能继续原请求、结束线程不同请求拒绝、同请求重复提交返回原结果、禁止新 order 与旧 ticket 混合、租户绑定不可变）；快照严格校验（顶层键集合/引用关系/租户一致/金额有限且非负/refunded==已执行求和且≤实付/seq 单调/状态组合/审计与幂等引用，一律 SnapshotCorruptionError）；原子恢复（先验后换，失败原服务零改动；`restore_into`）；原子幂等（IdempotencyStore per-key 锁 + get-or-reserve/commit/release；create_ticket/create_refund 锁内 CAS，创建失败释放占位）；测试新增 26 项 |
+| **任务卡 K1 订单级退款并发一致性** | 订单级锁 `(tenant_id, order_id)`：`create_refund`/`execute`/`reconcile`/`close_ticket` 在同一订单锁内完成 unknown 检查、剩余金额/容量校验、状态迁移、refunded 累计与审计；执行与对账成功均有原子容量校验（累计+本次≤实付），超额抛 `AMOUNT_EXCEEDS_REMAINING` 且不迁移不累计；幂等命中先于金额/unknown 守卫（同键重复返回原结果）；换键在 unknown 时拒 `OPERATION_UNKNOWN_CONFLICT`；锁顺序订单锁→幂等键锁；设计说明 `docs/TASK_K1_ORDER_REFUND_CONCURRENCY.md`；测试 7 项 |
 | 依赖清单 | `requirements.txt`（langgraph==1.2.11 / pytest==9.1.1 / httpx==0.28.1 / pydantic==2.13.5，安装到 D 盘 `.venv`） |
 | 规划文档 | `docs/{STATUS_AND_RISKS,TASK_SPLIT,ARCHITECTURE,TESTING_BASELINE}.md` |
 
@@ -87,3 +88,4 @@
 - v0.9（2026-09-04）—— 安全与可靠性缺陷修复：RAG 文档按租户隔离并拒绝同键异内容，远程 LLM Base URL 收紧端口/主机边界，模型输入递归防注入，证据计入 token 预算，工具/桥接超时 fail-closed 并取消 future，桥接动作增加角色矩阵，checkpoint 使用租户命名空间；新增针对性回归测试。
 - v0.10（2026-09-04）—— 增加 checkpoint 租户命名空间与跨运行器恢复回归，当前全量测试 209 passed。
 - v0.11（2026-09-04）—— 任务卡 J（一致性与恢复安全）完成：全量 235 passed（新增 26 项）；线程请求指纹/冲突拒绝/重复返回原结果；快照严格校验 + 原子恢复；幂等 per-key CAS 并发单飞；收敛既有重复请求语义为“返回原结果”。
+- v0.12（2026-09-04）—— Task K1（订单级退款并发一致性）完成：全量 242 passed（新增 7 项）；订单级锁 + 执行阶段原子容量校验修复同订单不同键并发超退（60+60>100）；unknown 对账竞争、换键拒绝、幂等优先语义回归覆盖。
