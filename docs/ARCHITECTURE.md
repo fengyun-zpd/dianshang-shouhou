@@ -41,7 +41,7 @@ V1 当前验证（依赖装在 D 盘 `.venv`）：
 
 ```powershell
 cd D:\workplace\PyCharmMiscProject\私域
-.venv\Scripts\python.exe -m pytest tests/ -v                 # 全量回归（当前 338 passed+7 xfailed，2026-09-04 实测；PG 容器运行时集成 18/18）
+.venv\Scripts\python.exe -m pytest tests/ -v                 # 全量回归（当前 395 passed, 0 xfailed，2026-09-04 实测；PG 容器运行时集成 31/31）
 .venv\Scripts\python.exe -m pytest tests/unit/agents -v     # 单 Agent 工作流
 .venv\Scripts\python.exe -m pytest tests/unit/domain/after_sales -v   # 售后插件（任务卡 A）
 .venv\Scripts\python.exe scripts\run_tests.py                # 分层回归脚本

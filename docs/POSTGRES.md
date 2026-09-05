@@ -63,7 +63,7 @@ docker run -d --name opspilot-pg -e POSTGRES_PASSWORD=opspilot -e POSTGRES_DB=op
   （save 后事实以行表真实存在（SQL 直接断言：executed 状态/金额/decision_version/审批流水/幂等）/
    save→load 保真 / save 中途失败整单位回滚（先落镜像不被部分覆盖）/ 重启装载后重复请求无重复
    副作用并可继续关单、审计在重建实例上追加）
-- 全量：`.venv\Scripts\python.exe -m pytest tests/ -q` → 330 passed（PG 容器运行时；无 PG 集成自动跳过）
+- 全量：`.venv\Scripts\python.exe -m pytest tests/ -q` → 395 passed, 0 xfailed（PG 容器运行时；无 PG 集成自动跳过）
 - PG 不可达时集成测试自动 `skip` 并标注“数据库集成未实测”。
 
 ## 5. 覆盖与未覆盖（诚实边界）

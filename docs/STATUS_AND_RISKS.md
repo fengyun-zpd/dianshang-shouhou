@@ -23,7 +23,7 @@
 
 ### ✅ 已实现（有代码 + 测试证据）
 
-| 项 | 证据（`.venv` 下 `python -m pytest tests/` → **338 passed, 7 xfailed**，2026-09-04 实测；PG 容器运行时集成 18/18） |
+| 项 | 证据（`.venv` 下 `python -m pytest tests/` → **395 passed, 0 xfailed**，2026-09-04 实测；PG 容器运行时集成 31/31） |
 | --- | --- |
 | 工程宪法 `AGENTS.md` v0.2；README 设计基线 + 实施进度节 | 文件存在 |
 | 退款最小闭环（确定性领域服务） | `src/domain/{models,idempotency,refund_service}.py` + `tests/test_refund_service.py`（14 项） |
@@ -117,3 +117,4 @@
 - v0.38（2026-09-04）—— 缺陷台账清零（D12 收编）：`compare_agents.py` 报告稳定化——移除 P50/P95 与逐 case 耗时列（报告仅确定性指标：outcome/退款/通过率），结论仅由通过率决定（不再依赖逐 run 耗时）；报告尾注声明"确定性产物、耗时仅 stdout"；两次运行报告哈希相同（零 diff）。regression **11 passed, 0 xfailed**（D1–D12 全部转 PASS）；全量 **388 passed, 0 xfailed**（unit 317 / integration 32 / e2e 2 / property 12 / security 4 / 根 14 / regression 11）。
 - v0.39（2026-09-04）—— 阶段三第七步（API 可启动服务，最小增量）：`create_app` 增加可选 `pg_probe` 与公开端点 `/health/live`（恒 200）与 `/health/ready`（配置 pg_probe 时反映 PostgreSQL 可用性：不可用 → 503 degraded；未配置 → 200 not-configured）；`AuthMiddleware` 放行 `/health` 前缀（探活免认证）；新增 `scripts/run_api.py` 可启动入口（memory 开发后端 + 固定合成 seed + 演示 token；可选 `--pg-url` 仅启用 PG 探测；**不连接任何真实外部系统**，docstring 注明 PG-first 命令路由接入 API 为规划未实现）；health 单测 5 项；全量 **393 passed, 0 xfailed**（unit 322）。
 - v0.40（2026-09-04）—— 阶段四（SQLite checkpoint 加固，最小增量）：`open_sqlite_checkpointer` 增加 WAL 日志模式（并发读写不互锁）与 `busy_timeout=5000ms`（多进程写竞争等待而非立即失败）；新增 `close_sqlite_checkpointer` 显式关闭（幂等，进程退出亦自动关闭）；docstring 明确损坏语义（文件损坏 → sqlite3.DatabaseError fail-fast，不得静默使用损坏流程状态）。测试 +2（5 项：WAL/busy_timeout PRAGMA 值断言；损坏文件（关闭+丢伴生文件+破坏头）原生读取抛 DatabaseError）；workflow thread 租户归属由既有 tenant 命名空间测试保障。全量 **395 passed, 0 xfailed**（unit 324）。
+- v0.41（2026-09-04）—— 第八步文档统一收口（全站"当前性"数字对齐实测）：全量 **395 passed, 0 xfailed**；分层收集 unit 321 / integration 31 / e2e 2 / property 12 / security 4 / regression 11（0 xfailed）/ 根 14 = 395；PG 集成 31/31。README §13.1、ARCHITECTURE 启动行、TESTING_BASELINE v0.7（分层表加入 regression 层）、PERSISTENCE、MULE_BRIDGE、POSTGRES、TASK_SPLIT"当前全量"指针统一为 395/31/31；缺陷台账 D1–D12 全部标记已修复。历史修订行保留（含交付时数字）。未实现/未实测声明（如实）：真实 LLM、真实 MuleSoft/MCP 网络连接、微调、审批工作台前端、领域状态机增量 SQL 化之外的"默认运行时整体切换（gateway/API/工作流指向 PgCommandService）"、workflow_threads 表与 resume 跨进程租约、API 限流/CORS/OpenAPI 示例为规划中。
