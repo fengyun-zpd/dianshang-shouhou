@@ -91,6 +91,13 @@ class MemoryAfterSalesRepository(AfterSalesRepository):
         with self._lock:
             return self._tickets.get((tenant_id, ticket_id))
 
+    def update_ticket_versioned(self, row: TicketRow, expected_version: int) -> None:
+        with self._lock:
+            cur = self._tickets.get((row.tenant_id, row.ticket_id))
+            if cur is None or cur.version != expected_version:
+                raise OptimisticLockError("工单版本不匹配")
+            self._tickets[(row.tenant_id, row.ticket_id)] = replace(row, version=expected_version + 1)
+
     def insert_operation(self, row: OperationRow) -> None:
         with self._lock:
             self._operations[(row.tenant_id, row.operation_id)] = row

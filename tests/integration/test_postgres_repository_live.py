@@ -295,3 +295,33 @@ def test_live_next_seq_atomic_across_connections():
     assert len(outcomes) == 8
     assert sorted(outcomes) == list(range(1, 9))   # 1..8 各一次，无重复
     assert PostgresAfterSalesRepository(DATABASE_URL).next_seq("tenant-b", "ticket") == 1
+
+
+# ---------- 版本迁移 CAS（真实 PG） ----------
+
+def test_live_ticket_versioned_update_cas(repo):
+    repo.insert_order(_order())
+    repo.insert_ticket(TicketRow("tenant-a", "TKT-1", "ORD-1", "C1", "refund", "破损", "open"))
+    target = TicketRow("tenant-a", "TKT-1", "ORD-1", "C1", "refund", "破损", "resolved",
+                       resolution="refunded", version=1)
+    repo.update_ticket_versioned(target, expected_version=1)
+    assert repo.get_ticket("tenant-a", "TKT-1").status == "resolved"
+    with pytest.raises(OptimisticLockError):
+        repo.update_ticket_versioned(target, expected_version=1)   # 旧版本 → CAS 冲突
+
+
+def test_live_operation_versioned_update_carries_decision(repo):
+    repo.insert_order(_order())
+    repo.insert_ticket(TicketRow("tenant-a", "TKT-1", "ORD-1", "C1", "refund", "破损", "open"))
+    repo.insert_operation(_op("OP-1", "60.00"))
+    approved = _op("OP-1", "60.00")
+    approved = OperationRow(approved.tenant_id, approved.operation_id, approved.ticket_id,
+                            approved.order_id, approved.op_type, approved.amount, "executed",
+                            approved.idempotency_key, approved.created_by, version=1,
+                            decision_version=1, executed=True)
+    repo.update_operation_versioned(approved, expected_version=1)
+    got = repo.get_operation("tenant-a", "OP-1")
+    assert got.status == "executed" and got.executed is True
+    assert got.decision_version == 1 and got.version == 2
+    with pytest.raises(OptimisticLockError):         # 并发/过期 expected_version
+        repo.update_operation_versioned(approved, expected_version=1)

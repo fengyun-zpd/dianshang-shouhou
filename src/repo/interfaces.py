@@ -158,6 +158,10 @@ class AfterSalesRepository(ABC):
     @abstractmethod
     def get_ticket(self, tenant_id: str, ticket_id: str) -> Optional[TicketRow]: ...
 
+    @abstractmethod
+    def update_ticket_versioned(self, row: TicketRow, expected_version: int) -> None:
+        """工单乐观状态更新（resolve/close 等迁移 CAS）；版本不符抛 OptimisticLockError。"""
+
     # ---------- refund_operations ----------
     @abstractmethod
     def insert_operation(self, row: OperationRow) -> None: ...
@@ -166,7 +170,9 @@ class AfterSalesRepository(ABC):
     def get_operation(self, tenant_id: str, operation_id: str) -> Optional[OperationRow]: ...
 
     @abstractmethod
-    def update_operation_versioned(self, row: OperationRow, expected_version: int) -> None: ...
+    def update_operation_versioned(self, row: OperationRow, expected_version: int) -> None:
+        """操作乐观更新（状态迁移 CAS）：以 row 的 status/executed/decision_version 为目标值、
+        WHERE version=expected 执行并 version+1；版本不符抛 OptimisticLockError。"""
 
     @abstractmethod
     def executed_sum_for_order(self, tenant_id: str, order_id: str) -> Decimal:

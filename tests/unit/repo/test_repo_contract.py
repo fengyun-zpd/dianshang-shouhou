@@ -173,3 +173,31 @@ def test_order_item_and_next_seq(repo):
     assert repo.next_seq("T1", "ticket") == 2        # 同租户同 kind 递增
     assert repo.next_seq("T1", "operation") == 1     # kind 隔离
     assert repo.next_seq("T2", "ticket") == 1        # 租户隔离
+
+
+# ---------- 版本迁移 CAS 原语 ----------
+
+def test_ticket_versioned_update_cas(repo):
+    repo.insert_order(_order())
+    repo.insert_ticket(TicketRow(T1, "TKT-1", "ORD-1", "C1", "refund", "破损", "open"))
+    target = TicketRow(T1, "TKT-1", "ORD-1", "C1", "refund", "破损", "resolved",
+                       resolution="refunded", version=1)
+    repo.update_ticket_versioned(target, expected_version=1)
+    assert repo.get_ticket(T1, "TKT-1").status == "resolved"
+    with pytest.raises(OptimisticLockError):          # 旧版本再更新 → CAS 冲突
+        repo.update_ticket_versioned(target, expected_version=1)
+
+
+def test_operation_versioned_update_carries_decision(repo):
+    repo.insert_order(_order())
+    repo.insert_ticket(TicketRow(T1, "TKT-1", "ORD-1", "C1", "refund", "破损", "open"))
+    repo.insert_operation(_op(op_id="OP-1", amount="60.00"))
+    approved = _op(op_id="OP-1", amount="60.00")
+    approved = OperationRow(approved.tenant_id, approved.operation_id, approved.ticket_id,
+                            approved.order_id, approved.op_type, approved.amount, "executed",
+                            approved.idempotency_key, approved.created_by, version=1,
+                            decision_version=1, executed=True)
+    repo.update_operation_versioned(approved, expected_version=1)
+    got = repo.get_operation(T1, "OP-1")
+    assert got.status == "executed" and got.executed is True
+    assert got.decision_version == 1 and got.version == 2

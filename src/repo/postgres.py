@@ -158,6 +158,16 @@ class PostgresAfterSalesRepository(AfterSalesRepository):
             ), {"t": tenant_id, "id": ticket_id}).fetchone()
             return self._ticket_from(row) if row else None
 
+    def update_ticket_versioned(self, row: TicketRow, expected_version: int) -> None:
+        with self._tx() as conn:
+            res = conn.execute(text(
+                "UPDATE tickets SET status=:s, resolution=:res, version=version+1 "
+                "WHERE tenant_id=:t AND ticket_id=:id AND version=:ev"
+            ), {"t": row.tenant_id, "id": row.ticket_id, "s": row.status,
+                "res": row.resolution, "ev": expected_version})
+            if res.rowcount == 0:
+                raise OptimisticLockError(f"工单 {row.ticket_id} 版本冲突")
+
     # ---------- refund_operations ----------
     def insert_operation(self, row: OperationRow) -> None:
         with self._tx() as conn:
@@ -180,10 +190,11 @@ class PostgresAfterSalesRepository(AfterSalesRepository):
     def update_operation_versioned(self, row: OperationRow, expected_version: int) -> None:
         with self._tx() as conn:
             res = conn.execute(text(
-                "UPDATE refund_operations SET status=:s, executed=:ex, version=version+1 "
+                "UPDATE refund_operations SET status=:s, executed=:ex, "
+                "decision_version=:dv, version=version+1 "
                 "WHERE tenant_id=:t AND operation_id=:op AND version=:ev"
             ), {"t": row.tenant_id, "op": row.operation_id, "s": row.status,
-                "ex": row.executed, "ev": expected_version})
+                "ex": row.executed, "dv": row.decision_version, "ev": expected_version})
             if res.rowcount == 0:
                 raise OptimisticLockError(f"操作 {row.operation_id} 版本冲突")
 
