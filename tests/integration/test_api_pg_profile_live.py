@@ -1,9 +1,9 @@
-"""PG profile API 端到端（阶段四第 3 节验收）：真实 HTTP 路径使用 PgCommandService。
+"""PG profile API 端到端（阶段四第 3 节验收）：真实 HTTP 路径使用 PgCommandAdapter
+（完整 AfterSalesApplicationPort：PgCommandService 命令 + Repository 行事实）。
 
 前置：opspilot-pg（5433）或 DATABASE_URL；不可达整模块 skip。
-覆盖子集端点（其余端点的 pg 接入为进行中，见 PgServiceFacade docstring）：
-POST /api/tickets → refund-drafts → submit → approve → execute；SQL 断言
-refund_operations 状态/版本、approval_decisions 事实行、审计。
+覆盖端点：POST /api/tickets → refund-drafts → submit → approve → execute；
+SQL 断言 refund_operations 状态/版本、approval_decisions 事实行、审计。
 """
 import os
 from decimal import Decimal
@@ -16,7 +16,7 @@ from sqlalchemy import create_engine, text
 from src.api import ApiIdentity, ApiTokenRegistry, create_app
 from src.api.runtime import require_postgres_ready
 from src.domain.after_sales import Role
-from src.domain.after_sales.adapters import PgServiceFacade
+from src.domain.after_sales.adapters import PgCommandAdapter
 from src.domain.after_sales.pg_commands import PgCommandService
 from src.repo import OrderRow, PolicyRow, PostgresAfterSalesRepository
 
@@ -54,12 +54,12 @@ def client():
     repo.insert_order(OrderRow("T1", "ORD-1", "C1", "delivered", Decimal("100.00"), 2))
     repo.insert_policy(PolicyRow("T1", "P-1", "refund", '["damaged"]', 30,
                                  Decimal("1.0000"), "2020-01-01", 1))
-    facade = PgServiceFacade(PgCommandService(repo), repo)
+    backend = PgCommandAdapter(PgCommandService(repo), repo)
     reg = ApiTokenRegistry()
     reg.register("tok-agent", ApiIdentity("agent-1", "T1", Role.AGENT))
     reg.register("tok-approver", ApiIdentity("approver-1", "T1", Role.APPROVER))
     reg.register("tok-system", ApiIdentity("system-1", "T1", Role.SYSTEM))
-    return TestClient(create_app(facade, reg))
+    return TestClient(create_app(backend, reg))
 
 
 def _h(token, rid=None):

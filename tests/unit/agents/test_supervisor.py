@@ -10,6 +10,7 @@ import pytest
 from src.agents import SupervisorRunner, WorkflowRunner
 from src.platform.tooling import TenantContext, ToolResult
 from src.agents.subagents import ORDER_AGENT_SPEC, ReadOnlySubAgent
+from src.domain.after_sales.adapters import MemoryAdapter
 from src.domain.models import Role
 from src.rag import PolicyDocument, PolicyStore
 from tests.unit.domain.after_sales.helpers import baseline_service, service_with_policies
@@ -40,7 +41,7 @@ def test_subagent_white_list_only_and_no_write_tools():
     from src.agents.subagents import build_supervisor_evidence
     from src.agents.ports import AfterSalesGateway
     from src.agents.toolkit import build_toolkit
-    registry = build_toolkit(AfterSalesGateway(svc), store)
+    registry = build_toolkit(AfterSalesGateway(MemoryAdapter(svc)), store)
     agent = ReadOnlySubAgent(ORDER_AGENT_SPEC, registry)
     # 白名单外的只读工具也拒绝
     res = agent.call(TenantContext("T1", Role.AGENT), "retrieve_policy", {"query": "x"})
@@ -55,8 +56,8 @@ def test_subagent_white_list_only_and_no_write_tools():
 def test_supervisor_matches_single_agent_outcome(approval):
     svc1, store1 = make_svc_store()
     svc2, store2 = make_svc_store()
-    single = WorkflowRunner(svc1)
-    sup = SupervisorRunner(svc2, policy_store=store2)
+    single = WorkflowRunner(MemoryAdapter(svc1))
+    sup = SupervisorRunner(MemoryAdapter(svc2), policy_store=store2)
 
     r1 = single.start("T1", REQUEST, thread_id="a1")
     r2 = sup.start("T1", REQUEST, thread_id="b1")
@@ -73,7 +74,7 @@ def test_supervisor_matches_single_agent_outcome(approval):
 
 def test_supervisor_policy_evidence_included():
     svc, store = make_svc_store()
-    sup = SupervisorRunner(svc, policy_store=store)
+    sup = SupervisorRunner(MemoryAdapter(svc), policy_store=store)
     r = sup.start("T1", REQUEST, thread_id="s-evidence")
     summary = (r.state or {}).get("order_summary", {})
     assert summary.get("policy_citations"), "政策子 Agent 应产出引用"
@@ -86,7 +87,7 @@ def test_supervisor_policy_evidence_included():
 
 def test_supervisor_interrupt_resume_refund():
     svc, store = make_svc_store()
-    sup = SupervisorRunner(svc, policy_store=store)
+    sup = SupervisorRunner(MemoryAdapter(svc), policy_store=store)
     r = sup.start("T1", REQUEST, thread_id="s-happy")
     assert r.waiting_approval
     assert r.state["approval_id"] != r.state["operation_id"]
@@ -98,7 +99,7 @@ def test_supervisor_interrupt_resume_refund():
 
 def test_supervisor_reject_zero_side_effects():
     svc, store = make_svc_store()
-    sup = SupervisorRunner(svc, policy_store=store)
+    sup = SupervisorRunner(MemoryAdapter(svc), policy_store=store)
     r = sup.start("T1", REQUEST, thread_id="s-rej")
     sup.submit_decision(r.state["operation_id"], "rejected", reason="不符")
     f = sup.resume("s-rej")
@@ -108,7 +109,7 @@ def test_supervisor_reject_zero_side_effects():
 
 def test_supervisor_double_resume_idempotent():
     svc, store = make_svc_store()
-    sup = SupervisorRunner(svc, policy_store=store)
+    sup = SupervisorRunner(MemoryAdapter(svc), policy_store=store)
     r = sup.start("T1", REQUEST, thread_id="s-double")
     f1 = approve_resume(sup, "s-double", r.state["operation_id"])
     assert f1.outcome == "refunded"
@@ -121,7 +122,7 @@ def test_supervisor_double_resume_idempotent():
 
 def test_supervisor_unknown_recovery_by_original_operation():
     svc, store = make_svc_store()
-    sup = SupervisorRunner(svc, policy_store=store)
+    sup = SupervisorRunner(MemoryAdapter(svc), policy_store=store)
     r = sup.start("T1", REQUEST, thread_id="s-unk", simulate_external="timeout")
     f = approve_resume(sup, "s-unk", r.state["operation_id"])
     assert f.outcome == "operation_unknown"
@@ -134,7 +135,7 @@ def test_supervisor_unknown_recovery_by_original_operation():
 
 def test_supervisor_forged_resume_ignored():
     svc, store = make_svc_store()
-    sup = SupervisorRunner(svc, policy_store=store)
+    sup = SupervisorRunner(MemoryAdapter(svc), policy_store=store)
     r = sup.start("T1", REQUEST, thread_id="s-forge")
     r2 = sup.resume("s-forge", payload="approved")  # 伪造
     assert r2.waiting_approval is True
@@ -143,7 +144,7 @@ def test_supervisor_forged_resume_ignored():
 
 def test_supervisor_cross_tenant_order_rejected():
     svc, store = make_svc_store()
-    sup = SupervisorRunner(svc, policy_store=store)
+    sup = SupervisorRunner(MemoryAdapter(svc), policy_store=store)
     r = sup.start("T2", "订单 ORD-1 商品破损，要求退款", thread_id="s-tenant")
     assert r.finished and r.outcome == "escalated"
     assert r.error_code == "AFTER_SALES_TENANT_MISMATCH"
@@ -153,7 +154,7 @@ def test_supervisor_cross_tenant_order_rejected():
 def test_supervisor_shadow_zero_business_side_effects():
     """预测/运行只读路径：领域状态仅在真实审批执行后变化（正常流已证）；此处证 escalate 路径零副作用。"""
     svc, store = make_svc_store()
-    sup = SupervisorRunner(svc, policy_store=store)
+    sup = SupervisorRunner(MemoryAdapter(svc), policy_store=store)
     r = sup.start("T1", "订单 ORD-999 商品破损", thread_id="s-escalate")
     assert r.outcome == "escalated"
     assert len(svc.audit_log()) == 0

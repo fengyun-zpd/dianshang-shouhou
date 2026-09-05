@@ -4,6 +4,7 @@ from decimal import Decimal
 import pytest
 
 from src.domain.after_sales import (
+    CreateRefundCommand,
     CreateTicketCommand,
     RequestType,
     Role,
@@ -48,3 +49,19 @@ def test_reads_tenant_first_and_consistent(make_port):
     assert plan.amount == Decimal("100.00") and plan.policy_id == "P-DAMAGED-FULL"
     # 审计读取（两端非空，含 create_ticket）
     assert any(getattr(e, "action", None) == "create_ticket" for e in port.audit_log("T1"))
+
+
+@pytest.mark.parametrize("make_port", [_memory_port, _pg_port], ids=["memory", "pg"])
+def test_list_operations_tenant_first_and_consistent(make_port):
+    """list_operations(tenant, ticket)：工单下操作列表；跨租户/不存在工单显式拒绝。"""
+    port = make_port()
+    t = port.create_ticket(CreateTicketCommand(
+        "T1", "ORD-1", "C1", RequestType.REFUND, "商品破损", ("damaged",), Role.AGENT, "tk-lop"))
+    op = port.create_refund_draft("T1", CreateRefundCommand(
+        t.ticket_id, Decimal("60.00"), "破损", Role.AGENT, "k-lop"))
+    assert [o.operation_id for o in port.list_operations("T1", t.ticket_id)] == [op.operation_id]
+    # 工单不存在 / 跨租户读取均显式拒绝（不返回空表、不泄露他租户操作）
+    with pytest.raises(Exception):
+        port.list_operations("T1", "TKT-NO-SUCH")
+    with pytest.raises(Exception):
+        port.list_operations("T2", t.ticket_id)

@@ -2,6 +2,7 @@
 import pytest
 
 from src.domain.after_sales import AfterSalesError, AfterSalesErrorCode
+from src.domain.after_sales.adapters import MemoryAdapter
 from tests.unit.agents.helpers import make_runner
 from tests.unit.domain.after_sales.helpers import service_with_policies
 
@@ -30,7 +31,7 @@ def test_conflicting_policies_escalate():
         ("P-HALF", ("damaged",), "0.50", 30),
     )
     from src.agents import WorkflowRunner
-    runner = WorkflowRunner(svc)
+    runner = WorkflowRunner(MemoryAdapter(svc))
     r = runner.start("T1", "订单 ORD-1 商品破损，要求退款", thread_id="t-es-3")
     assert r.finished and r.outcome == "escalated"
     assert r.error_code == AfterSalesErrorCode.POLICY_CONFLICT.value

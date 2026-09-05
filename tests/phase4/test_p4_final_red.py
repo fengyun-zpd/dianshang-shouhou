@@ -12,10 +12,7 @@ import inspect
 import io
 from pathlib import Path
 
-import pytest
-
 ROOT = Path(__file__).resolve().parents[2]
-red = pytest.mark.xfail(strict=True, reason="P4-FINAL: 阶段四收口契约尚未实现")
 
 
 def _read(rel: str) -> str:
@@ -73,9 +70,8 @@ def test_pg_approve_requires_client_expected_version():
 
 # ---------- R7 ----------
 
-@red
 def test_run_api_backend_pg_assembly():
-    """run_api 必须支持 --backend pg 真正装配 PG 后端（现仅 memory choices）。"""
+    """run_api 必须支持 --backend pg 真正装配 PG 后端。"""
     src = _read("scripts/run_api.py")
     assert '"pg"' in src or "'pg'" in src
     assert "require_postgres_ready" in src

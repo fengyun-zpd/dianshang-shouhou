@@ -48,11 +48,11 @@ class MemoryAdapter:
 
     def approve(self, tenant_id: str, cmd: ApproveCommand,
                 decided_by: Optional[str] = None) -> Operation:
-        return self._svc.approve(cmd)
+        return self._svc.approve(cmd, decided_by=decided_by)
 
     def reject(self, tenant_id: str, cmd: RejectCommand,
                decided_by: Optional[str] = None) -> Operation:
-        return self._svc.reject(cmd)
+        return self._svc.reject(cmd, decided_by=decided_by)
 
     def execute(self, tenant_id: str, cmd: ExecuteCommand) -> Operation:
         return self._svc.execute(cmd)
@@ -77,6 +77,12 @@ class MemoryAdapter:
                                   f"操作 {operation_id} 不属于租户 {tenant_id}")
         return op
 
+    def list_operations(self, tenant_id: str, ticket_id: str) -> list[Operation]:
+        # tenant-first 门禁：工单不存在 → TICKET_NOT_FOUND；跨租户 → TENANT_MISMATCH
+        self.get_ticket(tenant_id, ticket_id)
+        return [op for op in self._svc.operations_of(ticket_id)
+                if op.tenant_id == tenant_id]
+
     def get_order(self, tenant_id: str, order_id: str):
         return self._svc.get_order_by_id(tenant_id, order_id)
 
@@ -87,8 +93,8 @@ class MemoryAdapter:
         return self._svc.compute_refund_plan(tenant_id, order_id, request_type, reason_tags)
 
     def audit_log(self, tenant_id: str):
-        # 内存演示后端审计为单租户场景；返回全部审计事件
-        return self._svc.audit_log()
+        # 租户作用域审计：逐条按实体归属过滤（内存服务单进程；与 PG 端 tenant_id 行语义一致）
+        return self._svc.audit_log(tenant_id)
 
 
 class PgCommandAdapter:
@@ -138,6 +144,14 @@ class PgCommandAdapter:
                                   f"操作 {operation_id} 不存在")
         return operation_from_row(row)
 
+    def list_operations(self, tenant_id: str, ticket_id: str) -> list:
+        # tenant-first 门禁：工单不存在 → TICKET_NOT_FOUND（跨租户 id 同语义）
+        if self._repo.get_ticket(tenant_id, ticket_id) is None:
+            raise AfterSalesError(AfterSalesErrorCode.TICKET_NOT_FOUND,
+                                  f"工单 {ticket_id} 不存在")
+        return [operation_from_row(r) for r in self._repo.list_operations()
+                if r.tenant_id == tenant_id and r.ticket_id == ticket_id]
+
     def get_order(self, tenant_id: str, order_id: str):
         row = self._repo.get_order(tenant_id, order_id)
         if row is None:
@@ -159,80 +173,3 @@ class PgCommandAdapter:
 
 
 __all__ = ["AfterSalesApplicationPort", "MemoryAdapter", "PgCommandAdapter"]
-
-
-class PgServiceFacade:
-    """pg profile 的 API 后端鸭子实现（最小证据子集，供 PG profile HTTP e2e）。
-
-    方法面 = FastAPI 路由实际调用的内存 AfterSalesService 子集（命令经 PgCommandAdapter →
-    PgCommandService 单事务；只读经 Repository 行 → domain）。未覆盖端点所需方法抛
-    NotImplementedError——完整 API 面接入 pg 为进行中（不静默声称全端点可用）。
-    """
-
-    def __init__(self, commands: PgCommandService, repo: AfterSalesRepository):
-        self._adapter = PgCommandAdapter(commands, repo)
-        self._repo = repo
-
-    # ---------- 命令（桥接端口；tenant 从实体解析） ----------
-    def create_ticket(self, cmd: CreateTicketCommand) -> AfterSalesTicket:
-        return self._adapter.create_ticket(cmd)
-
-    def create_refund(self, cmd: CreateRefundCommand) -> Operation:
-        t = self._ticket_tenant(cmd.ticket_id)
-        return self._adapter.create_refund_draft(t, cmd)
-
-    def submit(self, cmd: SubmitCommand) -> Operation:
-        return self._adapter.submit(self._operation_tenant(cmd.operation_id), cmd)
-
-    def approve(self, cmd: ApproveCommand, decided_by: Optional[str] = None) -> Operation:
-        return self._adapter.approve(self._operation_tenant(cmd.operation_id), cmd,
-                                     decided_by=decided_by)
-
-    def reject(self, cmd: RejectCommand, decided_by: Optional[str] = None) -> Operation:
-        return self._adapter.reject(self._operation_tenant(cmd.operation_id), cmd,
-                                    decided_by=decided_by)
-
-    def execute(self, cmd: ExecuteCommand) -> Operation:
-        return self._adapter.execute(self._operation_tenant(cmd.operation_id), cmd)
-
-    def reconcile(self, cmd: ReconcileCommand) -> Operation:
-        return self._adapter.reconcile(self._operation_tenant(cmd.operation_id), cmd)
-
-    def close_ticket(self, cmd: CloseTicketCommand) -> AfterSalesTicket:
-        return self._adapter.close_ticket(self._ticket_tenant(cmd.ticket_id), cmd)
-
-    # ---------- 只读（API 子集；id 全局唯一假设 → 扫行定位租户） ----------
-    def get_ticket(self, ticket_id: str) -> AfterSalesTicket:
-        for r in self._repo.list_tickets():
-            if r.ticket_id == ticket_id:
-                return ticket_from_row(r)
-        raise AfterSalesError(AfterSalesErrorCode.TICKET_NOT_FOUND,
-                              f"工单 {ticket_id} 不存在")
-
-    def get_operation(self, operation_id: str) -> Operation:
-        for r in self._repo.list_operations():
-            if r.operation_id == operation_id:
-                return operation_from_row(r)
-        raise AfterSalesError(AfterSalesErrorCode.OPERATION_NOT_FOUND,
-                              f"操作 {operation_id} 不存在")
-
-    def get_order_by_id(self, tenant_id: str, order_id: str):
-        from src.persistence.pg_backed import order_from_row
-        row = self._repo.get_order(tenant_id, order_id)
-        if row is None:
-            raise AfterSalesError(AfterSalesErrorCode.ORDER_NOT_FOUND, "订单不存在")
-        return order_from_row(row)
-
-    def _operation_tenant(self, operation_id: str) -> str:
-        for r in self._repo.list_operations():
-            if r.operation_id == operation_id:
-                return r.tenant_id
-        raise AfterSalesError(AfterSalesErrorCode.OPERATION_NOT_FOUND,
-                              f"操作 {operation_id} 不存在")
-
-    def _ticket_tenant(self, ticket_id: str) -> str:
-        for r in self._repo.list_tickets():
-            if r.ticket_id == ticket_id:
-                return r.tenant_id
-        raise AfterSalesError(AfterSalesErrorCode.TICKET_NOT_FOUND,
-                              f"工单 {ticket_id} 不存在")

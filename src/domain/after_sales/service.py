@@ -166,8 +166,17 @@ class AfterSalesService:
     def refunded_amount(self, order_id: str) -> Decimal:
         return self._refunded_by_order.get(order_id, Decimal("0.00"))
 
-    def audit_log(self) -> list[AuditEvent]:
-        return list(self._audit)
+    def audit_log(self, tenant_id: Optional[str] = None) -> list[AuditEvent]:
+        """审计事件（追加式不可变）。
+
+        tenant_id=None（默认）：返回全部事件（进程级/单租户场景直接使用）；
+        tenant_id 提供：仅返回该租户实体的事件（逐条按实体归属判定；
+        实体不存在的事件视为不属于任何租户，不进入任何租户视图）。
+        """
+        if tenant_id is None:
+            return list(self._audit)
+        return [e for e in self._audit
+                if self.entity_tenant(e.entity_type, e.entity_id) == tenant_id]
 
     def get_order_by_id(self, tenant_id: str, order_id: str) -> Order:
         """只读订单查询（阶段 2 Agent 证据编排用）：租户归属校验，不暴露跨租户订单。"""

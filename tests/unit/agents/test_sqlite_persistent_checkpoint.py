@@ -11,6 +11,7 @@ from decimal import Decimal
 from src.agents import WorkflowRunner
 from src.agents.checkpoint import open_sqlite_checkpointer
 from src.domain.after_sales import OperationStatus
+from src.domain.after_sales.adapters import MemoryAdapter
 from tests.unit.agents.helpers import REQUEST_DAMAGED, make_runner
 
 
@@ -20,7 +21,7 @@ def test_restart_resume_from_persistent_checkpoint(tmp_path):
     svc, _ = make_runner()
 
     cp1 = open_sqlite_checkpointer(str(db))
-    runner1 = WorkflowRunner(svc, checkpointer=cp1)
+    runner1 = WorkflowRunner(MemoryAdapter(svc), checkpointer=cp1)
     pending = runner1.start("T1", REQUEST_DAMAGED, thread_id="restart-thread")
     assert pending.waiting_approval
     op_id = pending.state["operation_id"]
@@ -29,8 +30,8 @@ def test_restart_resume_from_persistent_checkpoint(tmp_path):
 
     # “进程重启”：同一 SQLite 文件打开新 checkpointer + 新运行器
     cp2 = open_sqlite_checkpointer(str(db))
-    runner2 = WorkflowRunner(svc, checkpointer=cp2)
-    runner2.submit_decision(op_id, "approved")          # 业务决定提交到领域服务
+    runner2 = WorkflowRunner(MemoryAdapter(svc), checkpointer=cp2)
+    runner2.submit_decision(op_id, "approved", tenant_id="T1")  # 业务决定提交到领域服务
     final = runner2.resume("restart-thread", tenant_id="T1")
     assert final.finished and final.outcome == "refunded"
     assert svc.refunded_amount("ORD-1") == Decimal("100.00")   # 全额政策 × 实付 100
@@ -48,7 +49,7 @@ def test_injected_fake_outcome_cannot_override_domain_facts(tmp_path):
     db = tmp_path / "c.sqlite"
     svc, _ = make_runner()
     cp = open_sqlite_checkpointer(str(db))
-    runner = WorkflowRunner(svc, checkpointer=cp)
+    runner = WorkflowRunner(MemoryAdapter(svc), checkpointer=cp)
     pending = runner.start("T1", REQUEST_DAMAGED, thread_id="forge-thread")
     assert pending.waiting_approval
     op_id = pending.state["operation_id"]
@@ -71,7 +72,7 @@ def test_sqlite_checkpointer_is_persistent_on_disk(tmp_path):
     db = tmp_path / "p.sqlite"
     svc, _ = make_runner()
     cp1 = open_sqlite_checkpointer(str(db))
-    WorkflowRunner(svc, checkpointer=cp1).start("T1", REQUEST_DAMAGED, thread_id="persist")
+    WorkflowRunner(MemoryAdapter(svc), checkpointer=cp1).start("T1", REQUEST_DAMAGED, thread_id="persist")
     cp2 = open_sqlite_checkpointer(str(db))
     snap = cp2.get_tuple({"configurable": {"thread_id": "T1:persist"}})
     assert snap is not None
@@ -96,8 +97,8 @@ def test_corrupted_checkpoint_file_fails_fast(tmp_path):
     from src.agents.checkpoint import close_sqlite_checkpointer
     db = tmp_path / "corrupt.sqlite"
     cp = open_sqlite_checkpointer(str(db))
-    WorkflowRunner(make_runner()[0], checkpointer=cp).start("T1", REQUEST_DAMAGED,
-                                                            thread_id="corrupt-thread")
+    WorkflowRunner(MemoryAdapter(make_runner()[0]), checkpointer=cp).start("T1", REQUEST_DAMAGED,
+                                                                           thread_id="corrupt-thread")
     close_sqlite_checkpointer(cp)                     # 显式关闭：WAL checkpoint 落主文件
     for suffix in ("-wal", "-shm"):
         side = tmp_path / (db.name + suffix)

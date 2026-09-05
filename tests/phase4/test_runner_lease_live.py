@@ -73,7 +73,8 @@ def _owner_of(thread):
 def _make_runner(svc, cp_path, lease_repo, owner):
     from src.agents import WorkflowRunner
     from src.agents.checkpoint import open_sqlite_checkpointer
-    return WorkflowRunner(svc, checkpointer=open_sqlite_checkpointer(cp_path),
+    from src.domain.after_sales.adapters import MemoryAdapter
+    return WorkflowRunner(MemoryAdapter(svc), checkpointer=open_sqlite_checkpointer(cp_path),
                           lease_repo=lease_repo, owner_id=owner, lease_duration_s=60)
 
 
@@ -137,8 +138,8 @@ def test_expiry_takeover_and_old_owner_rejected_while_held(repo, tmp_path):
     with pytest.raises(ThreadLeaseError):
         runner_c.resume("takeover", tenant_id="T1")
     assert svc.get_operation(op_id).status.value == "pending_approval"   # C 未推进
-    # D 审批并 resume 完成
-    runner_d.submit_decision(op_id, "approved")
+    # D 审批并 resume 完成（D 未 start 过该线程 → 显式传租户）
+    runner_d.submit_decision(op_id, "approved", tenant_id="T1")
     final = runner_d.resume("takeover", tenant_id="T1")
     assert final.finished and svc.refunded_amount("ORD-1") == Decimal("100.00")
     assert _owner_of("takeover") is None

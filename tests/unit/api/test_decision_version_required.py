@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from src.api import ApiIdentity, ApiTokenRegistry, create_app
 from src.domain.after_sales import Role
+from src.domain.after_sales.adapters import MemoryAdapter
 from tests.unit.domain.after_sales.helpers import service_with_policies
 
 
@@ -13,7 +14,8 @@ def _client(require_expected_version: bool):
     reg = ApiTokenRegistry()
     reg.register("tok-agent", ApiIdentity("agent-1", "T1", Role.AGENT))
     reg.register("tok-approver", ApiIdentity("approver-1", "T1", Role.APPROVER))
-    return TestClient(create_app(svc, reg, require_expected_version=require_expected_version))
+    return TestClient(create_app(MemoryAdapter(svc), reg,
+                                 require_expected_version=require_expected_version))
 
 
 def _pending_operation(client):

@@ -18,6 +18,7 @@ from src.domain.after_sales import (
     PolicyRule,
     RequestType,
 )
+from src.domain.after_sales.adapters import MemoryAdapter
 from src.domain.models import Role
 from src.platform.reliability import CircuitBreaker
 from src.rag import PolicyDocument, PolicyStore
@@ -64,7 +65,7 @@ def make_registry() -> IdentityRegistry:
 
 def make_bridge(breaker=None) -> MuleAgentBridge:
     return MuleAgentBridge(
-        service=make_service(),
+        service=MemoryAdapter(make_service()),
         identities=make_registry(),
         policy_store=make_policy_store(),
         breaker=breaker,
@@ -152,14 +153,18 @@ def test_retrieve_policy_ok_and_injection_rejected():
 
 
 def test_submit_request_reaches_approval_without_bridge_approval_power():
-    bridge = make_bridge()
+    svc = make_service()
+    bridge = MuleAgentBridge(
+        service=MemoryAdapter(svc),
+        identities=make_registry(),
+        policy_store=make_policy_store(),
+    )
     r = bridge.invoke("mule-support-A", "submit_after_sales_request",
                       {"request_text": "订单 ORD-1 商品破损，要求退款"})
     assert r.ok is True
     assert r.data["waiting_approval"] is True
     # 工单/操作进入待审批，而非被执行
     assert r.data["operation_id"]
-    svc = bridge._service
     op = svc.get_operation(r.data["operation_id"])
     assert op.status.value == "pending_approval"
     assert svc.refunded_amount("ORD-1") == Decimal("0.00")
@@ -171,7 +176,7 @@ def test_system_role_cannot_submit_after_sales_request():
         external_principal="system-bot", tenant_id="T1", local_role=Role.SYSTEM,
         allowed_actions=frozenset({BridgeAction.submit_after_sales_request}),
     ))
-    bridge = MuleAgentBridge(service=make_service(), identities=reg)
+    bridge = MuleAgentBridge(service=MemoryAdapter(make_service()), identities=reg)
     result = bridge.invoke("system-bot", "submit_after_sales_request", {"request_text": "订单 ORD-1 破损"})
     assert result.ok is False and result.error_code == "FORBIDDEN"
 
@@ -183,8 +188,8 @@ def test_bridge_timeout_is_structured_and_audited():
             time.sleep(0.05)
             return None
     bridge = MuleAgentBridge(
-        service=make_service(), identities=make_registry(), timeout_seconds=0.001,
-        runner_factory=lambda svc: SlowRunner(),
+        service=MemoryAdapter(make_service()), identities=make_registry(), timeout_seconds=0.001,
+        runner_factory=lambda backend: SlowRunner(),
     )
     result = bridge.invoke("mule-support-A", "submit_after_sales_request", {"request_text": "订单 ORD-1 破损"})
     assert result.ok is False and result.error_code == "BRIDGE_TIMEOUT"

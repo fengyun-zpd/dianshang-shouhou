@@ -18,7 +18,8 @@ from typing import Callable, Optional
 from pydantic import BaseModel, ValidationError
 
 from src.agents import WorkflowRunner
-from src.domain.after_sales import AfterSalesError, AfterSalesService
+from src.domain.after_sales import AfterSalesError
+from src.domain.after_sales.ports import AfterSalesApplicationPort
 from src.platform.reliability import CircuitBreaker, CircuitOpenError
 from src.domain.models import Role
 from src.rag import PolicyStore
@@ -51,13 +52,15 @@ class MuleAgentBridge:
 
     def __init__(
         self,
-        service: AfterSalesService,
+        service: AfterSalesApplicationPort,
         identities: Optional[IdentityRegistry] = None,
         policy_store: Optional[PolicyStore] = None,
         breaker: Optional[CircuitBreaker] = None,
         timeout_seconds: float = 3.0,
-        runner_factory: Optional[Callable[[AfterSalesService], WorkflowRunner]] = None,
+        runner_factory: Optional[Callable[[AfterSalesApplicationPort], WorkflowRunner]] = None,
     ):
+        # service：实现 AfterSalesApplicationPort 的后端（MemoryAdapter / PgCommandAdapter）。
+        # 桥接层只读查询与售后请求均经该 Port（Gateway / WorkflowRunner 同源）。
         self._service = service
         self._identities = identities if identities is not None else IdentityRegistry()
         self._policy_store = policy_store if policy_store is not None else PolicyStore()
@@ -65,7 +68,7 @@ class MuleAgentBridge:
             failure_threshold=3, reset_timeout_seconds=1.0,
         )
         self._timeout = timeout_seconds
-        self._runner_factory = runner_factory or (lambda svc: WorkflowRunner(svc))
+        self._runner_factory = runner_factory or (lambda backend: WorkflowRunner(backend))
         self._logs: list[BridgeLogEntry] = []
 
     # ---------- 对外入口 ----------

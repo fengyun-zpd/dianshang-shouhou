@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from src.api import ApiIdentity, ApiTokenRegistry, create_app
 from src.domain.after_sales import Role
+from src.domain.after_sales.adapters import MemoryAdapter
 from tests.unit.domain.after_sales.helpers import service_with_policies
 
 POL = (("P-DAMAGED-FULL", ("damaged",), "1.00", 30),)
@@ -16,7 +17,7 @@ def _client():
     reg.register("t-a", ApiIdentity("agent", "T1", Role.AGENT))
     reg.register("t-ap", ApiIdentity("approver", "T1", Role.APPROVER))
     reg.register("t-s", ApiIdentity("system", "T1", Role.SYSTEM))
-    return TestClient(create_app(svc, reg)), svc
+    return TestClient(create_app(MemoryAdapter(svc), reg)), svc
 
 
 def _h(tok):

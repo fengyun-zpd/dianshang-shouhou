@@ -1,4 +1,4 @@
-﻿# OpsPilot     PostgreSQL            worker    database
+# OpsPilot     PostgreSQL            worker    database
 #    .\scripts\run_pg_tests_isolated.ps1
 #           database opspilot_p4a / opspilot_p4b    PostgreSQL
 # Alembic upgrade head          PG
@@ -22,7 +22,6 @@ function New-IsolatedDb([string]$name) {
         "with e.connect() as c:`n" +
         "    try: c.execute(text('CREATE DATABASE $name'))`n" +
         "    except Exception: pass`n" +
-        "e.dispose()"
         "e.dispose()"
     Invoke-Py $mk $admin
     $db = $base + $name

@@ -13,6 +13,7 @@ from src.domain.after_sales import (
     RequestType,
     Role,
 )
+from src.domain.after_sales.adapters import MemoryAdapter
 from src.platform.tooling import TenantContext
 from src.rag import PolicyDocument, PolicyStore
 
@@ -44,7 +45,7 @@ def _setup():
         content="签收后 30 天内，商品破损可申请全额退款。客户需提供破损照片作为凭证。",
         version=1,
     ))
-    gateway = AfterSalesGateway(svc)
+    gateway = AfterSalesGateway(MemoryAdapter(svc))
     reg = build_toolkit(gateway, store)
     return svc, ticket, store, reg
 

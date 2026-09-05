@@ -18,6 +18,7 @@ sys.path.insert(0, str(ROOT))
 
 from src.agents import WorkflowRunner
 from src.domain.after_sales import ApproveCommand, CloseTicketCommand, ExecuteCommand, Role
+from src.domain.after_sales.adapters import MemoryAdapter
 from src.persistence import RecoverableSession
 from tests.unit.domain.after_sales.helpers import service_with_policies
 
@@ -36,7 +37,7 @@ def main() -> None:
     # 第 1 轮：走到审批挂起并落库
     session1 = RecoverableSession(db_path, build_service=make_service)
     svc1 = session1.load()
-    runner = WorkflowRunner(svc1)
+    runner = WorkflowRunner(MemoryAdapter(svc1))
     r = runner.start("T1", "订单 ORD-1 商品破损，要求退款", thread_id="persist-demo")
     assert r.waiting_approval
     ticket_id, op_id = r.state["ticket_id"], r.state["operation_id"]

@@ -6,6 +6,7 @@
 import pytest
 
 from src.agents import WorkflowRunner
+from src.domain.after_sales.adapters import MemoryAdapter
 from src.persistence import RecoverableSession, SnapshotCorruptionError
 from src.persistence.codec import state_to_jsonable
 from tests.unit.domain.after_sales.helpers import service_with_policies
@@ -15,7 +16,7 @@ POL = (("P-DAMAGED-FULL", ("damaged",), "1.00", 30),)
 
 def valid_snapshot() -> dict:
     svc = service_with_policies(*POL)
-    WorkflowRunner(svc).start("T1", "订单 ORD-1 商品破损，要求退款", thread_id="jv")
+    WorkflowRunner(MemoryAdapter(svc)).start("T1", "订单 ORD-1 商品破损，要求退款", thread_id="jv")
     return state_to_jsonable(svc.export_state())
 
 

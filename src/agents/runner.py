@@ -3,6 +3,9 @@
 面向测试、演示脚本与后续 API 层；审批决定只经 submit_decision 提交到领域服务，
 resume 后工作流一律重读领域事实源，resume 本身不携带"通过/拒绝"的业务含义。
 
+后端依赖：本运行器只依赖 AfterSalesApplicationPort（MemoryAdapter / PgCommandAdapter
+均可，不 isinstance）——构造传入 Port 实现并交给 AfterSalesGateway 使用。
+
 线程生命周期（任务卡 J）：同一 thread_id 只能继续原请求（请求指纹写入 checkpoint），
 已结束线程提交不同请求被拒绝；同请求重复提交返回原结果（不重放）。
 """
@@ -14,8 +17,6 @@ from typing import Optional
 from uuid import uuid4
 
 from langgraph.types import Command
-
-from src.domain.after_sales import AfterSalesService
 
 from .ports import AfterSalesGateway
 from .state import APPROVAL_INTERRUPT_TYPE, CLARIFY_INTERRUPT_TYPE, AgentState, new_state
@@ -63,8 +64,9 @@ class RunResult:
 
 
 class WorkflowRunner:
-    """基于确定性领域服务 + LangGraph 的单 Agent 售后工作流运行器。
+    """基于 AfterSalesApplicationPort + LangGraph 的单 Agent 售后工作流运行器。
 
+    backend：实现 AfterSalesApplicationPort 的后端（MemoryAdapter / PgCommandAdapter）。
     lease_repo（可选，D9 硬租约）：提供 AfterSalesRepository 的 workflow_threads 租约。
     提供时 start/resume 必须在读 checkpoint、graph.update_state/invoke 与任何副作用前
     原子获得租约（owner_id 稳定唯一）；失约抛 ThreadLeaseError。线程完成（finished）或
@@ -72,12 +74,13 @@ class WorkflowRunner:
     fingerprint 且租约过期的其他 owner 接管。
     """
 
-    def __init__(self, service: AfterSalesService, checkpointer=None,
+    def __init__(self, backend, checkpointer=None,
                  lease_repo=None, owner_id: Optional[str] = None,
                  lease_duration_s: int = 60):
-        self.service = service
-        self.gateway = AfterSalesGateway(service)
+        self.backend = backend
+        self.gateway = AfterSalesGateway(backend)
         self._thread_tenants: dict[str, str] = {}
+        self._op_tenants: dict[str, str] = {}  # 本运行器见过的 operation_id -> tenant_id
         self._lease_repo = lease_repo
         if lease_repo is not None and not owner_id:
             raise ValueError("启用线程租约必须提供稳定 owner_id")
@@ -213,19 +216,38 @@ class WorkflowRunner:
 
     # ---------- 审批（授权人员提交决定到领域事实源） ----------
 
-    def submit_decision(self, operation_id: str, decision: str, reason: Optional[str] = None):
-        """仅 APPROVER 语义：向领域服务提交 approve / reject 决定（带版本校验）。"""
-        return self.gateway.submit_approver_decision(operation_id, decision, reason)
+    def submit_decision(self, operation_id: str, decision: str, reason: Optional[str] = None,
+                        tenant_id: Optional[str] = None):
+        """仅 APPROVER 语义：向领域服务提交 approve / reject 决定（带版本校验）。
+
+        tenant_id 优先取显式参数；未提供时回退到本运行器在运行中见过的
+        operation_id→tenant 登记（该操作由本运行器 start/resume 产生时）。
+        两者皆无 → ValueError（不静默猜测租户）。
+        """
+        tenant = tenant_id or self._op_tenants.get(operation_id)
+        if tenant is None:
+            raise ValueError(
+                f"UNKNOWN_OPERATION_TENANT: 操作 {operation_id} 未登记租户，请显式传 tenant_id")
+        return self.gateway.submit_approver_decision(tenant, operation_id, decision, reason)
 
     # ---------- operation_unknown（只允许原 operation_id 查询/对账） ----------
 
-    def query_operation(self, operation_id: str):
+    def query_operation(self, operation_id: str, tenant_id: Optional[str] = None):
         """只读查询：以原 operation_id 查询外部结果（禁止换键重试）。"""
-        return self.gateway.get_operation(operation_id)
+        tenant = tenant_id or self._op_tenants.get(operation_id)
+        if tenant is None:
+            raise ValueError(
+                f"UNKNOWN_OPERATION_TENANT: 操作 {operation_id} 未登记租户，请显式传 tenant_id")
+        return self.gateway.get_operation(tenant, operation_id)
 
-    def reconcile_unknown(self, operation_id: str, result: str):
+    def reconcile_unknown(self, operation_id: str, result: str,
+                          tenant_id: Optional[str] = None):
         """以原 operation_id 对账收口：success → executed / failed → failed。"""
-        return self.gateway.reconcile(operation_id, result)
+        tenant = tenant_id or self._op_tenants.get(operation_id)
+        if tenant is None:
+            raise ValueError(
+                f"UNKNOWN_OPERATION_TENANT: 操作 {operation_id} 未登记租户，请显式传 tenant_id")
+        return self.gateway.reconcile(tenant, operation_id, result)
 
     # ---------- 内部 ----------
 
@@ -270,6 +292,11 @@ class WorkflowRunner:
             iv = dict(first.value) if getattr(first, "value", None) else {"type": "unknown"}
             waiting_approval = iv.get("type") == APPROVAL_INTERRUPT_TYPE
             waiting_clarify = iv.get("type") == CLARIFY_INTERRUPT_TYPE
+        # 登记本运行器见过的操作 → 租户（供 submit_decision/query/reconcile 无参回退）
+        tenant = self._thread_tenants.get(thread_id)
+        op_id = values.get("operation_id")
+        if tenant and op_id:
+            self._op_tenants[op_id] = tenant
         return RunResult(
             thread_id=thread_id,
             finished=not interrupts,

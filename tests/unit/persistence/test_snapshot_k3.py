@@ -11,6 +11,7 @@ from src.domain.after_sales import (
     ExecuteCommand,
     Role,
 )
+from src.domain.after_sales.adapters import MemoryAdapter
 from src.persistence import RecoverableSession, SnapshotCorruptionError
 from src.persistence.codec import state_to_jsonable
 from tests.unit.domain.after_sales.helpers import service_with_policies
@@ -21,7 +22,7 @@ POL = (("P-DAMAGED-FULL", ("damaged",), "1.00", 30),)
 def _valid() -> dict:
     """合法快照（JSON 化形式）。"""
     svc = service_with_policies(*POL)
-    WorkflowRunner(svc).start("T1", "订单 ORD-1 商品破损，要求退款", thread_id="k3")
+    WorkflowRunner(MemoryAdapter(svc)).start("T1", "订单 ORD-1 商品破损，要求退款", thread_id="k3")
     return state_to_jsonable(svc.export_state())
 
 
@@ -101,7 +102,7 @@ def test_refunded_value_not_decimal_rejected(tmp_path):
 
 def test_restore_bad_into_service_leaves_state_unchanged(tmp_path):
     svc = service_with_policies(*POL)
-    WorkflowRunner(svc).start("T1", "订单 ORD-1 商品破损，要求退款", thread_id="r1")
+    WorkflowRunner(MemoryAdapter(svc)).start("T1", "订单 ORD-1 商品破损，要求退款", thread_id="r1")
     before = svc.export_state()
     db = tmp_path / "k3b.db"
     s = RecoverableSession(db)
@@ -114,7 +115,7 @@ def test_restore_bad_into_service_leaves_state_unchanged(tmp_path):
 
 def test_direct_restore_state_bad_is_atomic(tmp_path):
     svc = service_with_policies(*POL)
-    WorkflowRunner(svc).start("T1", "订单 ORD-1 商品破损，要求退款", thread_id="r2")
+    WorkflowRunner(MemoryAdapter(svc)).start("T1", "订单 ORD-1 商品破损，要求退款", thread_id="r2")
     before = svc.export_state()
     bad = _valid()
     bad["tickets"] = []            # 原始 export 同形但 tickets 非法
@@ -128,7 +129,7 @@ def test_repeated_restore_is_stable(tmp_path):
     db = tmp_path / "k3c.db"
     s1 = RecoverableSession(db)
     svc = service_with_policies(*POL)
-    WorkflowRunner(svc).start("T1", "订单 ORD-1 商品破损，要求退款", thread_id="r3")
+    WorkflowRunner(MemoryAdapter(svc)).start("T1", "订单 ORD-1 商品破损，要求退款", thread_id="r3")
     snap = s1.store.save_snapshot(state_to_jsonable(svc.export_state()))
     for _ in range(3):
         s2 = RecoverableSession(db)
@@ -139,7 +140,7 @@ def test_repeated_restore_is_stable(tmp_path):
 def test_concurrent_restore_loads_are_consistent(tmp_path):
     db = tmp_path / "k3d.db"
     svc = service_with_policies(*POL)
-    WorkflowRunner(svc).start("T1", "订单 ORD-1 商品破损，要求退款", thread_id="r4")
+    WorkflowRunner(MemoryAdapter(svc)).start("T1", "订单 ORD-1 商品破损，要求退款", thread_id="r4")
     RecoverableSession(db).persist(svc)
 
     barrier = threading.Barrier(4)
@@ -176,7 +177,7 @@ def test_forged_cross_tenant_snapshot_rejected(tmp_path):
 
 def test_valid_snapshot_after_execute_roundtrip(tmp_path):
     svc = service_with_policies(*POL)
-    r = WorkflowRunner(svc).start("T1", "订单 ORD-1 商品破损，要求退款", thread_id="r5")
+    r = WorkflowRunner(MemoryAdapter(svc)).start("T1", "订单 ORD-1 商品破损，要求退款", thread_id="r5")
     op = svc.get_operation(r.state["operation_id"])
     svc.approve(ApproveCommand(op.operation_id, Role.APPROVER, decision_version=op.version))
     svc.execute(ExecuteCommand(op.operation_id, Role.SYSTEM))

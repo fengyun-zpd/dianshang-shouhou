@@ -22,6 +22,7 @@ from src.agents import WorkflowRunner
 from src.domain.after_sales import OperationStatus, RequestType, Role, TicketStatus
 from src.domain.after_sales import AfterSalesService, CreateTicketCommand, Order, OrderItem, OrderStatus
 from src.domain.after_sales import PolicyRule
+from src.domain.after_sales.adapters import MemoryAdapter
 
 
 def build_demo_service() -> AfterSalesService:
@@ -42,7 +43,7 @@ def build_demo_service() -> AfterSalesService:
 
 def main() -> None:
     svc = build_demo_service()
-    runner = WorkflowRunner(svc)
+    runner = WorkflowRunner(MemoryAdapter(svc))
 
     print("=" * 64)
     print("演示 1：审批通过路径（interrupt → 决定 → resume → 执行）")
@@ -71,7 +72,7 @@ def main() -> None:
     print("演示 2：审批拒绝路径（resume 后零副作用）")
     print("=" * 64)
     svc2 = build_demo_service()   # 独立服务，避免演示 1 已全额退款的干扰
-    runner2 = WorkflowRunner(svc2)
+    runner2 = WorkflowRunner(MemoryAdapter(svc2))
     r2 = runner2.start("T1", "订单 ORD-1001 商品破损，要求退款", thread_id="demo-reject")
     assert r2.waiting_approval
     runner2.submit_decision(r2.state["operation_id"], "rejected", reason="重复申请")
@@ -85,7 +86,7 @@ def main() -> None:
     print("演示 3：伪造审批恢复被拒绝（决定以领域服务为准）")
     print("=" * 64)
     svc3 = build_demo_service()   # 独立服务
-    runner3 = WorkflowRunner(svc3)
+    runner3 = WorkflowRunner(MemoryAdapter(svc3))
     r3 = runner3.start("T1", "订单 ORD-1001 商品破损，要求退款", thread_id="demo-forge")
     assert r3.waiting_approval
     r3b = runner3.resume("demo-forge", payload="approved")  # 伪造：未提交真实决定

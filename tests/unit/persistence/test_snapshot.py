@@ -14,6 +14,7 @@ from src.domain.after_sales import (
     ExecuteCommand,
     Role,
 )
+from src.domain.after_sales.adapters import MemoryAdapter
 from src.persistence import RecoverableSession, SnapshotCorruptionError
 from src.persistence.codec import state_from_jsonable, state_to_jsonable
 from tests.unit.domain.after_sales.helpers import service_with_policies
@@ -27,7 +28,7 @@ def make_service() -> AfterSalesService:
 
 def drive_to_pending(svc: AfterSalesService) -> dict:
     """走到审批挂起，返回 op/ticket id。"""
-    runner = WorkflowRunner(svc)
+    runner = WorkflowRunner(MemoryAdapter(svc))
     r = runner.start("T1", REQUEST, thread_id="persist-t1")
     assert r.waiting_approval
     return {"ticket_id": r.state["ticket_id"], "operation_id": r.state["operation_id"],

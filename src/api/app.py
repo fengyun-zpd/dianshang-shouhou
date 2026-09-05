@@ -1,6 +1,8 @@
 """K5：FastAPI 接入层（路由不复制领域逻辑，仅适配/编排领域命令）。
 
 - 身份由认证（AuthMiddleware）推导；请求体不带 tenant_id；
+- 本层唯一依赖 AfterSalesApplicationPort（MemoryAdapter/PgCommandAdapter 均可，
+  不 isinstance 分支）；所有领域调用一律 tenant-first；
 - 角色门禁：agent/customer 可创建工单与草稿、submit；approver 可审批/拒绝；
   system 可执行与对账；任何人不得借 API 伪造权限（错误码不被改写）。
 """
@@ -10,13 +12,12 @@ from decimal import Decimal
 from typing import Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, FastAPI, Query, Request
+from fastapi import APIRouter, Depends, FastAPI, Request
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from src.domain.after_sales import (
     AfterSalesError,
     AfterSalesErrorCode,
-    AfterSalesService,
     ApproveCommand,
     CreateRefundCommand,
     CreateTicketCommand,
@@ -27,14 +28,13 @@ from src.domain.after_sales import (
     Role,
     SubmitCommand,
 )
-from src.domain.after_sales.models import OperationStatus
+from src.domain.after_sales.ports import AfterSalesApplicationPort
 
 from .deps import ApiIdentity, AuthMiddleware, TokenResolver, get_identity
 from .errors import register_error_handlers
 from .schemas import (
     AuditItemOut,
     DecisionIn,
-    ErrorOut,
     ExecuteIn,
     OperationOut,
     ReconcileIn,
@@ -54,7 +54,7 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
         return response
 
 
-def _service(request: Request) -> AfterSalesService:
+def _service(request: Request) -> AfterSalesApplicationPort:
     return request.app.state.service
 
 
@@ -65,11 +65,9 @@ def _require_role(identity: ApiIdentity, allowed: tuple[Role, ...]) -> None:
 
 
 def _operation_out(request: Request, tenant: str, op) -> OperationOut:
-    # 通过租户作用域读取以杜绝跨租户（只读辅助）
-    svc = _service(request)
-    op = svc.get_operation(op.operation_id)
-    if op.tenant_id != tenant:
-        raise AfterSalesError(AfterSalesErrorCode.TENANT_MISMATCH, "操作不属于当前租户")
+    # 通过租户作用域读取以杜绝跨租户（只读辅助；后端自带租户门禁）
+    port = _service(request)
+    op = port.get_operation(tenant, op.operation_id)
     return OperationOut(
         operation_id=op.operation_id, ticket_id=op.ticket_id, order_id=op.order_id,
         op_type=op.op_type.value,
@@ -89,8 +87,8 @@ def create_ticket(body: TicketCreateIn, request: Request,
     if actor == Role.CUSTOMER and body.customer_id != identity.customer_id:
         raise AfterSalesError(AfterSalesErrorCode.PERMISSION_DENIED,
                               "客户只能为自己的订单创建工单")
-    svc = _service(request)
-    ticket = svc.create_ticket(CreateTicketCommand(
+    port = _service(request)
+    ticket = port.create_ticket(CreateTicketCommand(
         tenant_id=identity.tenant_id, order_id=body.order_id,
         customer_id=body.customer_id,
         request_type=RequestType(body.request_type),
@@ -106,9 +104,9 @@ def create_ticket(body: TicketCreateIn, request: Request,
 @router.get("/tickets/{ticket_id}", response_model=TicketOut)
 def get_ticket(ticket_id: str, request: Request,
                identity: ApiIdentity = Depends(get_identity)):
-    svc = _service(request)
-    from src.agents import AfterSalesGateway
-    ticket = AfterSalesGateway(svc).get_ticket_for(identity.tenant_id, ticket_id)
+    port = _service(request)
+    # tenant-first 只读：后端自带租户门禁（不存在→404 / 跨租户→403）
+    ticket = port.get_ticket(identity.tenant_id, ticket_id)
     # 客户级资源授权（D3）：CUSTOMER 只能读取自己的工单；
     # 越权读取返回 403（PERMISSION_DENIED），响应不含目标工单任何字段
     if identity.role == Role.CUSTOMER and identity.customer_id != ticket.customer_id:
@@ -124,11 +122,11 @@ def get_ticket(ticket_id: str, request: Request,
 def list_operations(ticket_id: str, request: Request,
                     identity: ApiIdentity = Depends(get_identity)):
     _require_role(identity, (Role.AGENT, Role.APPROVER, Role.SYSTEM))
-    svc = _service(request)
-    from src.agents import AfterSalesGateway
-    AfterSalesGateway(svc).get_ticket_for(identity.tenant_id, ticket_id)  # 租户门禁
+    port = _service(request)
+    # list_operations 为 tenant-first（工单门禁在 Port/Adapter 内：不存在→404/跨租户→拒绝），
+    # 无需在此重复裸查工单
     return [_operation_out(request, identity.tenant_id, op)
-            for op in svc.operations_of(ticket_id)]
+            for op in port.list_operations(identity.tenant_id, ticket_id)]
 
 
 # ---------- 动作草稿 ----------
@@ -138,10 +136,9 @@ def list_operations(ticket_id: str, request: Request,
 def create_refund_draft(ticket_id: str, body: RefundDraftIn, request: Request,
                         identity: ApiIdentity = Depends(get_identity)):
     _require_role(identity, (Role.AGENT,))
-    svc = _service(request)
-    from src.agents import AfterSalesGateway
-    AfterSalesGateway(svc).get_ticket_for(identity.tenant_id, ticket_id)  # 租户门禁
-    op = svc.create_refund(CreateRefundCommand(
+    port = _service(request)
+    port.get_ticket(identity.tenant_id, ticket_id)  # 租户门禁（与既有 404/403 语义一致）
+    op = port.create_refund_draft(identity.tenant_id, CreateRefundCommand(
         ticket_id=ticket_id, amount=Decimal(body.amount),
         reason_detail=body.reason_detail, actor=Role.AGENT,
         idempotency_key=body.idempotency_key,
@@ -153,11 +150,10 @@ def create_refund_draft(ticket_id: str, body: RefundDraftIn, request: Request,
 def submit(operation_id: str, request: Request,
            identity: ApiIdentity = Depends(get_identity)):
     _require_role(identity, (Role.AGENT,))
-    svc = _service(request)
-    op = svc.get_operation(operation_id)
-    if op.tenant_id != identity.tenant_id:
-        raise AfterSalesError(AfterSalesErrorCode.TENANT_MISMATCH, "操作不属于当前租户")
-    op = svc.submit(SubmitCommand(operation_id=operation_id, actor=Role.AGENT))
+    port = _service(request)
+    port.get_operation(identity.tenant_id, operation_id)  # tenant-first 门禁
+    op = port.submit(identity.tenant_id,
+                     SubmitCommand(operation_id=operation_id, actor=Role.AGENT))
     return _operation_out(request, identity.tenant_id, op)
 
 
@@ -184,14 +180,13 @@ def _decision_expected_version(request: Request, body, op_version: int) -> int:
 def approve(operation_id: str, body: DecisionIn, request: Request,
             identity: ApiIdentity = Depends(get_identity)):
     _require_role(identity, (Role.APPROVER,))
-    svc = _service(request)
-    op = svc.get_operation(operation_id)
-    if op.tenant_id != identity.tenant_id:
-        raise AfterSalesError(AfterSalesErrorCode.TENANT_MISMATCH, "操作不属于当前租户")
+    port = _service(request)
+    op = port.get_operation(identity.tenant_id, operation_id)  # tenant-first 门禁
     expected = _decision_expected_version(request, body, op.version)
-    op = svc.approve(ApproveCommand(operation_id=operation_id, actor=Role.APPROVER,
-                                    decision_version=expected),
-                     decided_by=identity.principal)
+    op = port.approve(identity.tenant_id,
+                      ApproveCommand(operation_id=operation_id, actor=Role.APPROVER,
+                                     decision_version=expected),
+                      decided_by=identity.principal)
     return _operation_out(request, identity.tenant_id, op)
 
 
@@ -199,15 +194,14 @@ def approve(operation_id: str, body: DecisionIn, request: Request,
 def reject(operation_id: str, body: DecisionIn, request: Request,
            identity: ApiIdentity = Depends(get_identity)):
     _require_role(identity, (Role.APPROVER,))
-    svc = _service(request)
-    op = svc.get_operation(operation_id)
-    if op.tenant_id != identity.tenant_id:
-        raise AfterSalesError(AfterSalesErrorCode.TENANT_MISMATCH, "操作不属于当前租户")
+    port = _service(request)
+    op = port.get_operation(identity.tenant_id, operation_id)  # tenant-first 门禁
     expected = _decision_expected_version(request, body, op.version)
-    op = svc.reject(RejectCommand(operation_id=operation_id, actor=Role.APPROVER,
-                                  reason=body.reason or "审批人拒绝",
-                                  decision_version=expected),
-                    decided_by=identity.principal)
+    op = port.reject(identity.tenant_id,
+                     RejectCommand(operation_id=operation_id, actor=Role.APPROVER,
+                                   reason=body.reason or "审批人拒绝",
+                                   decision_version=expected),
+                     decided_by=identity.principal)
     return _operation_out(request, identity.tenant_id, op)
 
 
@@ -215,12 +209,11 @@ def reject(operation_id: str, body: DecisionIn, request: Request,
 def execute(operation_id: str, body: ExecuteIn, request: Request,
             identity: ApiIdentity = Depends(get_identity)):
     _require_role(identity, (Role.SYSTEM,))  # 仅内部自动化（模拟外部执行）
-    svc = _service(request)
-    op = svc.get_operation(operation_id)
-    if op.tenant_id != identity.tenant_id:
-        raise AfterSalesError(AfterSalesErrorCode.TENANT_MISMATCH, "操作不属于当前租户")
-    op = svc.execute(ExecuteCommand(operation_id=operation_id, actor=Role.SYSTEM,
-                                    external_result=body.external_result))
+    port = _service(request)
+    port.get_operation(identity.tenant_id, operation_id)  # tenant-first 门禁
+    op = port.execute(identity.tenant_id,
+                      ExecuteCommand(operation_id=operation_id, actor=Role.SYSTEM,
+                                     external_result=body.external_result))
     return _operation_out(request, identity.tenant_id, op)
 
 
@@ -228,12 +221,11 @@ def execute(operation_id: str, body: ExecuteIn, request: Request,
 def reconcile(operation_id: str, body: ReconcileIn, request: Request,
               identity: ApiIdentity = Depends(get_identity)):
     _require_role(identity, (Role.SYSTEM,))  # unknown 只能原操作对账收口
-    svc = _service(request)
-    op = svc.get_operation(operation_id)
-    if op.tenant_id != identity.tenant_id:
-        raise AfterSalesError(AfterSalesErrorCode.TENANT_MISMATCH, "操作不属于当前租户")
-    op = svc.reconcile(ReconcileCommand(operation_id=operation_id, actor=Role.SYSTEM,
-                                        result=body.result))
+    port = _service(request)
+    port.get_operation(identity.tenant_id, operation_id)  # tenant-first 门禁
+    op = port.reconcile(identity.tenant_id,
+                        ReconcileCommand(operation_id=operation_id, actor=Role.SYSTEM,
+                                         result=body.result))
     return _operation_out(request, identity.tenant_id, op)
 
 
@@ -245,15 +237,13 @@ def audit(request: Request,
           entity_type: Optional[str] = None,
           entity_id: Optional[str] = None):
     _require_role(identity, (Role.AGENT, Role.APPROVER, Role.SYSTEM))
-    svc = _service(request)
+    port = _service(request)
     items = []
-    for e in svc.audit_log():
+    # 租户作用域审计：Port.audit_log(tenant_id) 已按租户过滤（内存按实体归属 / PG 按行租户）
+    for e in port.audit_log(identity.tenant_id):
         if entity_type and e.entity_type != entity_type:
             continue
         if entity_id and e.entity_id != entity_id:
-            continue
-        # 租户作用域：审计事件实体须属于当前租户
-        if svc.entity_tenant(e.entity_type, e.entity_id) != identity.tenant_id:
             continue
         items.append(AuditItemOut(action=e.action, entity_type=e.entity_type,
                                   entity_id=e.entity_id, actor=e.actor.value,
@@ -263,7 +253,7 @@ def audit(request: Request,
 
 # ---------- 工厂 ----------
 
-def create_app(service, registry: TokenResolver,
+def create_app(service: AfterSalesApplicationPort, registry: TokenResolver,
                pg_probe=None, require_expected_version: bool = False) -> FastAPI:
     """FastAPI 工厂。service 为实现 AfterSalesApplicationPort 的后端（Memory/PgCommand
     Adapter 均可，调用方不 isinstance）。require_expected_version=True（pg profile）：

@@ -24,6 +24,7 @@ if str(ROOT) not in sys.path:
 
 from src.agents import WorkflowRunner
 from src.domain.after_sales import AfterSalesService, Order, OrderItem, OrderStatus, PolicyRule, RequestType
+from src.domain.after_sales.adapters import MemoryAdapter
 from src.rag import PolicyDocument, PolicyStore
 
 DATASET_VERSION = "golden-v1"
@@ -83,9 +84,9 @@ def _observe(runner, thread_id: str) -> dict:
 def run_case(case: dict, runner_factory=None) -> dict:
     svc = build_service(case)
     if runner_factory is None:
-        runner = WorkflowRunner(svc)
+        runner = WorkflowRunner(MemoryAdapter(svc))
     else:
-        runner = runner_factory(svc)
+        runner = runner_factory(MemoryAdapter(svc))
     thread = f"eval-{case['id']}"
     started = time.monotonic()
     detail: list[str] = []

@@ -5,6 +5,7 @@ import pytest
 
 from src.agents import WorkflowRunner
 from src.domain.after_sales import ApproveCommand, ExecuteCommand, Role
+from src.domain.after_sales.adapters import MemoryAdapter
 from src.persistence import RecoverableSession, SnapshotCorruptionError
 from src.persistence.validate import validate_snapshot_state
 from tests.unit.domain.after_sales.helpers import service_with_policies
@@ -14,7 +15,8 @@ POL = (("P-DAMAGED-FULL", ("damaged",), "1.00", 30),)
 
 def _seed_pending() -> "object":
     svc = service_with_policies(*POL)
-    r = WorkflowRunner(svc).start("T1", "订单 ORD-1 商品破损，要求退款", thread_id="ar-p")
+    r = WorkflowRunner(MemoryAdapter(svc)).start("T1", "订单 ORD-1 商品破损，要求退款",
+                                                 thread_id="ar-p")
     return svc, r.state["operation_id"], r.state["ticket_id"]
 
 

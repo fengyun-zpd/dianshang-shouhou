@@ -144,13 +144,13 @@ def build_nodes(gateway: AfterSalesGateway) -> dict[str, Callable[[AgentState], 
             # 金额以领域权威计算为准（忽略任何对 action_draft.amount 的注入/篡改）
             p = gateway.compute_refund_plan(tenant, order_id, tags)
             op = gateway.create_refund(
-                ticket_id, p.amount,
+                tenant, ticket_id, p.amount,
                 reason_detail=f"Agent 草稿：破损/售后退款（政策 {p.policy_id}）",
                 idempotency_key=f"wf:{thread_id}:refund:{ticket_id}",
             )
             op_id = op.operation_id
 
-        op = gateway.submit(op_id)  # DRAFT → PENDING_APPROVAL（草稿已落库，网关幂等）
+        op = gateway.submit(tenant, op_id)  # DRAFT → PENDING_APPROVAL（草稿已落库，网关幂等）
         approval_id = state.get("approval_id") or f"APR-{uuid4().hex[:10]}"
         if op.status != OperationStatus.PENDING_APPROVAL:
             # 重复请求且原操作已终态/未知：不再请求审批，直接收尾（幂等，不重复副作用）
@@ -168,7 +168,7 @@ def build_nodes(gateway: AfterSalesGateway) -> dict[str, Callable[[AgentState], 
                 "next_action": "finished",
                 "outcome": outcome,
                 "reply": f"该请求已处理（操作 {op_id} 状态 {op.status.value}），不重复执行",
-                "audit_event_ids": state.get("audit_event_ids", []) + gateway.collect_audit_events(),
+                "audit_event_ids": state.get("audit_event_ids", []) + gateway.collect_audit_events(tenant),
             }
         return {
             "ticket_id": ticket_id,
@@ -180,7 +180,7 @@ def build_nodes(gateway: AfterSalesGateway) -> dict[str, Callable[[AgentState], 
                 f"退款申请：订单 {order_id}，金额 {state.get('action_draft', {}).get('amount', '?')} 元"
                 f"（金额由领域政策计算），操作 {op_id}，审批编号 {approval_id}"
             ),
-            "audit_event_ids": state.get("audit_event_ids", []) + gateway.collect_audit_events(),
+            "audit_event_ids": state.get("audit_event_ids", []) + gateway.collect_audit_events(tenant),
         }
 
     def request_approval(state: AgentState) -> dict:
@@ -207,12 +207,13 @@ def build_nodes(gateway: AfterSalesGateway) -> dict[str, Callable[[AgentState], 
           每次 resume 都回到本循环重新读领域决定，直到终审。
         """
         op_id = state.get("operation_id")
+        tenant = state.get("tenant_id")
         while True:
             if not op_id:
                 return {"error_code": "OPERATION_NOT_FOUND", "outcome": "error",
                         "next_action": "escalate", "reply": "恢复失败：缺少操作编号"}
             try:
-                op = gateway.get_operation(op_id)  # 只读，领域服务为事实源
+                op = gateway.get_operation(tenant, op_id)  # 只读，领域服务为事实源
             except AfterSalesError as e:
                 return {"error_code": e.code.value, "outcome": "error",
                         "next_action": "escalate",
@@ -244,8 +245,9 @@ def build_nodes(gateway: AfterSalesGateway) -> dict[str, Callable[[AgentState], 
 
     def execute_operation(state: AgentState) -> dict:
         sim = state.get("simulate_external", "success")
+        tenant = state.get("tenant_id")
         try:
-            op = gateway.execute(state["operation_id"], external_result=sim)
+            op = gateway.execute(tenant, state["operation_id"], external_result=sim)
         except AfterSalesError as e:
             return {"error_code": e.code.value, "outcome": "error",
                     "next_action": "escalate", "reply": f"执行失败（{e.message}）"}
@@ -254,23 +256,24 @@ def build_nodes(gateway: AfterSalesGateway) -> dict[str, Callable[[AgentState], 
                     "reply": "外部执行结果未知：操作进入 operation_unknown；只能以原操作编号查询/对账"}
         # EXECUTED：受控关单（无未决操作守卫在领域服务）
         try:
-            gateway.close_ticket(state["ticket_id"])
+            gateway.close_ticket(tenant, state["ticket_id"])
         except AfterSalesError as e:
             return {"error_code": e.code.value, "outcome": "error",
                     "next_action": "escalate", "reply": f"退款已执行但关单失败（{e.message}），需人工介入"}
         return {"outcome": "refunded", "next_action": "finished",
                 "reply": "退款已执行（模拟），工单已按已退款关闭",
-                "audit_event_ids": state.get("audit_event_ids", []) + gateway.collect_audit_events()}
+                "audit_event_ids": state.get("audit_event_ids", []) + gateway.collect_audit_events(tenant)}
 
     def settle_rejected(state: AgentState) -> dict:
+        tenant = state.get("tenant_id")
         try:
-            gateway.close_ticket(state["ticket_id"])
+            gateway.close_ticket(tenant, state["ticket_id"])
         except AfterSalesError as e:
             return {"error_code": e.code.value, "outcome": "error",
                     "next_action": "escalate", "reply": f"关单失败（{e.message}）"}
         return {"outcome": "rejected", "next_action": "finished",
                 "reply": "审批拒绝：未执行任何退款/副作用，工单已按拒绝关闭",
-                "audit_event_ids": state.get("audit_event_ids", []) + gateway.collect_audit_events()}
+                "audit_event_ids": state.get("audit_event_ids", []) + gateway.collect_audit_events(tenant)}
 
     def escalate(state: AgentState) -> dict:
         code = state.get("error_code") or "NO_APPLICABLE_HANDLER"

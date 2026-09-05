@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from src.api import ApiIdentity, ApiTokenRegistry, create_app
 from src.domain.after_sales import Order, OrderItem, OrderStatus, PolicyRule, RequestType, Role
+from src.domain.after_sales.adapters import MemoryAdapter
 from tests.unit.domain.after_sales.helpers import service_with_policies
 
 POL = (("P-DAMAGED-FULL", ("damaged",), "1.00", 30),)
@@ -24,7 +25,7 @@ def _make_client():
     reg.register("tok-system-1", ApiIdentity("system-1", "T1", Role.SYSTEM))
     reg.register("tok-agent-2", ApiIdentity("agent-2", "T2", Role.AGENT))
     reg.register("tok-customer-c1", ApiIdentity("cust-1", "T1", Role.CUSTOMER, customer_id="C1"))
-    return TestClient(create_app(svc, reg)), svc
+    return TestClient(create_app(MemoryAdapter(svc), reg)), svc
 
 
 def _h(token=None, rid=None):
@@ -281,7 +282,7 @@ def test_auth_identity_port_is_replaceable():
         "static-agent": ApiIdentity("agent-x", "T1", Role.AGENT),
         "static-approver": ApiIdentity("approver-x", "T1", Role.APPROVER),
     })
-    client = TestClient(create_app(svc, resolver))
+    client = TestClient(create_app(MemoryAdapter(svc), resolver))
     ok = client.post("/api/tickets", json={
         "order_id": "ORD-1", "customer_id": "C1", "request_type": "refund",
         "reason": "商品破损", "reason_tags": ["damaged"], "idempotency_key": "tk-port",
@@ -312,7 +313,7 @@ def _make_two_customer_client():
     reg = ApiTokenRegistry()
     reg.register("tok-c1", ApiIdentity("cust-1", "T1", Role.CUSTOMER, customer_id="C1"))
     reg.register("tok-c2", ApiIdentity("cust-2", "T1", Role.CUSTOMER, customer_id="C2"))
-    client = TestClient(create_app(svc, reg))
+    client = TestClient(create_app(MemoryAdapter(svc), reg))
     # 各客户创建自己的工单
     r1 = client.post("/api/tickets", json={
         "order_id": "ORD-C1", "customer_id": "C1", "request_type": "refund",

@@ -134,6 +134,7 @@ def test_two_runners_resume_single_lease_holder_progresses(repo):
     本测试给出可验证的竞争单推进证据）。"""
     from src.agents import WorkflowRunner
     from src.agents.checkpoint import close_sqlite_checkpointer, open_sqlite_checkpointer
+    from src.domain.after_sales.adapters import MemoryAdapter
     from tests.unit.domain.after_sales.helpers import baseline_service
 
     import tempfile
@@ -142,7 +143,7 @@ def test_two_runners_resume_single_lease_holder_progresses(repo):
     try:
         svc = baseline_service()
         cp = open_sqlite_checkpointer(str(Path(tmpdir.name) / "d9.sqlite"))
-        runner = WorkflowRunner(svc, checkpointer=cp)
+        runner = WorkflowRunner(MemoryAdapter(svc), checkpointer=cp)
         pending = runner.start("T1", "订单 ORD-1 商品破损，要求退款", thread_id="lease-resume")
         assert pending.waiting_approval
         op_id = pending.state["operation_id"]

@@ -12,10 +12,7 @@ PA4（R7 目标）：run_api 支持 --backend memory|pg（pg 需要 --pg-url/DAT
 import io
 from pathlib import Path
 
-import pytest
-
 ROOT = Path(__file__).resolve().parents[2]
-red = pytest.mark.xfail(strict=True, reason="PA-FINAL: 阶段 A 端口收敛尚未完成")
 
 
 def _read(rel: str) -> str:
@@ -30,7 +27,6 @@ def _import_head(src: str) -> str:
     return src
 
 
-@red
 def test_pa1_gateway_and_runner_depend_only_on_port():
     """Gateway 与 Runner 源码不得依赖 AfterSalesService（import/类型）；不得使用 PgServiceFacade。"""
     gateway = _read("src/agents/ports.py")
@@ -56,7 +52,6 @@ def test_pa2_port_tenant_first_read_surface_extended():
         assert sig in src, f"端口缺少 {sig}"
 
 
-@red
 def test_pa3_run_api_pg_assembly_and_no_fallback():
     """run_api --backend pg 真实装配；失败不回退 memory；不依赖 PgServiceFacade。"""
     src = _read("scripts/run_api.py")
@@ -68,7 +63,6 @@ def test_pa3_run_api_pg_assembly_and_no_fallback():
     assert "require_postgres_ready" in src
 
 
-@red
 def test_pa4_run_api_backend_choices_include_pg():
     """run_api --backend 支持 memory|pg（pg 需要 --pg-url/DATABASE_URL）。"""
     src = _read("scripts/run_api.py")

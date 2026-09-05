@@ -3,6 +3,7 @@ from fastapi.testclient import TestClient
 
 from src.api import ApiIdentity, ApiTokenRegistry, create_app
 from src.domain.after_sales import Role
+from src.domain.after_sales.adapters import MemoryAdapter
 from tests.unit.domain.after_sales.helpers import service_with_policies
 
 
@@ -10,7 +11,7 @@ def _app(pg_probe=None):
     svc = service_with_policies(("P-DAMAGED-FULL", ("damaged",), "1.00", 30))
     reg = ApiTokenRegistry()
     reg.register("tok", ApiIdentity("a", "T1", Role.AGENT))
-    return create_app(svc, reg, pg_probe=pg_probe)
+    return create_app(MemoryAdapter(svc), reg, pg_probe=pg_probe)
 
 
 def test_health_live_ok():
