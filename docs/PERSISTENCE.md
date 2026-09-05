@@ -1,4 +1,4 @@
-﻿# 可恢复唯一事实源原型（SQLite，阶段主线后工程）
+# 可恢复唯一事实源原型（SQLite，阶段主线后工程）
 
 > 归属：电商售后多智能体工单系统（OpsPilot）。版本：v1.0（2026-09-04）。
 > 目的：在不改动领域核心规则的前提下，验证"领域服务状态 + 审计可落库、重启可恢复、
@@ -42,16 +42,18 @@
 .venv\Scripts\python.exe -m pytest tests/unit/persistence -v   # 37 项（原型 6 + 校验 12 + 原子恢复 4 + K3 严格类型/恢复安全 15）
 ```
 
-全量回归：`.venv\Scripts\python.exe -m pytest tests/` → 310 passed（2026-09-04 实测；PG 容器运行时集成 6/6）。
+全量回归：`.venv\Scripts\python.exe -m pytest tests/` → 310 passed（2026-09-04 实测；PG 容器运行时集成 9/9）。
 
 ## 5. 限制与下一步（诚实边界）
 
-- **SQLite 仅为恢复原型，不是生产唯一事实源**：内存领域服务 + 全量快照落库，
-  非事务型持久化；未实现 PostgreSQL（K4）之前不得声称生产持久化能力；
-- 单命令粒度原子性、并发与行级锁由未来 PostgreSQL 实现；
-- 快照为全量（非增量 WAL）；幂等唯一约束仍在应用层（PostgreSQL 唯一约束为规划）；
-- per-key/订单级锁为进程内（单实例）；跨进程并发需数据库行锁（规划）；
-- 生产路线：SQLAlchemy/Alembic + PostgreSQL（含 pgvector），把本层接口作为迁移契约；
+- **SQLite 仅为恢复原型，不是生产唯一事实源**：本文档描述的内存领域服务 + 全量快照落库，
+  非事务型持久化，仅用于验证"落库-恢复-续跑"模式；
+- **PostgreSQL 唯一事实源已落地**（任务卡 K4，`docs/POSTGRES.md`）：Repository 接口 + 内存/PG 实现、
+  schema/Alembic 0001+0002（含 DB 唯一约束与 CHECK）、`FOR UPDATE` 行锁与 `try_execute_refund`
+  原子容量执行，已在本地 PG 集成实测 9/9（无 PG 自动跳过）；
+- 领域状态机（create/approve/execute/reconcile/close 的**整体 SQL 化编排**）仍未实现：
+  当前运行时领域服务为内存权威（本原型 + SQLite 快照），把业务运行时整体切换到 PG 是后续工程；
+- 快照为全量（非增量 WAL）；
 - 未改变任何既有领域规则与安全不变量。
 
 ## 6. 修订记录
@@ -59,3 +61,4 @@
 - v1.0（2026-09-04）—— 首版：导出/恢复接口、SQLite append-only 存储、恢复会话与演示。
 - v1.1（2026-09-04）—— 任务卡 J：快照严格校验、原子恢复（restore_into）、幂等 per-key 原子语义。
 - v1.2（2026-09-04）—— K3：顶层字段类型严格（schema_version/seq 仅合法 int，拒小数截断/str/bool；集合类型校验）；reason_tags/嵌套结构与跨租户校验；`restore_state` 原子（先构造后替换，失败零部分变更）；新增损坏/伪造 checkpoint（指纹篡改）/跨租户/重复/并发恢复测试；明确 SQLite 仅为恢复原型。
+- v1.3（2026-09-04）—— 与 K4 现状对齐：删除"PostgreSQL 为规划"的过时表述，改为指向 `docs/POSTGRES.md`（已实现并本地实测 9/9）；保留"领域状态机整体 SQL 化未实现"诚实边界；全量基线 310 passed。

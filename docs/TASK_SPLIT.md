@@ -96,22 +96,22 @@
 - 交付：`src/agents/subagents.py`（`ReadOnlySubAgent` + order/history/policy 白名单；构造时断言全只读）、`supervisor.py`（`SupervisorRunner`：API/状态/审批语义与单 Agent 一致，仅证据节点替换为并行子 Agent 编排）、`graph.py` 支持 `evidence_node` 切换；A/B 对照 `evals/compare_agents.py`；`docs/MULTI_AGENT_EXPERIMENT.md`。
 - 测试：`tests/unit/agents/test_supervisor.py`（11 项：只读边界/无写工具/跨租户/正确性一致（approved+rejected）/政策引用/审批 resume/拒绝/重复 resume 幂等/unknown 原键对账/伪造忽略/零副作用）。
 - 实验结论（ADR-002）：两模式黄金集均 11/11、outcome 与退款 100% 一致 → **默认路径维持单 Agent**；Supervisor 保留为可选实验运行时（并行只读证据、子 Agent 模块化、未来多模型挂载点）。
-- 验收命令：`.venv\Scripts\python.exe -m pytest tests/ -v`（当前全量见 STATUS 基线：303 passed）；`.venv\Scripts\python.exe evals\compare_agents.py`；`.venv\Scripts\python.exe evals\replay.py`（11/11）；`git diff --check`。
+- 验收命令：`.venv\Scripts\python.exe -m pytest tests/ -v`（当前全量见 STATUS 基线：310 passed）；`.venv\Scripts\python.exe evals\compare_agents.py`；`.venv\Scripts\python.exe evals\replay.py`（11/11）；`git diff --check`。
 
 ### 任务卡 H：Mule Agent Bridge（阶段 6，✅ 已完成）
 
 - 交付：`src/bridge/models.py`（BridgeIdentity/IdentityRegistry、BridgeAction 白名单、入/出站 Schema、BridgeLogEntry、FORBIDDEN_ACTIONS）+ `src/bridge/bridge.py`（`MuleAgentBridge.invoke`：身份→白名单→租户注入→Schema→熔断→执行→出站校验→审计；超时 3s；注入拒绝）；`docs/MULE_BRIDGE.md`。
 - 安全边界：白名单仅只读查询 + `submit_after_sales_request`（客服入口语义，AGENT 草稿 + 人工审批）；approve/reject/execute/close_ticket/change_address/high_risk_draft/refund_now 在协议中**不存在**（测试断言不可达）；跨租户注入拒绝；审计无 PII/请求体。
-- 测试：`tests/unit/bridge/test_bridge.py`（14 项，含角色矩阵与超时回归）。当前全量见 STATUS 基线（303 passed）。
+- 测试：`tests/unit/bridge/test_bridge.py`（14 项，含角色矩阵与超时回归）。当前全量见 STATUS 基线（310 passed）。
 - 验收命令：`.venv\Scripts\python.exe -m pytest tests/ -v`；`.venv\Scripts\python.exe evals\replay.py`（11/11）；`git diff --check`。
 - 边界：未接真实 MuleSoft/MCP server（规划）；身份映射为内存配置。
 
 ### 任务卡 I：可恢复持久化原型（SQLite，✅ 已完成）
 
 - 交付：`service.export_state/restore_state` 与 `idempotency.export/import_records`（只读/恢复增量，不改规则）；`src/persistence/{codec,store,session}.py`；`RecoverableSession`；演示 `scripts/demo_persistence.py`；`docs/PERSISTENCE.md`。
-- 测试：`tests/unit/persistence/test_snapshot.py`（6 项：roundtrip 保真+续跑 / 幂等恢复 / JSON 可序列化 / 损坏拒绝 fail-closed / checksum 篡改检测 / 跨库隔离）。当前全量见 STATUS 基线（303 passed）。
+- 测试：`tests/unit/persistence/test_snapshot.py`（6 项：roundtrip 保真+续跑 / 幂等恢复 / JSON 可序列化 / 损坏拒绝 fail-closed / checksum 篡改检测 / 跨库隔离）。当前全量见 STATUS 基线（310 passed）。
 - 验收命令：`.venv\Scripts\python.exe scripts\demo_persistence.py`；`.venv\Scripts\python.exe -m pytest tests/ -v`。
-- 限制：全量快照（非 WAL/事务型）；生产路线 PostgreSQL + alembic（规划，未实现）。
+- 限制：全量快照（非 WAL/事务型）。生产路线：PostgreSQL Repository/schema/Alembic 已实现并本地实测（`docs/POSTGRES.md`，PG 容器运行时集成 9/9）；领域状态机整体 SQL 化未实现（如实声明）。
 
 ### 任务卡 J：一致性与恢复安全（✅ 已完成）
 
@@ -129,7 +129,7 @@
 - 交付：订单级锁 `(tenant_id, order_id)` 覆盖 `create_refund`/`execute`/`reconcile`/`close_ticket`；执行与对账成功原子容量校验（已执行累计+本次 ≤ 实付，超额抛 `AMOUNT_EXCEEDS_REMAINING` 且不迁移不累计）；unknown 订单级守卫（换键拒 `OPERATION_UNKNOWN_CONFLICT`）；幂等命中先于金额/unknown 守卫；锁顺序订单锁→幂等键锁；设计说明 `docs/TASK_K1_ORDER_REFUND_CONCURRENCY.md`。
 - 测试：`tests/unit/domain/after_sales/test_order_refund_concurrency.py`（7 项：顺序超退拒绝 / 并发 execute 单成功 / unknown 对账 vs 执行竞争 / 换键拒绝 / 同键重复零副作用 / 超额执行不累计 / timeout 不累计）。全量 **242 passed**。
 - 验收命令：`.venv\Scripts\python.exe -m pytest tests/ -v`；`scripts/run_tests.py`；`evals/replay.py`（11/11）。
-- 边界：内存锁为进程内单实例语义；跨进程需 PostgreSQL 行锁迁移（规划，未实现/未声称）。
+- 边界：内存锁为进程内单实例语义；跨进程行锁已由 PostgreSQL Repository 提供（`FOR UPDATE` / `try_execute_refund`，集成实测 9/9，见 `docs/POSTGRES.md`）；领域编排整体 SQL 化未实现/未声称。
 
 ## 5. 修订记录
 
@@ -143,3 +143,4 @@
 - v0.8（2026-09-04）—— 任务卡 J（一致性与恢复安全）完成：全量 235 passed；线程指纹/冲突拒绝/重复返回原结果、快照严格校验 + 原子恢复、幂等 per-key CAS 并发单飞；26 项新测试。
 - v0.9（2026-09-04）—— Task K1（订单级退款并发一致性）完成：全量 242 passed；订单级锁 + 执行阶段原子容量校验修复同订单不同键并发超退；7 项新测试。
 - v0.10（2026-09-04）—— K2 评测与文档收敛：g10 重复请求契约同步（重复返回原结果），黄金集与 Agent/Supervisor 对照恢复 11/11（真实运行）；citation 指标可区分错误版本/适用范围（探针准确率 0.6667，非恒一）；删除恒真断言；文档清理过时数字（当前全量 248 passed）。
+- v0.11（2026-09-04）—— 与 STATUS v0.18 对齐：任务卡 G/H/I 的"当前全量"指针统一为 310 passed（PG 集成 9/9）；任务卡 I/K1 的 PostgreSQL 边界更新为"Repository/schema/Alembic 已实现并本地实测、领域状态机整体 SQL 化未实现"。
