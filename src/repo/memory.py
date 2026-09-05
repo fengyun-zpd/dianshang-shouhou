@@ -232,3 +232,39 @@ class MemoryAfterSalesRepository(AfterSalesRepository):
             key = (tenant_id, kind)
             self._seq[key] = self._seq.get(key, 0) + 1
             return self._seq[key]
+
+    # ---------- D9：workflow_threads 跨进程租约（内存模拟；PG 语义一致） ----------
+    def __init_threads(self):
+        if not hasattr(self, "_threads"):
+            self._threads = {}   # (tenant, thread) -> (owner, lease_until_epoch, generation)
+            self._thread_fp = {}
+        return self._threads
+
+    def claim_thread(self, tenant_id: str, thread_id: str, owner: str,
+                     lease_duration_s: int, fingerprint: str = "") -> bool:
+        import time as _time
+        now = _time.monotonic()
+        with self._lock:
+            table = self.__init_threads()
+            key = (tenant_id, thread_id)
+            cur = table.get(key)
+            if cur is None:
+                table[key] = (owner, now + lease_duration_s, 1)
+                self._thread_fp[key] = fingerprint
+                return True
+            prev_owner, until, gen = cur
+            if prev_owner == owner or until is None or now > until:
+                table[key] = (owner, now + lease_duration_s, gen + 1)
+                self._thread_fp[key] = fingerprint
+                return True
+            return False
+
+    def release_thread(self, tenant_id: str, thread_id: str, owner: str) -> bool:
+        with self._lock:
+            table = self.__init_threads()
+            key = (tenant_id, thread_id)
+            cur = table.get(key)
+            if cur is not None and cur[0] == owner:
+                table[key] = (None, None, cur[2])
+                return True
+            return False

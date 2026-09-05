@@ -393,6 +393,37 @@ class PostgresAfterSalesRepository(AfterSalesRepository):
             ), {"t": tenant_id, "k": kind}).scalar()
             return int(value)
 
+    # ---------- D9：workflow_threads 跨进程租约 ----------
+    def claim_thread(self, tenant_id: str, thread_id: str, owner: str,
+                     lease_duration_s: int, fingerprint: str = "") -> bool:
+        with self._tx() as conn:
+            row = conn.execute(text(
+                "INSERT INTO workflow_threads (tenant_id, thread_id, status,"
+                " request_fingerprint, lease_owner, lease_until, generation)"
+                " VALUES (:t,:th,'active',:fp,:owner, now() + (:d * interval '1 second'), 1)"
+                " ON CONFLICT (tenant_id, thread_id) DO UPDATE"
+                " SET lease_owner=EXCLUDED.lease_owner,"
+                "     lease_until=EXCLUDED.lease_until,"
+                "     status='active',"
+                "     request_fingerprint=EXCLUDED.request_fingerprint,"
+                "     generation=workflow_threads.generation + 1"
+                " WHERE workflow_threads.lease_owner = EXCLUDED.lease_owner"
+                "    OR workflow_threads.lease_until IS NULL"
+                "    OR workflow_threads.lease_until < now()"
+                " RETURNING thread_id"
+            ), {"t": tenant_id, "th": thread_id, "fp": fingerprint, "owner": owner,
+                "d": lease_duration_s}).fetchone()
+            return row is not None
+
+    def release_thread(self, tenant_id: str, thread_id: str, owner: str) -> bool:
+        with self._tx() as conn:
+            row = conn.execute(text(
+                "UPDATE workflow_threads SET lease_owner=NULL, lease_until=NULL,"
+                " updated_at=now() WHERE tenant_id=:t AND thread_id=:th"
+                " AND lease_owner=:owner RETURNING thread_id"
+            ), {"t": tenant_id, "th": thread_id, "owner": owner}).fetchone()
+            return row is not None
+
     # ---------- helpers ----------
     @staticmethod
     def _order_from(r) -> OrderRow:

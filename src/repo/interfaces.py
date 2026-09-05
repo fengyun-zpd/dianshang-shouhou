@@ -249,3 +249,15 @@ class AfterSalesRepository(ABC):
     @abstractmethod
     def next_seq(self, tenant_id: str, kind: str) -> int:
         """租户作用域自增序列（kind ∈ ticket|operation）；原子递增并返回新值（PG 单语句）。"""
+
+    # ---------- D9：workflow_threads 跨进程租约 ----------
+    @abstractmethod
+    def claim_thread(self, tenant_id: str, thread_id: str, owner: str,
+                     lease_duration_s: int, fingerprint: str = "") -> bool:
+        """原子获租/续租/接管：owner 可续租（generation+1）；租约过期（lease_until < now）
+        或无人持约时可被接管；他人未过期持约 → False（不抢占）。
+        首次获约即创建事实行（含请求指纹/状态/generation）。"""
+
+    @abstractmethod
+    def release_thread(self, tenant_id: str, thread_id: str, owner: str) -> bool:
+        """owner 匹配才释放租约（置 lease_owner/lease_until=NULL）；不匹配返回 False。"""
