@@ -29,7 +29,7 @@ from src.domain.after_sales import (
 )
 from src.domain.after_sales.models import OperationStatus
 
-from .deps import ApiIdentity, ApiTokenRegistry, AuthMiddleware, get_identity
+from .deps import ApiIdentity, AuthMiddleware, TokenResolver, get_identity
 from .errors import register_error_handlers
 from .schemas import (
     AuditItemOut,
@@ -236,7 +236,7 @@ def audit(request: Request,
 
 # ---------- 工厂 ----------
 
-def create_app(service: AfterSalesService, registry: ApiTokenRegistry) -> FastAPI:
+def create_app(service: AfterSalesService, registry: TokenResolver) -> FastAPI:
     app = FastAPI(title="OpsPilot After-Sales API", version="0.1")
     app.state.service = service
     app.state.registry = registry

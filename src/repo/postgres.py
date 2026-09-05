@@ -137,15 +137,15 @@ class PostgresAfterSalesRepository(AfterSalesRepository):
         with self._tx() as conn:
             conn.execute(text(
                 "INSERT INTO tickets (tenant_id, ticket_id, order_id, customer_id, "
-                "request_type, reason, status, resolution, version) "
-                "VALUES (:t,:tid,:o,:c,:rt,:r,:s,:res,:v)"
+                "request_type, reason, status, resolution, version, created_by, reason_tags) "
+                "VALUES (:t,:tid,:o,:c,:rt,:r,:s,:res,:v,:cb,:rtags)"
             ), {**self._ticket_params(row)})
 
     def get_ticket(self, tenant_id: str, ticket_id: str) -> Optional[TicketRow]:
         with self._tx() as conn:
             row = conn.execute(text(
                 "SELECT tenant_id, ticket_id, order_id, customer_id, request_type, "
-                "reason, status, resolution, version FROM tickets "
+                "reason, status, resolution, version, created_by, reason_tags FROM tickets "
                 "WHERE tenant_id=:t AND ticket_id=:id"
             ), {"t": tenant_id, "id": ticket_id}).fetchone()
             return self._ticket_from(row) if row else None
@@ -267,6 +267,56 @@ class PostgresAfterSalesRepository(AfterSalesRepository):
             ), {"t": tenant_id, "k": idem_key}).fetchone()
             return IdemRow(row[0], row[1], row[2], row[3]) if row else None
 
+    # ---------- 恢复装载（全表列举，只读） ----------
+    def list_orders(self) -> list[OrderRow]:
+        with self._tx() as conn:
+            rows = conn.execute(text(
+                "SELECT tenant_id, order_id, customer_id, status, paid_amount, "
+                "days_since_sign, version FROM orders ORDER BY tenant_id, order_id"
+            )).fetchall()
+            return [self._order_from(r) for r in rows]
+
+    def list_tickets(self) -> list[TicketRow]:
+        with self._tx() as conn:
+            rows = conn.execute(text(
+                "SELECT tenant_id, ticket_id, order_id, customer_id, request_type, "
+                "reason, status, resolution, version, created_by, reason_tags "
+                "FROM tickets ORDER BY tenant_id, ticket_id"
+            )).fetchall()
+            return [self._ticket_from(r) for r in rows]
+
+    def list_operations(self) -> list[OperationRow]:
+        with self._tx() as conn:
+            rows = conn.execute(text(
+                "SELECT tenant_id, operation_id, ticket_id, order_id, op_type, amount, "
+                "status, idempotency_key, created_by, version, decision_version, executed "
+                "FROM refund_operations ORDER BY tenant_id, operation_id"
+            )).fetchall()
+            return [self._operation_from(r) for r in rows]
+
+    def list_audit(self) -> list[AuditRow]:
+        with self._tx() as conn:
+            rows = conn.execute(text(
+                "SELECT tenant_id, action, entity_type, entity_id, actor, before_state, "
+                "after_state, idempotency_key, note FROM audit_events ORDER BY id"
+            )).fetchall()
+            return [AuditRow(r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[8]) for r in rows]
+
+    def list_idem(self) -> list[IdemRow]:
+        with self._tx() as conn:
+            rows = conn.execute(text(
+                "SELECT tenant_id, idem_key, payload_hash, refund_id "
+                "FROM idempotency_records ORDER BY tenant_id, idem_key"
+            )).fetchall()
+            return [IdemRow(r[0], r[1], r[2], r[3]) for r in rows]
+
+    def clear_all(self) -> None:
+        """按 FK 依赖序清空全部业务行（audit→idem→approval→operations→tickets→orders）。"""
+        with self._tx() as conn:
+            for table in ("audit_events", "idempotency_records", "approval_decisions",
+                          "refund_operations", "tickets", "orders"):
+                conn.execute(text(f"DELETE FROM {table}"))
+
     # ---------- helpers ----------
     @staticmethod
     def _order_from(r) -> OrderRow:
@@ -280,13 +330,15 @@ class PostgresAfterSalesRepository(AfterSalesRepository):
 
     @staticmethod
     def _ticket_from(r) -> TicketRow:
-        return TicketRow(r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], int(r[8]))
+        return TicketRow(r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], int(r[8]),
+                         str(r[9] or ""), r[10])
 
     @staticmethod
     def _ticket_params(row: TicketRow) -> dict:
         return {"t": row.tenant_id, "tid": row.ticket_id, "o": row.order_id,
                 "c": row.customer_id, "rt": row.request_type, "r": row.reason,
-                "s": row.status, "res": row.resolution, "v": row.version}
+                "s": row.status, "res": row.resolution, "v": row.version,
+                "cb": row.created_by, "rtags": row.reason_tags}
 
     @staticmethod
     def _operation_from(r) -> OperationRow:

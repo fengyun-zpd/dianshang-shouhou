@@ -23,7 +23,7 @@
 
 ### ✅ 已实现（有代码 + 测试证据）
 
-| 项 | 证据（`.venv` 下 `python -m pytest tests/` → **318 passed**，2026-09-04 实测；PG 容器运行时集成 13/13） |
+| 项 | 证据（`.venv` 下 `python -m pytest tests/` → **330 passed**，2026-09-04 实测；PG 容器运行时集成 17/17） |
 | --- | --- |
 | 工程宪法 `AGENTS.md` v0.2；README 设计基线 + 实施进度节 | 文件存在 |
 | 退款最小闭环（确定性领域服务） | `src/domain/{models,idempotency,refund_service}.py` + `tests/test_refund_service.py`（14 项） |
@@ -97,3 +97,4 @@
 - v0.18（2026-09-04）—— 收敛第三~四阶段：FastAPI 安全审查补充（请求体 tenant 不信任、重复点击审批/对账幂等化 409、审计响应无 PII，API 测试 12 项）；RAG 检索排序平局按 chunk_id 稳定化（消除进程间不确定，指标稳定：recall@1=0.23/recall@3=0.80/MRR=0.4583/注入拒绝 1.0）；当前全量 **310 passed**（PG 集成 9/9）。
 - v0.19（2026-09-04）—— 第二轮事实与文档收口（全部以本次真实运行输出为准，本机 PostgreSQL 容器运行中）：`pytest tests/ -q` = **310 passed**（PG 集成 9/9 实测，0 skip）；黄金集回放 v1 = 11/11、v2 = 120/120；Agent/Supervisor 对照 11/11 vs 11/11（outcome/退款 100% 一致，维持单 Agent）；离线影子意图准确率 1.0。文档更新：`docs/TESTING_BASELINE.md` 分层状态由"规划中"实化为 unit 269 / integration 9 / e2e 2 / property 12 / security 4 / 根 14 = 310；README/ARCHITECTURE/TASK_SPLIT/PERSISTENCE/MULE_BRIDGE 中"当前"指针统一为 310 passed 与集成 9/9（历史修订行保留）；PG 边界措辞改为"Repository/schema/Alembic 已实现并本地实测，领域状态机整体 SQL 化未实现"。说明：任务输入基线"297 passed, 6 skipped"为本机 PG 离线旧快照，与本轮容器运行中的真实输出 **310 passed、0 skip** 不一致，已按宪法第二条以真实运行与代码为准，未写入文档。
 - v0.20（2026-09-04）—— 阶段二 PostgreSQL 唯一事实源第一步（命令级原子写地基）：Repository 增加 `unit_of_work` 事务作用域（interfaces + memory 快照回滚 + PG thread-local 共享连接/事务；正常提交、异常整单位回滚=无部分提交、禁嵌套）；全部读写方法接入同一连接上下文（跨表同事务）。契约测试 +4（unit 273）、PG 集成 +4（integration 13，真实 PG 实测跨表原子提交/中途异常零残留/作用域内读自身写/嵌套拒绝）；全量 **318 passed**。文档同步：POSTGRES v1.2、TESTING_BASELINE v0.3、README/ARCHITECTURE/TASK_SPLIT/PERSISTENCE/MULE_BRIDGE 当前指针统一 318/13/13。诚实边界：领域状态机整体 SQL 化与 PG-backed 领域服务运行仍未实现（本能力是其前置地基），checkpoint 仍仅存流程状态。
+- v0.21（2026-09-04）—— 阶段二 PG-backed 领域会话实现（事实确在 PostgreSQL 行表并可装载重建）：`src/persistence/pg_backed.py`（`PgBackedSession`：`unit_of_work` 内整库镜像写/异常整单位回滚；`load()` 从行表装配全新领域服务，同幂等键同载荷在重建实例上仍返回原结果=重启不重复副作用，审计在重建实例上继续追加）；Alembic 0003（tickets 增 created_by/reason_tags，已在本机 PG 实测 upgrade head→0003）；Repository 增加恢复装载方法 `list_orders/tickets/operations/audit/idem` 与 `clear_all`；保真 codec（Order/Ticket 含 reason_tags·created_by/Operation 含 decision_version·executed/审计/幂等；订单明细 items 与政策不入表——如实声明）。测试：unit codec 7 项、PG 集成 live 4 项（SQL 直接断言事实在 PG/roundtrip/save 失败整单位回滚先落镜像不被覆盖/重启续跑无重复副作用）；演示 `scripts/demo_pg_backed.py`（落 PG→重建→重复返回原工单→继续关单审计 5→7）。API 认证身份抽象为 `TokenResolver` 可替换端口（内存 `ApiTokenRegistry` 仅测试实现，中间件只依赖协议）+1 测试。全量 **330 passed**（unit 281 / integration 17 / e2e 2 / property 12 / security 4 / 根 14）。文档同步：POSTGRES v1.3、TESTING_BASELINE v0.4、README/ARCHITECTURE/TASK_SPLIT/PERSISTENCE/MULE_BRIDGE 指针统一 330/17/17。诚实边界：领域命令仍内存裁决（PG-backed 为单实例命令后全量镜像写），跨进程并发一致性与增量 SQL 化编排未实现；checkpoint 仅存流程状态、与 DB 无覆盖关系。

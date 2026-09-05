@@ -47,6 +47,8 @@ class TicketRow:
     status: str
     resolution: Optional[str] = None
     version: int = 1
+    created_by: str = ""                # 创建者角色 value（Alembic 0003）
+    reason_tags: Optional[str] = None   # JSON 数组字符串，如 '["damaged","broken"]'
 
 
 @dataclass(frozen=True)
@@ -172,3 +174,23 @@ class AfterSalesRepository(ABC):
 
     @abstractmethod
     def get_idem(self, tenant_id: str, idem_key: str) -> Optional[IdemRow]: ...
+
+    # ---------- 恢复装载（PG-backed 会话 load() 用：全表列举，只读） ----------
+    @abstractmethod
+    def list_orders(self) -> list[OrderRow]: ...
+
+    @abstractmethod
+    def list_tickets(self) -> list[TicketRow]: ...
+
+    @abstractmethod
+    def list_operations(self) -> list[OperationRow]: ...
+
+    @abstractmethod
+    def list_audit(self) -> list[AuditRow]: ...
+
+    @abstractmethod
+    def list_idem(self) -> list[IdemRow]: ...
+
+    @abstractmethod
+    def clear_all(self) -> None:
+        """清空全部业务行（PG-backed 会话整库镜像写用；实现按 FK 依赖序删除）。"""

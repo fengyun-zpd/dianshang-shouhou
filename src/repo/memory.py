@@ -144,3 +144,34 @@ class MemoryAfterSalesRepository(AfterSalesRepository):
     def get_idem(self, tenant_id: str, idem_key: str) -> Optional[IdemRow]:
         with self._lock:
             return self._idem.get((tenant_id, idem_key))
+
+    # ---------- 恢复装载（全表列举，只读） ----------
+    def list_orders(self) -> list[OrderRow]:
+        with self._lock:
+            return list(self._orders.values())
+
+    def list_tickets(self) -> list[TicketRow]:
+        with self._lock:
+            return list(self._tickets.values())
+
+    def list_operations(self) -> list[OperationRow]:
+        with self._lock:
+            return list(self._operations.values())
+
+    def list_audit(self) -> list[AuditRow]:
+        with self._lock:
+            return list(self._audits)
+
+    def list_idem(self) -> list[IdemRow]:
+        with self._lock:
+            return list(self._idem.values())
+
+    def clear_all(self) -> None:
+        with self._lock:
+            self._orders.clear()
+            self._tickets.clear()
+            self._operations.clear()
+            self._approvals.clear()
+            self._audits.clear()
+            self._idem.clear()
+            self._executed.clear()

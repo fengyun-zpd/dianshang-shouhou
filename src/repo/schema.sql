@@ -26,6 +26,8 @@ CREATE TABLE IF NOT EXISTS tickets (
     status       TEXT NOT NULL,
     resolution   TEXT,
     version      INTEGER NOT NULL DEFAULT 1,
+    created_by   TEXT NOT NULL DEFAULT '',
+    reason_tags  TEXT,
     PRIMARY KEY (tenant_id, ticket_id),
     FOREIGN KEY (tenant_id, order_id) REFERENCES orders(tenant_id, order_id),
     CONSTRAINT ck_tickets_status CHECK (status IN ('open','resolved','rejected','closed'))

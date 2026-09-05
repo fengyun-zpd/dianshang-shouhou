@@ -258,3 +258,34 @@ def test_no_pii_in_audit_response():
     assert audit.status_code == 200
     assert "13812341234" not in body
     assert all(e.get("note") is None for e in audit.json())
+
+
+# ---------- 认证身份端口可替换（TokenResolver，非绑定内存注册表） ----------
+
+class _StaticResolver:
+    """最小自定义 TokenResolver：直接映射凭据 → 身份，证明中间件不绑定 ApiTokenRegistry。"""
+
+    def __init__(self, mapping):
+        self._mapping = mapping
+
+    def resolve(self, token):
+        if not token:
+            return None
+        return self._mapping.get(token)
+
+
+def test_auth_identity_port_is_replaceable():
+    """注入任意 TokenResolver 实现均可认证（身份只由凭据解析，不依赖内存注册表）。"""
+    svc = service_with_policies(*POL)
+    resolver = _StaticResolver({
+        "static-agent": ApiIdentity("agent-x", "T1", Role.AGENT),
+        "static-approver": ApiIdentity("approver-x", "T1", Role.APPROVER),
+    })
+    client = TestClient(create_app(svc, resolver))
+    ok = client.post("/api/tickets", json={
+        "order_id": "ORD-1", "customer_id": "C1", "request_type": "refund",
+        "reason": "商品破损", "reason_tags": ["damaged"], "idempotency_key": "tk-port",
+    }, headers=_h("static-agent"))
+    assert ok.status_code == 201
+    # 未注册凭据 → 401（端口统一拒绝）
+    assert client.get("/api/tickets/TKT-1", headers=_h("no-such-token")).status_code == 401

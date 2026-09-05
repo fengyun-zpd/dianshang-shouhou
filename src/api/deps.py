@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Protocol
 
 from fastapi import HTTPException, Request, status
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -22,8 +22,17 @@ class ApiIdentity:
     customer_id: Optional[str] = None
 
 
+class TokenResolver(Protocol):
+    """认证身份解析端口：由认证机制实现（内存 ApiTokenRegistry 仅测试/演示；
+    生产可替换为 IdP/JWT/DB 后端）。中间件只依赖本协议，不绑定具体实现。"""
+
+    def resolve(self, token: Optional[str]) -> Optional[ApiIdentity]:
+        """把凭据解析为本地身份；无效/缺失返回 None（→ 401）。"""
+        ...
+
+
 class ApiTokenRegistry:
-    """模拟认证注册表（演示/测试；生产接真实 IdP）。"""
+    """模拟认证注册表（演示/测试用内存实现；生产实现 TokenResolver 端口）。"""
 
     def __init__(self) -> None:
         self._tokens: dict[str, ApiIdentity] = {}
@@ -38,9 +47,12 @@ class ApiTokenRegistry:
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
-    """解析 X-Api-Key → ApiIdentity 存入 request.state.identity；无效则 401。"""
+    """解析 X-Api-Key → ApiIdentity 存入 request.state.identity；无效则 401。
 
-    def __init__(self, app, registry: ApiTokenRegistry):
+    依赖 TokenResolver 端口（可替换），身份只由认证结果推导；请求体 tenant_id 不被信任。
+    """
+
+    def __init__(self, app, registry: TokenResolver):
         super().__init__(app)
         self._registry = registry
 
