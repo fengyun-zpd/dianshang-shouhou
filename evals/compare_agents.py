@@ -107,11 +107,11 @@ def _p(values: list[float], p: float) -> float:
 
 def _conclude(r: dict) -> str:
     gain = r["supervisor"]["pass_rate"] - r["single"]["pass_rate"]
-    slower = r["supervisor"]["p95_ms"] > r["single"]["p95_ms"]
-    if gain > 0 and not slower:
-        return ("Supervisor 通过率高于单 Agent 且耗时未恶化——具备拆分收益，可将默认切换为 "
+    # 结论只由确定性指标（通过率）决定，不依赖逐 run 耗时 → 报告产物确定、可复现
+    if gain > 0:
+        return ("Supervisor 通过率高于单 Agent——具备拆分收益，可将默认切换为 "
                 "Supervisor（需人工复核后提交 ADR）。")
-    return ("无明确业务收益（通过率与单 Agent 持平或更低，/或耗时相当），按 ADR-002 失败回退条款："
+    return ("无明确业务收益（通过率与单 Agent 持平或更低），按 ADR-002 失败回退条款："
             "默认路径维持单 Agent；Supervisor 保留为可选实验运行时（并行只读证据与未来多模型挂载点）。")
 
 
@@ -125,12 +125,10 @@ def _render(r: dict) -> str:
         "",
         "## 结果",
         "",
-        "| 模式 | 通过 | 通过率 | P50 耗时(ms) | P95 耗时(ms) |",
-        "| --- | --- | --- | --- | --- |",
-        f"| 单 Agent（默认） | {r['single']['pass']} | {r['single']['pass_rate']} | "
-        f"{r['single']['p50_ms']} | {r['single']['p95_ms']} |",
-        f"| Supervisor | {r['supervisor']['pass']} | {r['supervisor']['pass_rate']} | "
-        f"{r['supervisor']['p50_ms']} | {r['supervisor']['p95_ms']} |",
+        "| 模式 | 通过 | 通过率 |",
+        "| --- | --- | --- |",
+        f"| 单 Agent（默认） | {r['single']['pass']} | {r['single']['pass_rate']} |",
+        f"| Supervisor | {r['supervisor']['pass']} | {r['supervisor']['pass_rate']} |",
         "",
         f"- outcome 一致性：{r['outcome_consistent']}/{r['total']}",
         f"- 退款金额一致性：{r['refund_consistent']}/{r['total']}",
@@ -141,18 +139,19 @@ def _render(r: dict) -> str:
         "",
         "## 逐条明细",
         "",
-        "| case | 单outcome | Sup outcome | 单退款 | Sup退款 | 单ms | Supms |",
-        "| --- | --- | --- | --- | --- | --- | --- |",
+        "| case | 单outcome | Sup outcome | 单退款 | Sup退款 |",
+        "| --- | --- | --- | --- | --- |",
     ]
     for row in r["rows"]:
         lines.append(
             f"| {row['case_id']} | {row['single_outcome']} | {row['sup_outcome']} | "
-            f"{row['single_refunded']} | {row['sup_refunded']} | "
-            f"{row['single_ms']} | {row['sup_ms']} |"
+            f"{row['single_refunded']} | {row['sup_refunded']} |"
         )
     lines.append("")
     lines.append("> 诚实边界：确定性规则下两种模式的正确路径一致；Supervisor 的并行证据与模块化价值"
                  "不构成此对比中的量化业务收益，默认路径按 ADR-002 维持单 Agent。")
+    lines.append("> 本报告为确定性产物（不含逐 run 耗时，跨运行零 diff；耗时仅输出到 stdout/日志，"
+                 "不作为对照结论依据）。")
     return "\n".join(lines)
 
 

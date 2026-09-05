@@ -5,32 +5,33 @@
 
 ## 结果
 
-| 模式 | 通过 | 通过率 | P50 耗时(ms) | P95 耗时(ms) |
-| --- | --- | --- | --- | --- |
-| 单 Agent（默认） | 11 | 1.0 | 16.0 | 31.0 |
-| Supervisor | 11 | 1.0 | 16.0 | 32.0 |
+| 模式 | 通过 | 通过率 |
+| --- | --- | --- |
+| 单 Agent（默认） | 11 | 1.0 |
+| Supervisor | 11 | 1.0 |
 
 - outcome 一致性：11/11
 - 退款金额一致性：11/11
 
 ## 结论（ADR-002 回退条款）
 
-无明确业务收益（通过率与单 Agent 持平或更低，/或耗时相当），按 ADR-002 失败回退条款：默认路径维持单 Agent；Supervisor 保留为可选实验运行时（并行只读证据与未来多模型挂载点）。
+无明确业务收益（通过率与单 Agent 持平或更低），按 ADR-002 失败回退条款：默认路径维持单 Agent；Supervisor 保留为可选实验运行时（并行只读证据与未来多模型挂载点）。
 
 ## 逐条明细
 
-| case | 单outcome | Sup outcome | 单退款 | Sup退款 | 单ms | Supms |
-| --- | --- | --- | --- | --- | --- | --- |
-| g01-refund-happy | refunded | refunded | 100.00 | 100.00 | 15.0 | 32.0 |
-| g02-refund-rejected | rejected | rejected | 0.00 | 0.00 | 15.0 | 16.0 |
-| g03-clarify-missing-order | clarify | clarify | 0.00 | 0.00 | 15.0 | 16.0 |
-| g04-escalate-order-not-found | escalated | escalated | 0.00 | 0.00 | 16.0 | 15.0 |
-| g05-escalate-no-policy | escalated | escalated | 0.00 | 0.00 | 16.0 | 16.0 |
-| g06-escalate-conflict-policy | escalated | escalated | 0.00 | 0.00 | 15.0 | 16.0 |
-| g07-escalate-unsupported-intent | escalated | escalated | 0.00 | 0.00 | 15.0 | 16.0 |
-| g08-escalate-unknown-intent | escalated | escalated | 0.00 | 0.00 | 16.0 | 15.0 |
-| g09-operation-unknown-recovery | operation_unknown | operation_unknown | 100.00 | 100.00 | 16.0 | 16.0 |
-| g10-repeat-request-idempotent | refunded | refunded | 100.00 | 100.00 | 31.0 | 15.0 |
-| g11-forged-resume-safe | refunded | refunded | 100.00 | 100.00 | 16.0 | 16.0 |
+| case | 单outcome | Sup outcome | 单退款 | Sup退款 |
+| --- | --- | --- | --- | --- |
+| g01-refund-happy | refunded | refunded | 100.00 | 100.00 |
+| g02-refund-rejected | rejected | rejected | 0.00 | 0.00 |
+| g03-clarify-missing-order | clarify | clarify | 0.00 | 0.00 |
+| g04-escalate-order-not-found | escalated | escalated | 0.00 | 0.00 |
+| g05-escalate-no-policy | escalated | escalated | 0.00 | 0.00 |
+| g06-escalate-conflict-policy | escalated | escalated | 0.00 | 0.00 |
+| g07-escalate-unsupported-intent | escalated | escalated | 0.00 | 0.00 |
+| g08-escalate-unknown-intent | escalated | escalated | 0.00 | 0.00 |
+| g09-operation-unknown-recovery | operation_unknown | operation_unknown | 100.00 | 100.00 |
+| g10-repeat-request-idempotent | refunded | refunded | 100.00 | 100.00 |
+| g11-forged-resume-safe | refunded | refunded | 100.00 | 100.00 |
 
 > 诚实边界：确定性规则下两种模式的正确路径一致；Supervisor 的并行证据与模块化价值不构成此对比中的量化业务收益，默认路径按 ADR-002 维持单 Agent。
+> 本报告为确定性产物（不含逐 run 耗时，跨运行零 diff；耗时仅输出到 stdout/日志，不作为对照结论依据）。

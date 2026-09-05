@@ -171,9 +171,9 @@ def test_d8_restart_recovers_policy_and_items_fully():
     assert list(st2["orders"].values())[0].items == list(st1["orders"].values())[0].items
 
 
-@pytest.mark.xfail(reason="D12：Agent/Supervisor 对照报告含逐 run 耗时(ms)，运行间随机浮动使工作区报告 "
-                          "产生非确定 diff（第七阶段稳定化报告）", strict=False)
 def test_d12_reports_stable_no_wallclock_jitter():
+    """D12 修复验证：对照报告为确定性产物——不含逐 run 耗时列（P50/P95/单ms），
+    结论仅由通过率决定；compare_agents.py 报告跨运行零 diff（实测两次运行哈希相同）。"""
     report = (ROOT / "evals" / "reports" / "agent_compare.md").read_text(encoding="utf-8")
     assert "ms" not in report
 

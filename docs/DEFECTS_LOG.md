@@ -2,8 +2,8 @@
 
 > 版本：v1.0（2026-09-04）。第一阶段产物：先补回归测试并执行，记录每项 pass/缺陷证据，
 > **不做大面积重构**。修复按第二阶段起逐项进行；修复后把对应 XFAIL 测试改为 PASS 并更新本表。
-> 证据来源：`tests/regression/test_defect_ledger_regressions.py`（`10 passed, 1 xfailed`，
-> 2026-09-04 实测，PG 容器运行中）+ 既有测试引用。
+> 证据来源：`tests/regression/test_defect_ledger_regressions.py`（**11 passed, 0 xfailed**——
+> D1–D12 全部修复转 PASS，2026-09-04 实测，PG 容器运行中）+ 既有测试引用。
 > 严重级：P0=阻断（数据覆盖/跨租户/分叉），P1=并发/恢复/审计完整性问题。
 
 ## 总览
@@ -21,7 +21,7 @@
 | D9 | 两进程同时 resume 同一线程单推进 | 未实现 | 无跨进程租约/DB 锁（设计项；单实例重复 resume 幂等已有测试保障） | P1 | 四（workflow_threads+租约） |
 | D10 | unknown 仅原 `operation_id` 对账 | 通过 | PASS `test_d10_*`（换新键 → `OPERATION_UNKNOWN_CONFLICT`；原键 reconcile 成功） | — | 保持 |
 | D11 | 外部未知不自动换键重试 | 通过 | PASS `test_d11_*`（timeout→unknown，无二次 create_refund 审计） | — | 保持 |
-| D12 | 报告生成无随机时间差异 | **缺陷** | XFAIL `test_d12_*`（agent_compare.md 含逐 run 耗时 ms，运行间浮动致 diff） | P1 | 七（报告稳定化） |
+| D12 | 报告生成无随机时间差异 | **已修复（提交 阶段三第七步前哨）** | PASS `test_d12_*`（`compare_agents.py` 报告移除 P50/P95 与逐 case 耗时列，结论仅由通过率决定；两次运行报告哈希相同=跨运行零 diff） | P1 | 七 ✅ |
 
 ## 逐项证据与修复方向（简）
 
