@@ -20,18 +20,19 @@
 ```powershell
 # 全量顺序测试
 .venv\Scripts\python.exe -m pytest tests/ -q -p no:cacheprovider
-# → 439 passed, 1 warning in 23.52s（0 xfailed）
+# → 441 passed, 1 warning in 26.57s（0 xfailed）
 
 # 分层回归（验收入口）
 .venv\Scripts\python.exe scripts\run_tests.py
-# → unit/integration/e2e/property/security/regression/phase4 各退出码 0 + 全量 439 passed → REGRESSION PASS
+# → unit/integration/e2e/property/security/regression/phase4 各退出码 0 + 全量 441 passed → REGRESSION PASS
 
 # 分层收集数（--collect-only 实测）
-# unit 335 / integration 35 / e2e 2 / property 12 / security 4 / regression 11 / phase4 26 / 根层 14 = 439
+# unit 335 / integration 37 / e2e 2 / property 12 / security 4 / regression 11 / phase4 26 / 根层 14 = 441
 
-# 评测与回放（阶段四收口后复跑，无回归）
-.venv\Scripts\python.exe evals\replay.py --dataset golden_v1   # → 11/11 通过（任务完成率 1.0，引用正确率 0.6667）
-.venv\Scripts\python.exe evals\replay.py --dataset golden_v2   # → 120/120 通过
+# 评测与回放（含 PG profile，2026-09-05 实测）
+.venv\Scripts\python.exe evals\replay.py --dataset golden_v1              # memory → 11/11 通过（引用 0.6667）
+.venv\Scripts\python.exe evals\replay.py --dataset golden_v1 --profile pg  # PG 事实源 → 11/11 通过（memory vs pg 55 字段 0 差异）
+.venv\Scripts\python.exe evals\replay.py --dataset golden_v2              # memory → 120/120 通过
 .venv\Scripts\python.exe evals\compare_agents.py               # → 单 Agent 11/11 vs Supervisor 11/11（维持单 Agent）
 .venv\Scripts\python.exe evals\run_model_shadow_eval.py --mode offline  # → 意图准确率 1.0，0 降级，未联网
 
@@ -85,11 +86,12 @@ powershell -ExecutionPolicy Bypass -File scripts\run_pg_tests_isolated.ps1
 ## 5. 未实现 / 未实测（如实声明，不写成已实现）
 
 - **真并行双进程隔离运行**：隔离脚本为顺序双库验证（每 worker 独立 database 已实现；真并行双进程未落地，如实标注）。
-- **golden replay 在 PG profile 下运行**：当前回放基于内存演示后端（`evals/replay.py`）；PG profile 回放属阶段 C，未实测。
 - 真实 LLM 影子评测：offline 规则基线已实测；真实模型需用户提供安全 Key/允许 Base URL 后进入影子评测，当前未联网未实测。
 - Supervisor 维持实验性可选运行时（A/B 无明确业务收益，ADR-002 回退条款生效）。
 - 真实 MuleSoft/MCP 网络接入、微调（LoRA/QLoRA/DPO）：无授权不连接/不训练，未实测。
-- 审批工作台前端、API 限流/CORS/OpenAPI 示例：规划中（阶段 C/D），未实现。
+- 审批工作台前端、API 限流/CORS/OpenAPI 示例：规划中（阶段 D），未实现。
+
+> 补充（2026-09-05，commit `02bdbc8`）：**golden replay 的 PG profile 已落地**——`evals/replay.py --profile pg` 在 PG 事实源真实回放 golden_v1 = 11/11，memory vs pg 逐条 55 字段 0 差异，报告 run_mode 如实标注 pg；memory 回放无回归（v1 11/11、v2 120/120）。全量测试随之升至 **441 passed, 0 xfailed**。
 
 ## 6. 风险与遗留（诚实）
 

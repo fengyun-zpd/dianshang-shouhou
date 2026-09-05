@@ -1,12 +1,15 @@
-"""PG-first 命令服务（阶段三第五步，增量实现中）：每个命令 = 单个数据库事务。
+"""PG-first 命令服务（阶段三第五步，八命令全集已实现）：每个命令 = 单个数据库事务。
 
 模板（docs/PG_FIRST_SERVICE.md §5）：事务内读最新事实（Row）→ rules 纯函数校验
 （权限/租户/版本 CAS/状态机，稳定错误码）→ 写业务行 + 幂等记录 + 追加审计 → 提交后返回
 领域对象；异常 → 整事务回滚（无部分提交）。本模块只编排（repository 原语 + rules），
 不复制领域规则；Repository 可插拔（Postgres=生产语义；Memory=单测/契约后端）。
 
-已实现命令子集（本回合）：create_ticket / submit / approve / reject；
-后续命令（create_refund_draft / execute / reconcile / close_ticket）将按同模板补齐。
+已实现命令（全集）：create_ticket / create_refund_draft / submit / approve / reject /
+execute / reconcile / close_ticket——单事务落库（业务行+幂等三元组+审计），并发 CAS、
+订单行锁容量与 unknown 原键对账语义均有 PG live 测试覆盖（tests/integration/test_pg_commands_live.py
+与 tests/phase4/）；API/Gateway/Runner 经 AfterSalesApplicationPort 只依赖本服务
+（PgCommandAdapter，pg profile）。
 """
 from __future__ import annotations
 
@@ -15,15 +18,6 @@ from dataclasses import replace
 from decimal import Decimal
 from typing import Optional
 
-from src.domain.after_sales.models import (
-    AfterSalesError,
-    AfterSalesErrorCode,
-    AfterSalesTicket,
-    Operation,
-    OperationStatus,
-    Role,
-    TicketStatus,
-)
 from src.domain.after_sales.models import (
     AfterSalesError,
     AfterSalesErrorCode,
