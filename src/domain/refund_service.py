@@ -1,4 +1,4 @@
-"""退款领域服务：确定性职责的单一入口。
+"""退款领域服务（LEGACY：早期最小闭环，保留作回归基线）。
 
 对齐宪法第三、四、六条：
 - Agent 只能创建草稿并提交审批，不能放行；
@@ -6,7 +6,11 @@
 - 领域服务自身执行已批准动作（execute）；
 - 金额 / 权限 / 状态 / 幂等 / 审计全部确定性完成，错误码不被改写。
 
-说明：当前使用内存仓储模拟，生产环境应替换为 PostgreSQL 唯一事实源（规划中）。
+状态说明（如实）：本项目**主业务实现为 `src/domain/after_sales/`**
+（`AfterSalesService` + rules + `PgCommandService`，PostgreSQL 业务事实源 + 单事务命令 +
+多租户/PG profile）。本文件是其前的独立最小闭环（单订单、内存、无租户），**仅保留作
+历史回归基线**（`tests/test_refund_service.py`）与面试演进对照；不用于生产路径。
+不要在本文件新增业务能力；新功能一律进入 `after_sales/`。
 """
 from __future__ import annotations
 
