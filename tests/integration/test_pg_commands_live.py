@@ -127,7 +127,7 @@ def test_live_eight_command_chain_sql_verified(service):
     assert _sql_one("SELECT decision_version FROM refund_operations WHERE operation_id=:o",
                     {"o": op.operation_id}) == 2
     assert _sql_one("SELECT COUNT(*) FROM idempotency_records WHERE idem_key IN "
-                    "('T1:tk-e2e','T1:k-e2e')") == 2
+                    "('T1:create_ticket:tk-e2e','T1:create_refund:k-e2e')") == 2
     assert _sql_one("SELECT COUNT(*) FROM audit_events") >= 7   # 建/草稿/提交/审批/执行/对账/关单
 
 

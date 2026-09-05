@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 from decimal import Decimal
+from typing import Optional
 
 from src.domain.after_sales.models import (
     AfterSalesError,
@@ -52,6 +53,7 @@ from src.persistence.pg_backed import (
 )
 from src.repo import (
     AfterSalesRepository,
+    ApprovalRow,
     AuditRow,
     IdemRow,
     OperationRow,
@@ -60,9 +62,10 @@ from src.repo import (
 )
 
 
-def _fkey(tenant_id: str, raw_key: str) -> str:
-    """幂等规范键（D2：租户前缀作用域）。"""
-    return f"{tenant_id}:{raw_key}"
+def _fkey(tenant_id: str, command_type: str, raw_key: str) -> str:
+    """幂等规范键（0005 三元组语义）：租户前缀 + command_type，使不同 command_type
+    可安全使用同一原始 key；数据库唯一以 (tenant, command_type, raw_key) 为准。"""
+    return f"{tenant_id}:{command_type}:{raw_key}"
 
 
 def _phash_ticket(cmd) -> str:
@@ -114,8 +117,34 @@ class PgCommandService:
                 AfterSalesErrorCode.DECISION_VERSION_MISMATCH,
                 f"并发版本冲突：工单 {row.ticket_id} 已被其他操作推进") from e
 
+    def _effective_policy_rows(self, tenant_id, request_type, reason_tags, days_since_sign):
+        """业务时间（today）下最新有效版本的政策行集合：effective_from<=today、window 覆盖，
+        同 policy_id 只取 version 最大；未来版本/历史失效版本不参与当前决定（0005 语义）。"""
+        from datetime import date
+        today = date.today().isoformat()
+        want_tags = set(reason_tags)
+        latest: dict[str, object] = {}
+        for r in self._repo.list_policies():
+            if r.tenant_id != tenant_id or r.request_type != request_type.value:
+                continue
+            if r.effective_from > today:
+                continue                                   # 未来版本不参与
+            try:
+                tags = set(json.loads(r.reason_tags or "[]"))
+            except Exception:  # noqa: BLE001
+                tags = set()
+            if not tags.issubset(want_tags):
+                continue                                   # 诉求标签须覆盖政策标签
+            cur = latest.get(r.policy_id)
+            if cur is None or r.version > cur.version:
+                latest[r.policy_id] = r                   # 取最新有效版本
+        return [r for r in latest.values()
+                if r.window_days >= days_since_sign]
+
     def _match_policy(self, tenant_id, request_type, reason_tags, days_since_sign):
-        policies = [policy_from_row(r) for r in self._repo.list_policies()]
+        policies = [policy_from_row(r)
+                    for r in self._effective_policy_rows(tenant_id, request_type,
+                                                         reason_tags, days_since_sign)]
         matched = match_policies(policies, tenant_id, request_type, reason_tags,
                                  days_since_sign)
         if not matched:
@@ -134,14 +163,14 @@ class PgCommandService:
         if not cmd.reason_tags:
             raise AfterSalesError(AfterSalesErrorCode.MISSING_REQUIRED_FIELD,
                                   "缺少诉求标签（无法匹配政策证据）")
-        fkey = _fkey(cmd.tenant_id, cmd.idempotency_key)
+        fkey = _fkey(cmd.tenant_id, "create_ticket", cmd.idempotency_key)
         phash = _phash_ticket(cmd)
         with self._repo.unit_of_work():
             order_row = self._repo.lock_order_for_update(cmd.tenant_id, cmd.order_id)
             order = order_from_row(order_row) if order_row is not None else None
             validate_order_access(order, cmd.tenant_id)
-            if cmd.actor == Role.CUSTOMER:
-                validate_customer_order_match(order, cmd.customer_id)
+            # customer_id 以订单事实为准：任何 actor（Agent 代客亦然）不得为订单客户之外的人建单
+            validate_customer_order_match(order, cmd.customer_id)
             existing = self._repo.get_idem(cmd.tenant_id, fkey)
             if existing is not None:
                 if existing.payload_hash == phash and existing.refund_id != "<pending>":
@@ -158,7 +187,8 @@ class PgCommandService:
                             cmd.request_type.value, cmd.reason, "open", None, 1,
                             cmd.actor.value, self._json_tags(cmd.reason_tags))
             self._repo.insert_ticket(row)
-            self._repo.insert_idem(IdemRow(cmd.tenant_id, fkey, phash, ticket_id))
+            self._repo.insert_idem(IdemRow(cmd.tenant_id, fkey, phash, ticket_id,
+                                           "create_ticket", cmd.idempotency_key))
             self._audit(cmd.tenant_id, "create_ticket", "ticket", ticket_id, cmd.actor,
                         None, TicketStatus.OPEN, idem_key=fkey)
         return ticket_from_row(row)
@@ -176,8 +206,11 @@ class PgCommandService:
                         OperationStatus(row.status), OperationStatus.PENDING_APPROVAL)
         return operation_from_row(final_row)
 
-    def approve(self, tenant_id: str, cmd) -> Operation:
+    def approve(self, tenant_id: str, cmd, decided_by: Optional[str] = None) -> Operation:
+        """审批决定与操作状态、幂等/审计同事务。decided_by：认证身份 principal（不可伪造）；
+        Agent 永不能代表审批人（角色门禁 + 决定以调用方 principal 落库）。"""
         require_role(cmd.actor, (Role.APPROVER,), "只有授权人员可以审批")
+        actor_principal = decided_by or cmd.actor.value
         with self._repo.unit_of_work():
             row = self._load_op(tenant_id, cmd.operation_id)
             validate_decision_version(row.version, cmd.decision_version)
@@ -186,12 +219,17 @@ class PgCommandService:
             target = replace(row, status="approved", decision_version=cmd.decision_version)
             self._op_cas(target, row.version)
             final_row = self._repo.get_operation(tenant_id, cmd.operation_id)
+            # 决定事实（唯一 uq (tenant, operation, decided_version)：同版本重复决定被 DB 拒绝）
+            self._repo.insert_approval(ApprovalRow(
+                tenant_id, cmd.operation_id, "approved", None,
+                actor_principal, cmd.decision_version))
             self._audit(tenant_id, "approve", "operation", cmd.operation_id, cmd.actor,
                         OperationStatus(row.status), OperationStatus.APPROVED)
         return operation_from_row(final_row)
 
-    def reject(self, tenant_id: str, cmd) -> Operation:
+    def reject(self, tenant_id: str, cmd, decided_by: Optional[str] = None) -> Operation:
         require_role(cmd.actor, (Role.APPROVER,), "只有授权人员可以审批")
+        actor_principal = decided_by or cmd.actor.value
         with self._repo.unit_of_work():
             row = self._load_op(tenant_id, cmd.operation_id)
             validate_decision_version(row.version, cmd.decision_version)
@@ -200,6 +238,9 @@ class PgCommandService:
             target = replace(row, status="rejected")
             self._op_cas(target, row.version)
             final_row = self._repo.get_operation(tenant_id, cmd.operation_id)
+            self._repo.insert_approval(ApprovalRow(
+                tenant_id, cmd.operation_id, "rejected", cmd.reason,
+                actor_principal, cmd.decision_version))
             self._audit(tenant_id, "reject", "operation", cmd.operation_id, cmd.actor,
                         OperationStatus(row.status), OperationStatus.REJECTED,
                         note=cmd.reason)
@@ -220,7 +261,7 @@ class PgCommandService:
                 raise AfterSalesError(AfterSalesErrorCode.INVALID_STATE_TRANSITION,
                                       "工单已关闭，禁止追加退款操作")
             order = order_from_row(self._repo.lock_order_for_update(tenant_id, trow.order_id))
-            fkey = _fkey(tenant_id, cmd.idempotency_key)
+            fkey = _fkey(tenant_id, "create_refund", cmd.idempotency_key)
             phash = _payload_hash({
                 "ticket_id": cmd.ticket_id, "order_id": order.order_id,
                 "amount": str(amount), "reason_detail": cmd.reason_detail,
@@ -243,7 +284,8 @@ class PgCommandService:
             row = OperationRow(tenant_id, op_id, cmd.ticket_id, order.order_id, "refund",
                                amount, "draft", fkey, cmd.actor.value, 1, None, False)
             self._repo.insert_operation(row)
-            self._repo.insert_idem(IdemRow(tenant_id, fkey, phash, op_id))
+            self._repo.insert_idem(IdemRow(tenant_id, fkey, phash, op_id,
+                                           "create_refund", cmd.idempotency_key))
             self._audit(tenant_id, "create_refund", "operation", op_id, cmd.actor,
                         None, OperationStatus.DRAFT, idem_key=fkey)
         return operation_from_row(row)

@@ -60,7 +60,7 @@ def test_create_ticket_commits_ticket_idem_audit(ctx):
     t = svc.create_ticket(_ticket_cmd())
     assert t.ticket_id == "TKT-00001"
     assert len(repo.list_tickets()) == 1
-    assert repo.get_idem("T1", "T1:tk-1") is not None
+    assert repo.get_idem("T1", "T1:create_ticket:tk-1") is not None
     audits = [a for a in repo.list_audit() if a.entity_type == "ticket"]
     assert len(audits) == 1 and audits[0].action == "create_ticket"
 

@@ -76,6 +76,14 @@ def _sql_one(stmt, params=None):
     return v
 
 
+def _sql_row(stmt, params=None):
+    engine = create_engine(DATABASE_URL)
+    with engine.connect() as conn:
+        v = conn.execute(text(stmt), params or {}).fetchone()
+    engine.dispose()
+    return v
+
+
 def _ticket_cmd(key="tk-1", customer="C1", actor=Role.AGENT):
     return CreateTicketCommand("T1", "ORD-1", customer, RequestType.REFUND,
                                "商品破损", ("damaged",), actor, key)
@@ -94,13 +102,12 @@ def _seed_approved(svc, draft_key="k-1", draft_amt="60.00"):
 
 
 @pg_live
-@red
 def test_p4_approval_decision_fact_recorded_on_approve():
     """approve 后 approval_decisions 必须有事实行：tenant/operation/decision_version/
-    授权人(actor)/decision=approved/时间。现状：PgCommandService 未写该表。"""
+    授权人(actor)/decision=approved/时间。"""
     svc = _new_db()
     op = _seed_approved(svc)
-    row = _sql_one(
+    row = _sql_row(
         "SELECT tenant_id, operation_id, decision, decided_by, decided_version"
         " FROM approval_decisions WHERE operation_id=:o", {"o": op.operation_id})
     assert row is not None
@@ -109,7 +116,6 @@ def test_p4_approval_decision_fact_recorded_on_approve():
 
 
 @pg_live
-@red
 def test_p4_rejection_decision_fact_recorded():
     """reject 后同样落决定事实行。"""
     svc = _new_db()
@@ -157,26 +163,27 @@ def test_p4_unauthorized_approval_rejected():
 
 
 @pg_live
-@red
 def test_p4_policy_only_latest_effective_version_used():
-    """政策解析只用业务时间下最新有效版本；未来版本不参与决定（缺生效期过滤 → RED）。"""
+    """政策解析只用业务时间下最新有效版本：仅有未来版本 → 证据不足(POLICY_NOT_FOUND)；
+    加入生效版本后同一诉求可用（未来版本不参与/不冲突）。"""
     svc = _new_db()
     repo = svc._repo
-    # 同 policy 两版本：v1 ratio=1.0 生效（1970），v2 ratio=0.50 生效于未来 2099
-    repo.insert_policy(PolicyRow("T1", "P-DAM", "refund", '["damaged"]', 30,
-                                 Decimal("1.0000"), "2020-01-01", 1))
-    repo.insert_policy(PolicyRow("T1", "P-DAM", "refund", '["damaged"]', 30,
+    # 标签用 missing_item（fixture 的 damaged 政策不命中）：仅未来版本 → 无适用政策
+    repo.insert_policy(PolicyRow("T1", "P-FUT", "refund", '["missing_item"]', 30,
                                  Decimal("0.5000"), "2099-01-01", 2))
-    t = svc.create_ticket(_ticket_cmd("tk-pol", reason="破损"))
-    assert t.reason == "商品破损"
-    op = svc.create_refund_draft("T1", CreateRefundCommand("TKT-00001", Decimal("60.00"),
-                                                           "x", Role.AGENT, "k-pol"))
-    # 草稿金额应来自生效的 v1(1.0) 而非未来 v2 —— 草稿不经政策金额校验，
-    # 因此此处验证「决定/草稿可定位实际采用版本」在命令落库证据中体现；先以无未来干预断言
-    assert op.amount == Decimal("60.00")   # 由调用方给定；契约核心见 P-3 证据快照（后续迁移）
+    fut = CreateTicketCommand("T1", "ORD-1", "C1", RequestType.REFUND, "少件",
+                              ("missing_item",), Role.AGENT, "tk-pol-fut")
+    with pytest.raises(AfterSalesError) as ei:
+        svc.create_ticket(fut)
+    assert ei.value.code == AfterSalesErrorCode.POLICY_NOT_FOUND
+    # 加入已生效 v1（2020，ratio 1.0）→ 同诉求可用；未来 v2 不参与冲突判定
+    repo.insert_policy(PolicyRow("T1", "P-FUT", "refund", '["missing_item"]', 30,
+                                 Decimal("1.0000"), "2020-01-01", 1))
+    t = svc.create_ticket(CreateTicketCommand("T1", "ORD-1", "C1", RequestType.REFUND,
+                                              "少件", ("missing_item",), Role.AGENT, "tk-pol-ok"))
+    assert t.ticket_id == "TKT-00001"
 
 @pg_live
-@red
 def test_p4_idempotency_three_tuple_command_type_dimension():
     """幂等三元组 (tenant, command_type, raw_key)：不同 command_type 可用同一原始 key。
     现状键仅 tenant+key 前缀 → 同原始 key 建单后再用于退款草稿会误判冲突。"""
