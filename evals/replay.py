@@ -167,8 +167,9 @@ class PgReplayProfile:
         if checkpoint_path:
             self._cp_path = str(checkpoint_path)
         else:
+            from src.platform.runtime_paths import runtime_tmp_dir
             fd, path = tempfile.mkstemp(prefix=f"replay-pg-ckpt-{os.getpid()}-",
-                                        suffix=".sqlite")
+                                        suffix=".sqlite", dir=str(runtime_tmp_dir()))
             os.close(fd)
             self._cp_path = path
         self._cp = open_sqlite_checkpointer(self._cp_path)

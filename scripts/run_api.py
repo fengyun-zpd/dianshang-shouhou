@@ -93,8 +93,10 @@ def make_pg_probe(pg_url: str):
 
 
 def _default_checkpoint_path() -> str:
-    """系统临时目录唯一 SQLite checkpoint 文件（进程退出由调用方保持/关闭）。"""
-    fd, path = tempfile.mkstemp(prefix=f"opspilot-ckpt-{os.getpid()}-", suffix=".sqlite")
+    """项目 .runtime/tmp 下唯一 SQLite checkpoint 文件（D 盘存储约束；进程退出由调用方保持/关闭）。"""
+    from src.platform.runtime_paths import runtime_tmp_dir
+    fd, path = tempfile.mkstemp(prefix=f"opspilot-ckpt-{os.getpid()}-",
+                                suffix=".sqlite", dir=str(runtime_tmp_dir()))
     os.close(fd)
     return path
 

@@ -9,6 +9,10 @@ venv/
 .ruff_cache/
 .mypy_cache/
 
+# 运行时与缓存（V1 D 盘存储约束：全部落项目目录，不提交）
+.runtime/
+.cache/
+
 # 环境与密钥
 .env
 .env.local

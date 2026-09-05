@@ -28,7 +28,8 @@ def make_service():
 
 
 def main() -> None:
-    db_path = Path(tempfile.mkdtemp(prefix="dsh-persist-")) / "journal.db"
+    from src.platform.runtime_paths import runtime_tmp_dir
+    db_path = Path(tempfile.mkdtemp(prefix="dsh-persist-", dir=str(runtime_tmp_dir()))) / "journal.db"
     print("=" * 60)
     print("演示：SQLite 可恢复持久化（唯一事实源原型）")
     print("=" * 60)
