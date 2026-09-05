@@ -18,13 +18,15 @@ from src.domain.after_sales.models import (
     ExecuteCommand,
     Operation,
     ReconcileCommand,
+    RefundPlan,
     RejectCommand,
+    RequestType,
     SubmitCommand,
 )
 
 
 class AfterSalesApplicationPort(Protocol):
-    """业务应用端口：写命令（单事务事实）+ 只读查询。"""
+    """业务应用端口：写命令（单事务事实）+ tenant-first 只读。"""
 
     # ---------- 命令 ----------
     def create_ticket(self, cmd: CreateTicketCommand) -> AfterSalesTicket: ...
@@ -38,6 +40,11 @@ class AfterSalesApplicationPort(Protocol):
     def reconcile(self, tenant_id: str, cmd: ReconcileCommand) -> Operation: ...
     def close_ticket(self, tenant_id: str, cmd: CloseTicketCommand) -> AfterSalesTicket: ...
 
-    # ---------- 只读 ----------
+    # ---------- 只读（全部 tenant-first：禁止裸 ID 全表扫描） ----------
     def get_ticket(self, tenant_id: str, ticket_id: str) -> AfterSalesTicket: ...
     def get_operation(self, tenant_id: str, operation_id: str) -> Operation: ...
+    def get_order(self, tenant_id: str, order_id: str): ...
+    def list_customer_tickets(self, tenant_id: str, customer_id: str) -> list[AfterSalesTicket]: ...
+    def compute_refund_plan(self, tenant_id: str, order_id: str,
+                            request_type: RequestType, reason_tags) -> RefundPlan: ...
+    def audit_log(self, tenant_id: str): ...

@@ -77,6 +77,19 @@ class MemoryAdapter:
                                   f"操作 {operation_id} 不属于租户 {tenant_id}")
         return op
 
+    def get_order(self, tenant_id: str, order_id: str):
+        return self._svc.get_order_by_id(tenant_id, order_id)
+
+    def list_customer_tickets(self, tenant_id: str, customer_id: str) -> list:
+        return self._svc.list_customer_tickets(tenant_id, customer_id)
+
+    def compute_refund_plan(self, tenant_id: str, order_id: str, request_type, reason_tags):
+        return self._svc.compute_refund_plan(tenant_id, order_id, request_type, reason_tags)
+
+    def audit_log(self, tenant_id: str):
+        # 内存演示后端审计为单租户场景；返回全部审计事件
+        return self._svc.audit_log()
+
 
 class PgCommandAdapter:
     """PG-first 命令后端适配器（pg profile）：单事务事实 + 授权人 principal。"""
@@ -124,6 +137,25 @@ class PgCommandAdapter:
             raise AfterSalesError(AfterSalesErrorCode.OPERATION_NOT_FOUND,
                                   f"操作 {operation_id} 不存在")
         return operation_from_row(row)
+
+    def get_order(self, tenant_id: str, order_id: str):
+        row = self._repo.get_order(tenant_id, order_id)
+        if row is None:
+            raise AfterSalesError(AfterSalesErrorCode.ORDER_NOT_FOUND, "订单不存在")
+        from src.persistence.pg_backed import order_from_row
+        return order_from_row(row)
+
+    def list_customer_tickets(self, tenant_id: str, customer_id: str) -> list:
+        return [ticket_from_row(r) for r in self._repo.list_tickets()
+                if r.tenant_id == tenant_id and r.customer_id == customer_id]
+
+    def compute_refund_plan(self, tenant_id: str, order_id: str, request_type, reason_tags):
+        return self._cmd.compute_refund_plan(tenant_id, order_id, request_type, reason_tags)
+
+    def audit_log(self, tenant_id: str):
+        from src.persistence.pg_backed import audit_from_row
+        return [audit_from_row(r) for r in self._repo.list_audit()
+                if r.tenant_id == tenant_id]
 
 
 __all__ = ["AfterSalesApplicationPort", "MemoryAdapter", "PgCommandAdapter"]

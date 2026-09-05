@@ -155,6 +155,21 @@ class PgCommandService:
                                   f"多条适用政策退款比例不一致（{len(matched)} 条），冲突需转人工")
         return matched[0]
 
+    def compute_refund_plan(self, tenant_id: str, order_id: str,
+                            request_type, reason_tags) -> object:
+        """确定性退款计划（只读）：以 PostgreSQL 订单与生效政策为事实，不依赖模型输出。"""
+        from src.persistence.pg_backed import order_from_row
+        from src.domain.after_sales.models import RefundPlan as _Plan
+        row = self._repo.get_order(tenant_id, order_id)
+        if row is None:
+            raise AfterSalesError(AfterSalesErrorCode.ORDER_NOT_FOUND, "订单不存在")
+        order = order_from_row(row)
+        policy = self._match_policy(tenant_id, request_type, reason_tags,
+                                    order.days_since_sign)
+        amount = (order.paid_amount * policy.refund_ratio).quantize(Decimal("0.01"))
+        return _Plan(amount=amount, refund_ratio=policy.refund_ratio,
+                     policy_id=policy.policy_id, order_id=order_id)
+
     def create_ticket(self, cmd) -> AfterSalesTicket:
         """事务内：权限→订单行锁+资格→（CUSTOMER）客户-订单匹配→政策命中→next_seq→工单+幂等+审计。"""
         require_role(cmd.actor, (Role.CUSTOMER, Role.AGENT), "只有客户或 Agent 可以创建工单")

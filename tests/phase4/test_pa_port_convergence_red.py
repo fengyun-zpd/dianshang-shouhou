@@ -42,9 +42,10 @@ def test_pa1_gateway_and_runner_depend_only_on_port():
     assert "PgServiceFacade" not in api
 
 
-@red
+# ---------- PA2 ----------
+
 def test_pa2_port_tenant_first_read_surface_extended():
-    """Port 扩展 tenant-first 只读面（工单/操作/订单/客户历史/政策与退款计算/审计）。"""
+    """Port 已扩展 tenant-first 只读面；双 Adapter 实现见 test_pa_adapter_reads.py。"""
     src = _read("src/domain/after_sales/ports.py")
     for sig in ("def get_ticket(self, tenant_id",
                 "def get_operation(self, tenant_id",

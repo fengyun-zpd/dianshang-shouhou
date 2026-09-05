@@ -48,3 +48,11 @@ def test_health_endpoints_public_no_auth():
     client = TestClient(_app())
     assert client.get("/health/live").status_code == 200
     assert client.get("/health/ready").status_code == 200
+
+
+def test_api_documentation_public_but_business_routes_stay_protected():
+    """本地 API 文档可打开；业务接口仍不可绕过 X-Api-Key。"""
+    client = TestClient(_app())
+    assert client.get("/docs").status_code == 200
+    assert client.get("/openapi.json").status_code == 200
+    assert client.get("/api/tickets/TKT-1").status_code == 401
