@@ -54,25 +54,30 @@ CREATE TABLE IF NOT EXISTS refund_operations (
     CONSTRAINT ck_refundop_amount CHECK (amount IS NULL OR amount > 0)
 );
 
--- 审批决定（授权人员提交，带版本）
+-- 审批决定（授权人员提交，带版本；同一 (tenant, operation, decided_version) 只允许一个决定）
 CREATE TABLE IF NOT EXISTS approval_decisions (
     id              SERIAL PRIMARY KEY,
     tenant_id       TEXT NOT NULL,
     operation_id    TEXT NOT NULL,
     decision        TEXT NOT NULL,           -- approved / rejected
     reason          TEXT,
-    decided_by      TEXT NOT NULL,
+    decided_by      TEXT NOT NULL,           -- 认证身份 principal（不可伪造的 actor_id）
     decided_version INTEGER NOT NULL,
-    decided_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+    decided_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT uq_approval_operation_version
+        UNIQUE (tenant_id, operation_id, decided_version)
 );
 
--- 幂等记录：同 (tenant_id, key) 唯一 → 数据库级唯一约束
+-- 幂等记录：幂等三元组 (tenant_id, command_type, raw_key) 唯一（0005）；
+-- idem_key 保留为 D2 前缀规范键（展示/审计冗余列，非唯一键）
 CREATE TABLE IF NOT EXISTS idempotency_records (
     tenant_id     TEXT NOT NULL,
     idem_key      TEXT NOT NULL,
+    command_type  TEXT NOT NULL DEFAULT '',
+    raw_key       TEXT NOT NULL,
     payload_hash  TEXT NOT NULL,
     refund_id     TEXT NOT NULL,
-    PRIMARY KEY (tenant_id, idem_key)
+    CONSTRAINT uq_idem_three_tuple UNIQUE (tenant_id, command_type, raw_key)
 );
 
 -- 审计（追加式；不含 PII）
@@ -137,4 +142,18 @@ CREATE TABLE IF NOT EXISTS entity_seq (
     next_val  BIGINT NOT NULL DEFAULT 1,
     PRIMARY KEY (tenant_id, kind),
     CONSTRAINT ck_entity_seq_kind CHECK (kind IN ('ticket', 'operation'))
+);
+
+-- ============ Alembic 0005：阶段四（跨进程工作流线程与租约；checkpoint 仍只存流程状态） ============
+CREATE TABLE IF NOT EXISTS workflow_threads (
+    tenant_id          TEXT NOT NULL,
+    thread_id          TEXT NOT NULL,
+    status             TEXT NOT NULL DEFAULT 'pending',   -- pending/active/finished/abandoned
+    request_fingerprint TEXT NOT NULL DEFAULT '',
+    lease_owner        TEXT,                              -- 当前持租约的 runner（principal/进程）
+    lease_until        TIMESTAMPTZ,                       -- 租约到期时间；过期后才能被接管
+    generation         INTEGER NOT NULL DEFAULT 1,        -- 版本/代数（接管或状态推进 +1）
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    recovery_meta      TEXT,                              -- JSON：节点/最小恢复元数据（不含业务真相）
+    PRIMARY KEY (tenant_id, thread_id)
 );

@@ -61,7 +61,7 @@ def service():
     with engine.begin() as conn:
         for table in ("audit_events", "idempotency_records", "approval_decisions",
                       "refund_operations", "tickets", "orders", "policies",
-                      "order_items", "entity_seq"):
+                      "order_items", "entity_seq", "workflow_threads"):
             conn.execute(text(f"DROP TABLE IF EXISTS {table} CASCADE"))
         conn.execute(text(_SCHEMA))
     engine.dispose()

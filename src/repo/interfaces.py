@@ -92,10 +92,15 @@ class AuditRow:
 
 @dataclass(frozen=True)
 class IdemRow:
+    """幂等记录（0005 三元组语义）：唯一键 (tenant_id, command_type, raw_key)。
+    idem_key 为 D2 前缀规范键（展示/审计冗余，可含 command_type 前缀）。
+    raw_key=None 的旧式调用兼容为 raw_key=idem_key（等价历史 (tenant,key) 语义）。"""
     tenant_id: str
     idem_key: str
     payload_hash: str
     refund_id: str
+    command_type: str = ""
+    raw_key: Optional[str] = None
 
 
 @dataclass(frozen=True)

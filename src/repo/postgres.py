@@ -268,23 +268,25 @@ class PostgresAfterSalesRepository(AfterSalesRepository):
 
     # ---------- idempotency_records ----------
     def insert_idem(self, row: IdemRow) -> None:
+        raw = row.raw_key if row.raw_key is not None else row.idem_key
         try:
             with self._tx() as conn:
                 conn.execute(text(
-                    "INSERT INTO idempotency_records (tenant_id, idem_key, payload_hash, "
-                    "refund_id) VALUES (:t,:k,:h,:rid)"
-                ), {"t": row.tenant_id, "k": row.idem_key, "h": row.payload_hash,
-                    "rid": row.refund_id})
+                    "INSERT INTO idempotency_records (tenant_id, idem_key, command_type, "
+                    "raw_key, payload_hash, refund_id) VALUES (:t,:k,:ct,:raw,:h,:rid)"
+                ), {"t": row.tenant_id, "k": row.idem_key, "ct": row.command_type,
+                    "raw": raw, "h": row.payload_hash, "rid": row.refund_id})
         except IntegrityError as e:
-            raise UniqueViolation(f"幂等键 {row.idem_key} 已存在（租户 {row.tenant_id}）") from e
+            raise UniqueViolation(
+                f"幂等三元组 ({row.tenant_id}, {row.command_type or '?'}, {raw}) 已存在") from e
 
     def get_idem(self, tenant_id: str, idem_key: str) -> Optional[IdemRow]:
         with self._tx() as conn:
             row = conn.execute(text(
-                "SELECT tenant_id, idem_key, payload_hash, refund_id FROM idempotency_records "
-                "WHERE tenant_id=:t AND idem_key=:k"
+                "SELECT tenant_id, idem_key, payload_hash, refund_id, command_type, raw_key "
+                "FROM idempotency_records WHERE tenant_id=:t AND idem_key=:k"
             ), {"t": tenant_id, "k": idem_key}).fetchone()
-            return IdemRow(row[0], row[1], row[2], row[3]) if row else None
+            return IdemRow(row[0], row[1], row[2], row[3], row[4], row[5]) if row else None
 
     # ---------- 恢复装载（全表列举，只读） ----------
     def list_orders(self) -> list[OrderRow]:
@@ -324,10 +326,10 @@ class PostgresAfterSalesRepository(AfterSalesRepository):
     def list_idem(self) -> list[IdemRow]:
         with self._tx() as conn:
             rows = conn.execute(text(
-                "SELECT tenant_id, idem_key, payload_hash, refund_id "
-                "FROM idempotency_records ORDER BY tenant_id, idem_key"
+                "SELECT tenant_id, idem_key, payload_hash, refund_id, command_type, raw_key "
+                "FROM idempotency_records ORDER BY tenant_id, command_type, raw_key"
             )).fetchall()
-            return [IdemRow(r[0], r[1], r[2], r[3]) for r in rows]
+            return [IdemRow(r[0], r[1], r[2], r[3], r[4], r[5]) for r in rows]
 
     def clear_all(self) -> None:
         """按 FK 依赖序清空全部镜像业务行（子表先于父表：refund_operations/tickets/order_items

@@ -158,8 +158,12 @@ class MemoryAfterSalesRepository(AfterSalesRepository):
     def insert_idem(self, row: IdemRow) -> None:
         with self._lock:
             key = (row.tenant_id, row.idem_key)
-            if key in self._idem:
-                raise UniqueViolation(f"幂等键 {row.idem_key} 已存在（租户 {row.tenant_id}）")
+            raw = row.raw_key if row.raw_key is not None else row.idem_key
+            # 0005 三元组唯一语义：(tenant, command_type, raw_key)；raw_key 缺省兜底 = idem_key
+            if any((r.tenant_id, r.command_type or "", r.raw_key if r.raw_key is not None else r.idem_key)
+                   == (row.tenant_id, row.command_type or "", raw) for r in self._idem.values()):
+                raise UniqueViolation(
+                    f"幂等三元组 ({row.tenant_id}, {row.command_type or '?'}, {raw}) 已存在")
             self._idem[key] = row
 
     def get_idem(self, tenant_id: str, idem_key: str) -> Optional[IdemRow]:
