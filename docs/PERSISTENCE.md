@@ -1,4 +1,4 @@
-# 可恢复唯一事实源原型（SQLite，阶段主线后工程）
+﻿# 可恢复唯一事实源原型（SQLite，阶段主线后工程）
 
 > 归属：电商售后多智能体工单系统（OpsPilot）。版本：v1.0（2026-09-04）。
 > 目的：在不改动领域核心规则的前提下，验证"领域服务状态 + 审计可落库、重启可恢复、
@@ -42,7 +42,7 @@
 .venv\Scripts\python.exe -m pytest tests/unit/persistence -v   # 37 项（原型 6 + 校验 12 + 原子恢复 4 + K3 严格类型/恢复安全 15）
 ```
 
-全量回归：`.venv\Scripts\python.exe -m pytest tests/` → 303 passed（2026-09-04 实测；PG 容器运行时集成 6/6）。
+全量回归：`.venv\Scripts\python.exe -m pytest tests/` → 310 passed（2026-09-04 实测；PG 容器运行时集成 6/6）。
 
 ## 5. 限制与下一步（诚实边界）
 

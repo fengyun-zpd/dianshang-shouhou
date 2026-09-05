@@ -1,4 +1,4 @@
-# 目标架构、启动方式与第一版验收清单
+﻿# 目标架构、启动方式与第一版验收清单
 
 > 归属：电商售后多智能体工单系统（目标远程 `fengyun-zpd/dianshang-shouhou`，本地工作区 `D:\workplace\PyCharmMiscProject\私域`）
 > 版本：v0.2。本文档整合本地工作区已确认事实与当前 V1 实现的"架构图 / 启动方式 / 验收清单"。规划能力不写成已实现。
@@ -41,7 +41,7 @@ V1 当前验证（依赖装在 D 盘 `.venv`）：
 
 ```powershell
 cd D:\workplace\PyCharmMiscProject\私域
-.venv\Scripts\python.exe -m pytest tests/ -v                 # 全量回归（当前 303 项，2026-09-04 实测；PG 容器运行时集成 6/6）
+.venv\Scripts\python.exe -m pytest tests/ -v                 # 全量回归（当前 310 项，2026-09-04 实测；PG 容器运行时集成 6/6）
 .venv\Scripts\python.exe -m pytest tests/unit/agents -v     # 单 Agent 工作流
 .venv\Scripts\python.exe -m pytest tests/unit/domain/after_sales -v   # 售后插件（任务卡 A）
 .venv\Scripts\python.exe scripts\run_tests.py                # 分层回归脚本

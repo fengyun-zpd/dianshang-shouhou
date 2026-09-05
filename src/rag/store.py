@@ -206,7 +206,8 @@ class PolicyStore:
             fused[cid] = kw_rank.get(cid, 0.0) + vec_rank.get(cid, 0.0)
 
         results: list[RetrievedEvidence] = []
-        for cid, score in sorted(fused.items(), key=lambda kv: kv[1], reverse=True):
+        # 平局时按 chunk_id 稳定排序（消除进程间 PYTHONHASHSEED 导致的不确定性）
+        for cid, score in sorted(fused.items(), key=lambda kv: (-kv[1], kv[0])):
             chunk = self._chunks[cid]
             if chunk.tenant_id != tenant_id:
                 continue

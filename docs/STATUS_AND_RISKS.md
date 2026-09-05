@@ -23,7 +23,7 @@
 
 ### ✅ 已实现（有代码 + 测试证据）
 
-| 项 | 证据（`.venv` 下 `python -m pytest tests/` → **306 passed**，2026-09-04 实测；PG 容器运行时集成 9/9） |
+| 项 | 证据（`.venv` 下 `python -m pytest tests/` → **310 passed**，2026-09-04 实测；PG 容器运行时集成 9/9） |
 | --- | --- |
 | 工程宪法 `AGENTS.md` v0.2；README 设计基线 + 实施进度节 | 文件存在 |
 | 退款最小闭环（确定性领域服务） | `src/domain/{models,idempotency,refund_service}.py` + `tests/test_refund_service.py`（14 项） |
@@ -94,3 +94,4 @@
 - v0.15（2026-09-04）—— 诚实边界收口：K7 审批工作台前端**未实现**（无浏览器测试环境，不声称完成；API 端点已齐备可支撑）；K8 边界=单 Agent 默认/Supervisor 只读子 Agent/Mule 本地契约均已交付且无真实授权连接，**未做任何微调**（无对照数据）；真实 LLM 未实测（未配置 Key，不联网）；PostgreSQL 本地容器**真实实测**、非生产部署。
 - v0.16（2026-09-04）—— 事实与文档统一收口：以真实命令输出为准统一全站基线（`pytest tests/ -q` = **303 passed**，PostgreSQL 容器运行时的集成 6/6 实测，无 PG 自动跳过；README/STATUS/ARCHITECTURE/TASK_SPLIT/PERSISTENCE/MULE_BRIDGE 等“当前”性数字与状态已更新，历史修订保留）；修复 `src/__init__.py`、`src/platform/__init__.py` 过时的“规划中”描述为已实现清单 + 未实现项。前端/真实 LLM/真实 MCP-MuleSoft/微调仍明确标注未实现或未实测；SQLite 仅恢复原型。
 - v0.17（2026-09-04）—— PostgreSQL 事实源闭环：schema/Alembic 0002 增加 DB 级 CHECK（金额非负/退款金额为正/工单与操作状态枚举），数据库可独立阻止非法业务状态；集成测试 9 项（新增 DB 约束拦截与并发同幂等键恰一成功）；全量 **306 passed**。
+- v0.18（2026-09-04）—— 收敛第三~四阶段：FastAPI 安全审查补充（请求体 tenant 不信任、重复点击审批/对账幂等化 409、审计响应无 PII，API 测试 12 项）；RAG 检索排序平局按 chunk_id 稳定化（消除进程间不确定，指标稳定：recall@1=0.23/recall@3=0.80/MRR=0.4583/注入拒绝 1.0）；当前全量 **310 passed**（PG 集成 9/9）。

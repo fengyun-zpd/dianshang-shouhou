@@ -1,4 +1,4 @@
-# PostgreSQL 唯一事实源（K4）
+﻿# PostgreSQL 唯一事实源（K4）
 
 > 版本：v1.0（2026-09-04）。状态：Repository 契约与 PostgreSQL 实现在本地真实数据库上**实测通过**；
 > 领域状态机的完整“搬迁到 PG”尚未实现（当前运行时仍为内存领域服务 + SQLite 恢复原型）。
@@ -41,7 +41,7 @@ docker run -d --name opspilot-pg -e POSTGRES_PASSWORD=opspilot -e POSTGRES_DB=op
 - 真实 PG 集成：`tests/integration/test_postgres_repository_live.py` **9 项** ✅
   （CRUD / 幂等唯一 UniqueViolation / 乐观版本冲突 / 顺序与并发行锁容量（60+60 恰一成功，累计 60）/
    unknown 原键记录 / **DB CHECK 拒非法金额与非法状态** / **并发同幂等键恰一成功**）
-- 全量：`.venv\Scripts\python.exe -m pytest tests/ -q` → 306 passed（PG 容器运行时；无 PG 集成自动跳过）
+- 全量：`.venv\Scripts\python.exe -m pytest tests/ -q` → 310 passed（PG 容器运行时；无 PG 集成自动跳过）
 - PG 不可达时集成测试自动 `skip` 并标注“数据库集成未实测”。
 
 ## 5. 覆盖与未覆盖（诚实边界）

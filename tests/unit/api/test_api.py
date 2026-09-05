@@ -181,3 +181,80 @@ def test_request_id_and_audit_tenant_scoped():
     audit2 = client.get(f"/api/audit?entity_type=ticket&entity_id={t1}",
                         headers=_h("tok-agent-2"))
     assert audit2.status_code == 200 and audit2.json() == []
+
+
+# ---------- 第三阶段安全审查补充 ----------
+
+def test_body_tenant_id_is_ignored_identity_wins():
+    """TenantContext 只来自认证：请求体携带 tenant_id 不改变身份租户。"""
+    client, svc = _make_client()
+    r = client.post("/api/tickets", json={
+        "order_id": "ORD-1", "customer_id": "C1", "request_type": "refund",
+        "reason": "商品破损", "reason_tags": ["damaged"], "idempotency_key": "tk-tenant-body",
+        "tenant_id": "T2",                       # 攻击性字段：必须被忽略
+    }, headers=_h("tok-agent-1"))
+    assert r.status_code == 201
+    t1 = r.json()["ticket_id"]
+    assert r.json()["tenant_id"] == "T1"         # 仍按认证 T1 建单
+    assert client.get(f"/api/tickets/{t1}", headers=_h("tok-agent-1")).status_code == 200
+    assert client.get(f"/api/tickets/{t1}", headers=_h("tok-agent-2")).status_code == 403
+
+
+def test_repeat_approve_click_is_invalid_not_double_effect():
+    """重复点击审批：第二次无效（409）且不产生第二次副作用。"""
+    client, svc = _make_client()
+    t1 = _open_ticket(client, key="tk-2x").json()["ticket_id"]
+    draft = client.post(f"/api/tickets/{t1}/refund-drafts", json={
+        "amount": "60.00", "reason_detail": "x", "idempotency_key": "k-2x",
+    }, headers=_h("tok-agent-1")).json()
+    op_id = draft["operation_id"]
+    client.post(f"/api/operations/{op_id}/submit", json={}, headers=_h("tok-agent-1"))
+    first = client.post(f"/api/operations/{op_id}/approve", json={}, headers=_h("tok-approver-1"))
+    assert first.status_code == 200
+    second = client.post(f"/api/operations/{op_id}/approve", json={}, headers=_h("tok-approver-1"))
+    assert second.status_code == 409
+    assert second.json()["code"] == "AFTER_SALES_INVALID_STATE_TRANSITION"
+    ex = client.post(f"/api/operations/{op_id}/execute",
+                     json={"external_result": "success"}, headers=_h("tok-system-1"))
+    assert ex.status_code == 200
+    assert svc.refunded_amount("ORD-1").__str__() == "60.00"
+
+
+def test_repeated_reconcile_after_settled_is_invalid():
+    """unknown 收口一次后重复对账 → 409（不重复累计）。"""
+    client, svc = _make_client()
+    t1 = _open_ticket(client, key="tk-rc").json()["ticket_id"]
+    draft = client.post(f"/api/tickets/{t1}/refund-drafts", json={
+        "amount": "60.00", "reason_detail": "x", "idempotency_key": "k-rc",
+    }, headers=_h("tok-agent-1")).json()
+    op_id = draft["operation_id"]
+    client.post(f"/api/operations/{op_id}/submit", json={}, headers=_h("tok-agent-1"))
+    client.post(f"/api/operations/{op_id}/approve", json={}, headers=_h("tok-approver-1"))
+    client.post(f"/api/operations/{op_id}/execute",
+                json={"external_result": "timeout"}, headers=_h("tok-system-1"))
+    ok = client.post(f"/api/operations/{op_id}/reconcile",
+                     json={"result": "success"}, headers=_h("tok-system-1"))
+    assert ok.status_code == 200
+    again = client.post(f"/api/operations/{op_id}/reconcile",
+                        json={"result": "success"}, headers=_h("tok-system-1"))
+    assert again.status_code == 409
+    assert again.json()["code"] == "AFTER_SALES_INVALID_STATE_TRANSITION"
+    assert svc.refunded_amount("ORD-1").__str__() == "60.00"
+
+
+def test_no_pii_in_audit_response():
+    """理由中的手机号不进入审计响应（领域审计仅存动作/状态，note 不含正文）。"""
+    client, _ = _make_client()
+    r = client.post("/api/tickets", json={
+        "order_id": "ORD-1", "customer_id": "C1", "request_type": "refund",
+        "reason": "破损 电话 13812341234", "reason_tags": ["damaged"],
+        "idempotency_key": "tk-pii",
+    }, headers=_h("tok-agent-1"))
+    assert r.status_code == 201
+    t1 = r.json()["ticket_id"]
+    audit = client.get(f"/api/audit?entity_type=ticket&entity_id={t1}",
+                       headers=_h("tok-agent-1"))
+    body = audit.text
+    assert audit.status_code == 200
+    assert "13812341234" not in body
+    assert all(e.get("note") is None for e in audit.json())
