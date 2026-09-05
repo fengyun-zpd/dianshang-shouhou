@@ -227,7 +227,9 @@ class AfterSalesService:
 
         # 原子幂等（任务卡 J）：per-key 锁内 check-then-act；
         # 同键同载荷返回原工单；同键异载荷拒绝；失败释放占位（<pending>）
-        with self._idempotency.lock_for(cmd.idempotency_key):
+        # 幂等键租户作用域（D2）：键空间带租户前缀，跨租户同原始 key 互不冲突
+        _ik = f"{cmd.tenant_id}:{cmd.idempotency_key}"
+        with self._idempotency.lock_for(_ik):
             phash = payload_hash({
                 "tenant_id": cmd.tenant_id,
                 "order_id": cmd.order_id,
@@ -236,11 +238,11 @@ class AfterSalesService:
                 "reason": cmd.reason,
                 "reason_tags": list(cmd.reason_tags),
             })
-            occupied = self._idempotency.get_or_reserve(cmd.idempotency_key, phash)
+            occupied = self._idempotency.get_or_reserve(_ik, phash)
             if occupied is not None:
                 if occupied.payload_hash == phash and occupied.refund_id != PENDING_REFUND_ID:
                     return self.get_ticket(occupied.refund_id)  # 返回原工单
-                self._idempotency.release(cmd.idempotency_key)
+                self._idempotency.release(_ik)
                 raise AfterSalesError(AfterSalesErrorCode.IDEMPOTENCY_CONFLICT, "同键异载荷：工单创建被拒绝")
 
             try:
@@ -272,10 +274,10 @@ class AfterSalesService:
                     created_by=cmd.actor,
                 )
                 self._tickets[ticket.ticket_id] = ticket
-                self._idempotency.commit(cmd.idempotency_key, phash, ticket.ticket_id)
-                self._record("create_ticket", "ticket", ticket.ticket_id, cmd.actor, None, TicketStatus.OPEN, cmd.idempotency_key)
+                self._idempotency.commit(_ik, phash, ticket.ticket_id)
+                self._record("create_ticket", "ticket", ticket.ticket_id, cmd.actor, None, TicketStatus.OPEN, _ik)
             except BaseException:
-                self._idempotency.release(cmd.idempotency_key)
+                self._idempotency.release(_ik)
                 raise
             return ticket
 
@@ -346,18 +348,20 @@ class AfterSalesService:
         if amount <= 0:
             raise AfterSalesError(AfterSalesErrorCode.AMOUNT_NOT_POSITIVE, "退款金额必须为正")
 
-        with self._idempotency.lock_for(cmd.idempotency_key):
+        # 幂等键租户作用域（D2）：键空间带工单租户前缀，跨租户同原始 key 互不冲突
+        _ik = f"{ticket.tenant_id}:{cmd.idempotency_key}"
+        with self._idempotency.lock_for(_ik):
             phash = payload_hash({
                 "ticket_id": cmd.ticket_id,
                 "order_id": order.order_id,
                 "amount": str(amount),
                 "reason_detail": cmd.reason_detail,
             })
-            occupied = self._idempotency.get_or_reserve(cmd.idempotency_key, phash)
+            occupied = self._idempotency.get_or_reserve(_ik, phash)
             if occupied is not None:
                 if occupied.payload_hash == phash and occupied.refund_id != PENDING_REFUND_ID:
                     return self.get_operation(occupied.refund_id)  # 同键同载荷：返回原结果（幂等优先）
-                self._idempotency.release(cmd.idempotency_key)
+                self._idempotency.release(_ik)
                 raise AfterSalesError(AfterSalesErrorCode.IDEMPOTENCY_CONFLICT, "同键异载荷：退款草稿被拒绝")
 
             try:
@@ -383,14 +387,14 @@ class AfterSalesService:
                     op_type=OperationType.REFUND,
                     amount=amount,
                     status=OperationStatus.DRAFT,
-                    idempotency_key=cmd.idempotency_key,
+                    idempotency_key=_ik,
                     created_by=cmd.actor,
                 )
                 self._operations[op.operation_id] = op
-                self._idempotency.commit(cmd.idempotency_key, phash, op.operation_id)
-                self._record("create_refund", "operation", op.operation_id, cmd.actor, None, OperationStatus.DRAFT, cmd.idempotency_key)
+                self._idempotency.commit(_ik, phash, op.operation_id)
+                self._record("create_refund", "operation", op.operation_id, cmd.actor, None, OperationStatus.DRAFT, _ik)
             except BaseException:
-                self._idempotency.release(cmd.idempotency_key)
+                self._idempotency.release(_ik)
                 raise
             return op
 

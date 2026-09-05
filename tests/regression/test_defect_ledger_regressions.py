@@ -99,16 +99,20 @@ def test_d1_cross_tenant_same_order_id_not_overwritten():
     assert orders["ORD-X"].tenant_id == "T1"
 
 
-@pytest.mark.xfail(reason="D2：IdempotencyStore 键为裸 idem_key，跨租户同 key 冲突（第二阶段改租户作用域）",
-                   strict=False)
 def test_d2_cross_tenant_same_idem_key_not_conflict():
+    """D2 修复验证：幂等键租户作用域（键空间带租户前缀）——跨租户同原始 key 互不冲突。"""
     svc = AfterSalesService()
     svc.seed_order(make_order(order_id="ORD-A", tenant_id="T1", paid="100.00"))
     svc.seed_order(make_order(order_id="ORD-B", tenant_id="T2", paid="100.00"))
     svc.seed_policy(T1_POL)
     svc.seed_policy(T2_POL)
-    _create_ticket(svc, "T1", "ORD-A", "C1", key="same-key")     # T1 成功
-    _create_ticket(svc, "T2", "ORD-B", "C2", key="same-key")     # 期望：T2 租户作用域互不冲突
+    t1 = _create_ticket(svc, "T1", "ORD-A", "C1", key="same-key")     # T1 成功
+    t2 = _create_ticket(svc, "T2", "ORD-B", "C2", key="same-key")     # T2 同原始 key：成功（租户作用域）
+    assert len(svc.export_state()["tickets"]) == 2
+    assert t1.ticket_id != t2.ticket_id
+    # 同租户同 key 幂等语义仍成立（返回原工单，不重复建单）
+    dup1 = _create_ticket(svc, "T1", "ORD-A", "C1", key="same-key")
+    assert dup1.ticket_id == t1.ticket_id
     assert len(svc.export_state()["tickets"]) == 2
 
 

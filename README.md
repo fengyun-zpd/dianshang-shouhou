@@ -208,7 +208,7 @@ RAG、控制台、微调、观测：均标记「规划中」，V1 不前置实�
 - **可恢复持久化原型（SQLite）** `src/persistence/`：`service.export_state/restore_state` + `idempotency.export/import_records`（不改规则）、JSON 安全编解码、SQLite append-only journal（checksum 校验、损坏 fail-closed）、`RecoverableSession` 重启恢复可续跑；6 项单测 + 演示 `scripts/demo_persistence.py` + `docs/PERSISTENCE.md`；
 - **平台层最小落地** `src/platform/`：PII 脱敏（手机/邮箱/身份证）与整行脱敏日志 formatter；8 项单测；
 - **测试工具链**：`scripts/run_tests.py` 分层回归、`tests/conftest.py`（固定种子 42）、pytest markers、`.github/workflows/ci.yml` 模板；
-- 回归（2026-09-04 实测）：`.venv` 下 `python -m pytest tests/` → **340 passed, 5 xfailed**（PG 容器运行时集成 18/18 实测；无 PostgreSQL 时集成自动跳过）；`python scripts/run_tests.py` → `REGRESSION PASS`；黄金集 `.venv\Scripts\python.exe evals\replay.py` → 11/11（引用探针准确率 0.6667）；影子 `.venv\Scripts\python.exe evals\run_model_shadow_eval.py --mode offline` → 意图准确率 1.0；A/B `.venv\Scripts\python.exe evals\compare_agents.py` → 单 Agent 与 Supervisor 均 11/11（默认单 Agent）；5 项 xfailed = 剩余已知缺陷台账（`docs/DEFECTS_LOG.md` D1/D2/D7/D8/D12，待后续阶段修复转 PASS；D4/D6 已在第二阶段修复）。
+- 回归（2026-09-04 实测）：`.venv` 下 `python -m pytest tests/` → **341 passed, 4 xfailed**（PG 容器运行时集成 18/18 实测；无 PostgreSQL 时集成自动跳过）；`python scripts/run_tests.py` → `REGRESSION PASS`；黄金集 `.venv\Scripts\python.exe evals\replay.py` → 11/11（引用探针准确率 0.6667）；影子 `.venv\Scripts\python.exe evals\run_model_shadow_eval.py --mode offline` → 意图准确率 1.0；A/B `.venv\Scripts\python.exe evals\compare_agents.py` → 单 Agent 与 Supervisor 均 11/11（默认单 Agent）；4 项 xfailed = 剩余已知缺陷台账（`docs/DEFECTS_LOG.md` D1/D7/D8/D12；D2/D4/D6 已在第二阶段修复转 PASS）。
 
 ### 13.2 规划中（未实现，不写成已实现）
 
