@@ -1,8 +1,8 @@
-﻿# OpsPilot     PostgreSQL            worker    database 
+﻿# OpsPilot     PostgreSQL            worker    database
 #    .\scripts\run_pg_tests_isolated.ps1
-#           database opspilot_p4a / opspilot_p4b    PostgreSQL      
-# Alembic upgrade head          PG                      
-# DROP/CREATE          worker                  
+#           database opspilot_p4a / opspilot_p4b    PostgreSQL
+# Alembic upgrade head          PG
+# DROP/CREATE          worker
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 $py = Join-Path $root ".venv\Scripts\python.exe"

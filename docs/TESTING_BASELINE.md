@@ -1,22 +1,24 @@
 # 测试基线（TESTING BASELINE）
 
 > 归属：电商售后多智能体工单系统（`D:\workplace\PyCharmMiscProject\私域`）
-> 版本：v0.7。本文档定义测试分层、验收命令、Bug 分类与回归纪律。
-> 全量基线（2026-09-04 本地实测）：`.venv\Scripts\python.exe -m pytest tests/ -q` → **395 passed, 0 xfailed**（PostgreSQL 容器运行时集成 31/31 实测；无 PostgreSQL 时集成自动跳过，不伪造通过；缺陷台账 D1–D12 已全部修复转 PASS）。
+> 版本：v0.8。本文档定义测试分层、验收命令、Bug 分类与回归纪律。
+> 全量基线（2026-09-05 本地实测）：`.venv\Scripts\python.exe -m pytest tests/ -q` → **417 passed, 0 xfailed**（PostgreSQL 容器运行时集成 33/33 实测；无 PostgreSQL 时集成自动跳过；缺陷台账 D1–D12 已全部修复）。
 
 ## 1. 分层策略与验收命令
 
-| 层 | 覆盖内容 | 目录 | 当前状态（收集数，全量 395） |
+| 层 | 覆盖内容 | 目录 | 当前状态（收集数，全量 417） |
 | --- | --- | --- | --- |
-| unit | 纯函数 / 领域服务 / 权限 / 状态机 / 幂等 / API 安全与 health / RAG / 评测 / 桥接 / Repository 契约 / PG-backed codec / 持久 checkpoint / PG-first 命令服务 / rules | `tests/unit/` | ✅ 321 项全绿 |
-| integration | PostgreSQL 真实仓储（TenantContext、行锁容量、幂等唯一、乐观版本、DB CHECK、unit_of_work 原子写、0004 数据面、PG-backed 会话重建、PG-first 命令服务单事务与并发 CAS） | `tests/integration/` | ✅ 31 项（PG 容器运行时实测；无 PG 自动跳过并标注"数据库集成未实测"） |
-| e2e | 端到端流程 / 审批中断恢复 | `tests/e2e/` | ✅ 2 项 |
-| property | 性质测试（状态机不变量、金额守恒） | `tests/property/` | ✅ 12 项 |
-| security | 越权 / 提示注入 / 租户隔离 / 未知状态 / PII | `tests/security/` | ✅ 4 项 |
-| regression | 缺陷台账回归（D1–D12） | `tests/regression/` | ✅ 11 项（0 xfailed） |
-| 根层 | 退款最小闭环 | `tests/test_refund_service.py` | ✅ 14 项（历史基线，保留只读） |
+| unit | 纯函数/领域服务/权限/状态机/幂等/API安全与 health/RAG/评测/桥接/Repository 契约/PG-backed codec/持久 checkpoint/PG-first 命令服务/rules/ports与 adapters/runtime profile | `tests/unit/` | ✅ 331 项全绿 |
+| integration | PostgreSQL 实首（行锁/幂等三元组/0004数据面/PG-first 命令单事务与并发 CAS/PG profile HTTP e2e/0005约束/D9 租约 live | `tests/integration/` | ✅ 33 项 |
+| e2e | 端到端流程/审批中断恢复 | `tests/e2e/` | ✅ 2 项 |
+| property | 性质测试 | `tests/property/` | ✅ 12 项 |
+| security | 越权/注入/租户隔离/未知态/PII | `tests/security/` | ✅ 4 项 |
+| regression | 缺陷台账 D1–D12 | `tests/regression/` | ✅ 11 项 |
+| phase4 | 阶段四契约（审批事实/幂等三元组/政策版本/D9 租约） | `tests/phase4/` | ✅ 10 项 |
+| 根层 | 退款最小闭环 | `tests/test_refund_service.py` | ✅ 14 项 |
 
-> 汇总：321 + 31 + 2 + 12 + 4 + 11 + 14 = **395 passed, 0 xfailed**（2026-09-04 实测；PG 集成 31/31）。
+> 汇总：331 + 33 + 2 + 12 + 4 + 11 + 10 + 14 = **417 passed, 0 xfailed**（2026-09-05 实测）。
+
 
 验收命令（项目根执行）：
 

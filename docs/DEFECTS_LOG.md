@@ -18,7 +18,7 @@
 | D6 | PG `with_order_lock` 业务期间保持锁 | **已修复（提交 阶段二）** | PASS `test_d6_*`（FOR UPDATE 事务保持至 yield 体完成；contender 阻塞至持有者提交 dt≈0.6s） | P0 | 二 ✅ |
 | D7 | PG 保存失败内存与 DB 不分叉 | **已修复（提交 阶段三第五步收口）** | PASS `test_d7_*`——生产命令路径（`PgCommandService`）不调用 clear_all/镜像重插（源码断言）；命令失败整事务回滚零残留由 PG live 实证（`test_live_no_partial_commit_on_validation_failure` 等）；`PgBackedSession` 全量镜像写仅作兼容迁移工具并如实标注 | P0 | 三 ✅ |
 | D8 | 重启后政策/订单明细/审批/审计完整恢复 | **已修复（提交 阶段三）** | PASS `test_d8_*` + live（`PgBackedSession.load()` 无参自 policies/order_items 表完整恢复政策与明细；Alembic 0004 + PolicyRow/OrderItemRow 装载方法；审批/审计/幂等此前已保真） | P1 | 三 ✅ |
-| D9 | 两进程同时 resume 同一线程单推进 | 未实现 | 无跨进程租约/DB 锁（设计项；单实例重复 resume 幂等已有测试保障） | P1 | 四（workflow_threads+租约） |
+| D9 | 两进程同时 resume 同一线程单推进 | **部分实现（验收中）** | repo 原语 claim_thread/release_thread（获租/续租/过期接管，并发单胜/竞争单推进已测）；Runner 内部强制租约未完成（阶段四收口项） | P1 | 四（收口中） | 无跨进程租约/DB 锁（设计项；单实例重复 resume 幂等已有测试保障） | P1 | 四（workflow_threads+租约） |
 | D10 | unknown 仅原 `operation_id` 对账 | 通过 | PASS `test_d10_*`（换新键 → `OPERATION_UNKNOWN_CONFLICT`；原键 reconcile 成功） | — | 保持 |
 | D11 | 外部未知不自动换键重试 | 通过 | PASS `test_d11_*`（timeout→unknown，无二次 create_refund 审计） | — | 保持 |
 | D12 | 报告生成无随机时间差异 | **已修复（提交 阶段三第七步前哨）** | PASS `test_d12_*`（`compare_agents.py` 报告移除 P50/P95 与逐 case 耗时列，结论仅由通过率决定；两次运行报告哈希相同=跨运行零 diff） | P1 | 七 ✅ |

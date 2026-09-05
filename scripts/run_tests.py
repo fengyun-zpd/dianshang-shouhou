@@ -26,6 +26,8 @@ LAYER_PATHS = {
     "e2e": ["tests/e2e"],
     "property": ["tests/property"],
     "security": ["tests/security"],
+    "regression": ["tests/regression"],
+    "phase4": ["tests/phase4"],
 }
 
 
@@ -45,7 +47,8 @@ def main() -> int:
     if args.quick:
         overall, _ = run_pytest(["tests/test_refund_service.py", "tests/unit", "-q"])
     else:
-        for layer in ("unit", "integration", "e2e", "property", "security"):
+        for layer in ("unit", "integration", "e2e", "property", "security",
+                      "regression", "phase4"):
             paths = LAYER_PATHS[layer]
             if not any(os.path.exists(os.path.join(ROOT, p)) for p in paths):
                 print(f"[{layer}] 无对应用例目录，跳过（属正常，非失败）")

@@ -23,7 +23,7 @@
 
 ### ✅ 已实现（有代码 + 测试证据）
 
-| 项 | 证据（`.venv` 下 `python -m pytest tests/` → **395 passed, 0 xfailed**，2026-09-04 实测；PG 容器运行时集成 31/31） |
+| 项 | 证据（`.venv` 下 `python -m pytest tests/` → **417 passed, 0 xfailed**，2026-09-05 实测；PG 集成 33/33） |
 | --- | --- |
 | 工程宪法 `AGENTS.md` v0.2；README 设计基线 + 实施进度节 | 文件存在 |
 | 退款最小闭环（确定性领域服务） | `src/domain/{models,idempotency,refund_service}.py` + `tests/test_refund_service.py`（14 项） |
@@ -122,3 +122,4 @@
 - v0.42（2026-09-05）—— 阶段四（PG-first 运行时闭环）进展：RED 契约 7/7 转 PASS（tests/phase4）——approve/reject 落 approval_decisions 事实（decided_by=principal 或 actor 兜底、decided_version、decision；同版本唯一约束由 0005 保证）、幂等三元组 (tenant, command_type, raw_key) 使不同 command_type 可同原始 key、政策仅用业务时间下最新有效版本（未来版本 POLICY_NOT_FOUND）、create_ticket customer 以订单事实为准无条件校验；Alembic 0005（approval 唯一/幂等三元组/workflow_threads 表）；全量 402 passed 0 xfailed。
 - v0.43（2026-09-05）—— 阶段四第 3 节（runtime profile 门禁骨架）：src/api/runtime.py（RuntimeProfile memory|pg；pg 要求 PostgreSQL 可达 + alembic schema=0005 + 健康探测，不满足 RuntimeError **绝不静默降级内存**；require_postgres_ready/build_pg_command_service）；run_api.py 增 --require-pg 门禁（失败退出码 1）；单测 4 项（profile 值/可达且 0005 ok/不可达 raise/版本不符 raise）；全量 406 passed 0 xfailed。API/Gateway/Runner 的 AfterSalesApplicationPort 化与 PG profile HTTP e2e 为进行中（不声称已切换）。
 - v0.44（2026-09-05）—— 阶段四第 5 节（测试隔离）：scripts/run_pg_tests_isolated.ps1 —— 每 worker 独立 database（opspilot_p4a/b，同实例）各自从空库 Alembic 全程升级（0001→0005 成功）后运行同一批 PG 集成（各 25 passed，exit 0）＝对象级完全隔离，并行亦互不踩库；实测 ISOLATED DOUBLE-RUN PASS。
+- v0.45（2026-09-05）—— 阶段四收口进展：实测新基线 **417 passed, 0 xfailed**（unit 331 / integration 33 / e2e 2 / property 12 / security 4 / regression 11 / phase4 10 / 根 14）；run_tests.py 分层扩展 regression/phase4 独立统计；测试隔离：每 worker 独立 database（scripts/run_pg_tests_isolated.ps1）空库 Alembic 0001→0005 全程升级成功且各跑 PG 集成 25 passed（ISOLATED DOUBLE-RUN PASS）。未完成/进行中（如实）：WorkflowRunner/AfterSalesGateway 端口收敛与 PG adapter 工作流只读能力、Runner 内部强制租约（D9 收口项，repo 原语已有并测）、run_api --backend pg 真实装配、API 审批以认证 principal 为 decided_by、并行两进程集成运行。
