@@ -418,7 +418,8 @@ class AfterSalesService:
         self._record("submit", "operation", op.operation_id, cmd.actor, before, OperationStatus.PENDING_APPROVAL)
         return op
 
-    def approve(self, cmd: ApproveCommand) -> Operation:
+    def approve(self, cmd: ApproveCommand, decided_by: Optional[str] = None) -> Operation:
+        # decided_by：上层认证 principal（供审计身份），领域裁决以角色与版本为准
         if cmd.actor != Role.APPROVER:
             raise AfterSalesError(AfterSalesErrorCode.PERMISSION_DENIED, "只有授权人员可以审批")
         op = self.get_operation(cmd.operation_id)
@@ -429,7 +430,8 @@ class AfterSalesService:
         self._record("approve", "operation", op.operation_id, cmd.actor, before, OperationStatus.APPROVED)
         return op
 
-    def reject(self, cmd: RejectCommand) -> Operation:
+    def reject(self, cmd: RejectCommand, decided_by: Optional[str] = None) -> Operation:
+        # decided_by：上层认证 principal（供审计身份），领域裁决以角色与版本为准
         if cmd.actor != Role.APPROVER:
             raise AfterSalesError(AfterSalesErrorCode.PERMISSION_DENIED, "只有授权人员可以审批")
         op = self.get_operation(cmd.operation_id)

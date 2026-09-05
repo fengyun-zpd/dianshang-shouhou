@@ -110,7 +110,7 @@ def test_pg_profile_http_full_flow_uses_pg_commands(client):
             {"k": "T1:create_refund:k-e2e"}).fetchone()
     engine.dispose()
     assert status == "executed"
-    assert n_approval == 1 and decided_by == "approver"
+    assert n_approval == 1 and decided_by == "approver-1"
     assert n_audit == 1
     assert idem[0] == "create_refund" and idem[1] == "k-e2e"
 

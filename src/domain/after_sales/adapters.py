@@ -152,11 +152,13 @@ class PgServiceFacade:
     def submit(self, cmd: SubmitCommand) -> Operation:
         return self._adapter.submit(self._operation_tenant(cmd.operation_id), cmd)
 
-    def approve(self, cmd: ApproveCommand) -> Operation:
-        return self._adapter.approve(self._operation_tenant(cmd.operation_id), cmd)
+    def approve(self, cmd: ApproveCommand, decided_by: Optional[str] = None) -> Operation:
+        return self._adapter.approve(self._operation_tenant(cmd.operation_id), cmd,
+                                     decided_by=decided_by)
 
-    def reject(self, cmd: RejectCommand) -> Operation:
-        return self._adapter.reject(self._operation_tenant(cmd.operation_id), cmd)
+    def reject(self, cmd: RejectCommand, decided_by: Optional[str] = None) -> Operation:
+        return self._adapter.reject(self._operation_tenant(cmd.operation_id), cmd,
+                                    decided_by=decided_by)
 
     def execute(self, cmd: ExecuteCommand) -> Operation:
         return self._adapter.execute(self._operation_tenant(cmd.operation_id), cmd)

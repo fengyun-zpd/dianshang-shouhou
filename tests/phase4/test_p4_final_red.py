@@ -47,13 +47,14 @@ def test_claim_thread_fingerprint_semantics_documented_and_enforced():
 
 # ---------- R5 ----------
 
-@red
 def test_api_approve_passes_identity_principal():
-    """API approve/reject 必须把认证 principal 传入审批（decided_by=approver-1 而非角色）。"""
+    """API approve/reject 把认证 principal 传入审批（decided_by=approver-1）。
+    行为断言见 tests/integration/test_api_pg_profile_live.py。"""
     src = _read("src/api/app.py")
     approve_idx = src.index("def approve(")
     block = src[approve_idx:approve_idx + 1200]
-    assert "principal" in block
+    assert "identity.principal" in block
+    assert "decided_by" in block
 
 
 # ---------- R6 ----------
