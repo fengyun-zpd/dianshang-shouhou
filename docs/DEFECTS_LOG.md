@@ -12,7 +12,7 @@
 | --- | --- | --- | --- | --- | --- |
 | D1 | 跨租户同 `order_id` 不互相覆盖 | **已修复（提交 阶段二）** | PASS `test_d1_*`（seed 跨租户同 order_id 显式拒绝 fail-closed 不静默覆盖；多租户共存权威语义由 PG `(tenant_id, order_id)` 主键承载） | P0 | 二 ✅ |
 | D2 | 跨租户同 `idempotency_key` 互不冲突 | **已修复（提交 阶段二）** | PASS `test_d2_*`（命令内幂等键统一为 `f"{tenant}:{key}"` 租户前缀规范键：store/审计/操作实体同值；跨租户同原始 key 各自成功、同租户幂等语义保留） | P0 | 二 ✅ |
-| D3 | 客户只能读取自己的工单 | 通过 | PASS `test_d3_*`；API `test_customer_only_own_ticket` | — | 保持 |
+| D3 | 客户只能读取自己的工单 | **已补强（提交 阶段三第一步）** | PASS `test_customer_cannot_read_other_customers_ticket` / `test_customer_can_read_own_ticket_only` / `test_d3_*`——API `GET /tickets/{id}` 增加 CUSTOMER 资源级授权（越权 → 403 `AFTER_SALES_PERMISSION_DENIED`，响应不含目标工单字段/电话）；原 `test_customer_only_own_ticket` 仅覆盖创建侧，不作为完整证据 | — | 三 ✅（资源授权） |
 | D4 | 审批与拒绝携带 `expected_version` | **已修复（提交 阶段二）** | PASS `test_d4_*`（`RejectCommand.decision_version`；过期版本拒绝→409 语义；拒绝亦推进版本） | P1 | 二 ✅ |
 | D5 | 并发审批只有一个成功 | 部分 | PASS `test_d5_*`（顺序同版本二次审批被拒=版本 CAS 有效）；**并发真双跑**缺操作级锁/DB CAS | P1 | 二（op 级锁/DB CAS） |
 | D6 | PG `with_order_lock` 业务期间保持锁 | **已修复（提交 阶段二）** | PASS `test_d6_*`（FOR UPDATE 事务保持至 yield 体完成；contender 阻塞至持有者提交 dt≈0.6s） | P0 | 二 ✅ |

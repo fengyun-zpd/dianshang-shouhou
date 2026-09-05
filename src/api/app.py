@@ -109,6 +109,11 @@ def get_ticket(ticket_id: str, request: Request,
     svc = _service(request)
     from src.agents import AfterSalesGateway
     ticket = AfterSalesGateway(svc).get_ticket_for(identity.tenant_id, ticket_id)
+    # 客户级资源授权（D3）：CUSTOMER 只能读取自己的工单；
+    # 越权读取返回 403（PERMISSION_DENIED），响应不含目标工单任何字段
+    if identity.role == Role.CUSTOMER and identity.customer_id != ticket.customer_id:
+        raise AfterSalesError(AfterSalesErrorCode.PERMISSION_DENIED,
+                              "客户只能访问自己的工单")
     return TicketOut(ticket_id=ticket.ticket_id, tenant_id=ticket.tenant_id,
                      order_id=ticket.order_id, customer_id=ticket.customer_id,
                      request_type=ticket.request_type.value, reason=ticket.reason,

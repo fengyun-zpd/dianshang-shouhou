@@ -289,3 +289,65 @@ def test_auth_identity_port_is_replaceable():
     assert ok.status_code == 201
     # 未注册凭据 → 401（端口统一拒绝）
     assert client.get("/api/tickets/TKT-1", headers=_h("no-such-token")).status_code == 401
+
+
+# ---------- 客户级资源授权（D3 补强：同租户跨客户读取必须拒绝且不泄露字段） ----------
+
+def _make_two_customer_client():
+    """同租户 T1 两个客户（C1/C2 各有订单与工单）的 API 客户端。"""
+    from src.domain.after_sales import Order, OrderItem, OrderStatus
+    svc = service_with_policies(*POL)
+    svc.seed_order(Order(
+        order_id="ORD-C1", tenant_id="T1", customer_id="C1",
+        status=OrderStatus.DELIVERED, paid_amount=Decimal("100.00"),
+        items=[OrderItem(sku="S1", name="x", quantity=1, unit_price=Decimal("100.00"))],
+        days_since_sign=1,
+    ))
+    svc.seed_order(Order(
+        order_id="ORD-C2", tenant_id="T1", customer_id="C2",
+        status=OrderStatus.DELIVERED, paid_amount=Decimal("200.00"),
+        items=[OrderItem(sku="S2", name="y", quantity=1, unit_price=Decimal("200.00"))],
+        days_since_sign=1,
+    ))
+    reg = ApiTokenRegistry()
+    reg.register("tok-c1", ApiIdentity("cust-1", "T1", Role.CUSTOMER, customer_id="C1"))
+    reg.register("tok-c2", ApiIdentity("cust-2", "T1", Role.CUSTOMER, customer_id="C2"))
+    client = TestClient(create_app(svc, reg))
+    # 各客户创建自己的工单
+    r1 = client.post("/api/tickets", json={
+        "order_id": "ORD-C1", "customer_id": "C1", "request_type": "refund",
+        "reason": "破损 电话 13800000001", "reason_tags": ["damaged"],
+        "idempotency_key": "tk-c1b",
+    }, headers=_h("tok-c1"))
+    r2 = client.post("/api/tickets", json={
+        "order_id": "ORD-C2", "customer_id": "C2", "request_type": "refund",
+        "reason": "破损 电话 13900000002", "reason_tags": ["damaged"],
+        "idempotency_key": "tk-c2b",
+    }, headers=_h("tok-c2"))
+    assert r1.status_code == 201 and r2.status_code == 201
+    return client, r1.json()["ticket_id"], r2.json()["ticket_id"]
+
+
+def test_customer_cannot_read_other_customers_ticket():
+    """D3 RED：同租户 C1 读取 C2 工单 → 403，且不泄露 C2 的订单号/原因/金额等字段。"""
+    client, t1, t2 = _make_two_customer_client()
+    resp = client.get(f"/api/tickets/{t2}", headers=_h("tok-c1"))
+    assert resp.status_code == 403
+    assert resp.json().get("code") == "AFTER_SALES_PERMISSION_DENIED"
+    body = resp.text
+    assert "ORD-C2" not in body
+    assert "13900000002" not in body          # C2 的联系电话绝不外泄
+    assert "13800000001" not in body          # C1 自己的敏感信息也不应随错误暴露
+
+
+def test_customer_can_read_own_ticket_only():
+    """D3 正例：客户可读自己的工单；同租户他人工单读不到（即使知道 id）。"""
+    client, t1, t2 = _make_two_customer_client()
+    own = client.get(f"/api/tickets/{t1}", headers=_h("tok-c1"))
+    assert own.status_code == 200
+    assert own.json()["ticket_id"] == t1
+    assert "ORD-C1" in own.text
+    # 反向：C2 读 C1 的工单同样拒绝
+    other = client.get(f"/api/tickets/{t1}", headers=_h("tok-c2"))
+    assert other.status_code == 403
+    assert "ORD-C1" not in other.text
