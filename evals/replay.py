@@ -1,10 +1,26 @@
-"""黄金集回放器（阶段 4）：确定性回归评测。
+"""黄金集回放器（阶段 4 / 阶段 C1）：确定性回归评测（memory 与 PG profile）。
 
 用法（项目根，D 盘 .venv）：
-    .venv\\Scripts\\python.exe evals\\replay.py
+    .venv\\Scripts\\python.exe evals\\replay.py --dataset golden_v1            # memory（默认）
+    .venv\\Scripts\\python.exe evals\\replay.py --dataset golden_v1 --profile pg --pg-url <url>
 
-流程：固定种子构造领域服务与 RAG → 逐条驱动 WorkflowRunner（interrupt 处自动按用例
-提交审批决定并 resume）→ 与用例期望做确定性断言 → 生成报告 evals/reports/golden_v1_report.md。
+profile 语义与边界：
+- --profile memory（默认）：内存 AfterSalesService + MemorySaver checkpoint + 模拟外部执行；
+  输出/数字即项目既有基线（golden_v1 11/11、golden_v2 120/120），本文件 pg 分支不得改动它。
+- --profile pg：真实 PG 事实源回放。装配链（失败 → RuntimeError/退出码非 0，绝不回退 memory）：
+  require_postgres_ready(url)（不可达 / schema≠0005 → RuntimeError）→ 每用例用
+  src/repo/schema.sql 重建全部业务表（隔离，含 workflow_threads/entity_seq）→
+  PostgresAfterSalesRepository → PgCommandService → PgCommandAdapter（完整
+  AfterSalesApplicationPort）→ open_sqlite_checkpointer(--checkpoint 或 mkstemp 临时唯一文件）
+  → WorkflowRunner(lease_repo=repo, owner_id="replay-pg", lease_duration_s=60) 强制 D9 DB 租约。
+  PG seed 等价层把 golden 用例的订单+政策以固定同构落库（order_items 明细、
+  policies.effective_from='2020-01-01'/version=1 等），使领域事实与 memory profile 等价。
+  连接串取 --pg-url，缺省读 DATABASE_URL；两者皆无 → stderr 报错退出码非 0。
+  thread_id 带 pg-{run_token} 前缀（run_token 每次运行随机）区分 profile 并防 checkpoint 冲突。
+
+流程：固定种子构造领域事实（memory 内存 / pg PostgreSQL）与 RAG → 逐条驱动 WorkflowRunner
+（interrupt 处自动按用例提交审批决定并 resume）→ 与用例期望做确定性断言 →
+生成报告 evals/reports/golden_v1_report.md（run_mode 如实标注 memory 或 pg）。
 
 报告必填（宪法第七条）：数据集版本、模型版本（当前无 LLM → N/A）、Prompt 版本（N/A）、
 运行模式、合成数据边界；安全不变量单独报告。
@@ -12,11 +28,15 @@
 from __future__ import annotations
 
 import json
+import os
 import statistics
 import sys
+import tempfile
 import time
 from decimal import Decimal
 from pathlib import Path
+from typing import Optional
+from uuid import uuid4
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -40,9 +60,20 @@ DEFAULT_RAG_DOCS = [
 
 # ---------- 固定种子夹具 ----------
 
-def build_service(case: dict) -> AfterSalesService:
-    svc = AfterSalesService()
+def _case_seed_spec(case: dict) -> tuple[dict, list[tuple]]:
+    """从 golden 用例解析订单与政策 seed 规格（memory 与 pg profile 共用的唯一事实规格）。
+
+    订单：DEFAULT_ORDER 与 case.order 覆盖合并；政策：DEFAULT_POLICIES + case.extra_policies。
+    合成数据固定同构（宪法第二条）：本函数只做字段搬运，不做任何业务判断。
+    """
     o = {**DEFAULT_ORDER, **(case.get("order") or {})}
+    policies = list(DEFAULT_POLICIES) + [tuple(p) for p in (case.get("extra_policies") or [])]
+    return o, policies
+
+
+def build_service(case: dict) -> AfterSalesService:
+    o, policies = _case_seed_spec(case)
+    svc = AfterSalesService()
     svc.seed_order(Order(
         order_id=o["order_id"], tenant_id=o["tenant_id"], customer_id=o["customer_id"],
         status=OrderStatus(o["status"]) if isinstance(o["status"], str) else o["status"],
@@ -50,7 +81,6 @@ def build_service(case: dict) -> AfterSalesService:
         items=[OrderItem(sku="SKU-1", name="评测商品", quantity=1, unit_price=Decimal(o["paid"]))],
         days_since_sign=int(o["days"]),
     ))
-    policies = list(DEFAULT_POLICIES) + [tuple(p) for p in (case.get("extra_policies") or [])]
     for pid, tags, ratio, window in policies:
         svc.seed_policy(PolicyRule(
             policy_id=pid, tenant_id=o["tenant_id"], request_type=RequestType.REFUND,
@@ -72,6 +102,147 @@ def build_rag() -> PolicyStore:
     return store
 
 
+# ---------- PG profile 装配（阶段 C1：真实 PostgreSQL 事实源回放） ----------
+
+PG_PROFILE_OWNER = "replay-pg"
+PG_PROFILE_LEASE_S = 60
+_PG_RESET_TABLES = ("workflow_threads", "audit_events", "idempotency_records",
+                    "approval_decisions", "refund_operations", "tickets", "orders",
+                    "policies", "order_items", "entity_seq")  # DROP 依赖序（子表先于父表）
+
+
+def _pg_run_mode_text(url: str) -> str:
+    """pg profile 报告 run_mode 文本：从连接串解析主机/库，schema=0005 由门禁保证。"""
+    try:
+        from sqlalchemy.engine import make_url
+        u = make_url(url)
+        loc = f"{u.host or 'localhost'}:{u.port or 5432}/{u.database}"
+    except Exception:  # noqa: BLE001  解析失败不阻断报告，退化为原样连接串
+        loc = url
+    return (f"本地 PostgreSQL 仓储（{loc}，schema=0005）+ SQLite checkpoint + "
+            "WorkflowRunner 强制 DB 租约 + 模拟外部执行")
+
+
+class PgReplayProfile:
+    """pg profile 评测环境：门禁装配 + 每用例 schema 重建 + 订单/政策 seed 等价层。
+
+    装配链（失败 → RuntimeError，绝不回退 memory）：
+    require_postgres_ready(url) → PostgresAfterSalesRepository → PgCommandService →
+    PgCommandAdapter（完整 AfterSalesApplicationPort）→ open_sqlite_checkpointer
+    （--checkpoint 或 mkstemp 临时唯一文件）→ WorkflowRunner(lease_repo=repo,
+    owner_id="replay-pg", lease_duration_s=60) 强制 D9 workflow_threads DB 租约。
+
+    隔离与等价：
+    - prepare_case 每用例 DROP+CREATE 全部业务表（含 workflow_threads/entity_seq，
+      序列从 1 起、无残留审批/幂等/审计），使 PG 领域事实与 memory profile 等价
+      （同用例同预期）；
+    - seed 等价层：orders/order_items/policies 固定同构（OrderRow 含明细由
+      order_items 落库；PolicyRow effective_from='2020-01-01'/version=1）；
+    - thread_id = pg-{run_token}-eval-{case_id}：前缀区分 profile、run_token 每次
+      运行随机 → 显式复用同一 --checkpoint 文件也不会命中旧线程 checkpoint。
+    - refunded(tenant, order_id) = repo.executed_sum_for_order（status='executed'
+      累计），与 memory svc.refunded_amount 同语义。
+    """
+
+    def __init__(self, url: str, checkpoint_path: Optional[str] = None,
+                 owner_id: str = PG_PROFILE_OWNER,
+                 lease_duration_s: int = PG_PROFILE_LEASE_S,
+                 run_token: Optional[str] = None):
+        from sqlalchemy import create_engine, text  # noqa: PLC0415
+
+        from src.agents.checkpoint import open_sqlite_checkpointer  # noqa: PLC0415
+        from src.api.runtime import require_postgres_ready  # noqa: PLC0415
+        from src.domain.after_sales.adapters import PgCommandAdapter  # noqa: PLC0415
+        from src.domain.after_sales.pg_commands import PgCommandService  # noqa: PLC0415
+        from src.repo import PostgresAfterSalesRepository  # noqa: PLC0415
+
+        require_postgres_ready(url)      # 不可达 / schema≠0005 → RuntimeError（no fallback）
+        self.url = url
+        self.run_mode = _pg_run_mode_text(url)
+        self._schema = (ROOT / "src" / "repo" / "schema.sql").read_text(encoding="utf-8")
+        self._engine = create_engine(url)
+        self._text = text
+        self.repo = PostgresAfterSalesRepository(url)
+        self.backend = PgCommandAdapter(PgCommandService(self.repo), self.repo)
+        if checkpoint_path:
+            self._cp_path = str(checkpoint_path)
+        else:
+            fd, path = tempfile.mkstemp(prefix=f"replay-pg-ckpt-{os.getpid()}-",
+                                        suffix=".sqlite")
+            os.close(fd)
+            self._cp_path = path
+        self._cp = open_sqlite_checkpointer(self._cp_path)
+        self._owner_id = owner_id
+        self._lease_duration_s = lease_duration_s
+        self._run_token = run_token or uuid4().hex[:8]
+        self.reset_schema()              # 每库跑前重建全部表一次（隔离基准）
+
+    # ---------- schema 重建与 seed 等价层 ----------
+
+    def reset_schema(self) -> None:
+        """DROP（依赖序）+ 执行 schema.sql 重建全部表（alembic_version 不受影响）。"""
+        with self._engine.begin() as conn:
+            for table in _PG_RESET_TABLES:
+                conn.execute(self._text(f"DROP TABLE IF EXISTS {table} CASCADE"))
+            conn.execute(self._text(self._schema))
+
+    def seed_case(self, case: dict) -> None:
+        """PG seed 等价层：把用例订单+政策固定同构落库（与 memory build_service 同事实）。"""
+        from src.repo import OrderItemRow, OrderRow, PolicyRow  # noqa: PLC0415
+        o, policies = _case_seed_spec(case)
+        self.repo.insert_order(OrderRow(
+            tenant_id=o["tenant_id"], order_id=o["order_id"], customer_id=o["customer_id"],
+            status=o["status"], paid_amount=Decimal(o["paid"]),
+            days_since_sign=int(o["days"]),
+        ))
+        self.repo.insert_order_item(OrderItemRow(
+            tenant_id=o["tenant_id"], order_id=o["order_id"], sku="SKU-1",
+            name="评测商品", quantity=1, unit_price=Decimal(o["paid"]),
+        ))
+        for pid, tags, ratio, window in policies:
+            self.repo.insert_policy(PolicyRow(
+                tenant_id=o["tenant_id"], policy_id=pid, request_type="refund",
+                reason_tags=json.dumps(list(tags), ensure_ascii=False),
+                window_days=int(window), refund_ratio=Decimal(str(ratio)),
+                effective_from="2020-01-01", version=1,
+            ))
+
+    def prepare_case(self, case: dict) -> None:
+        """每用例隔离：重建全部表 → seed 该用例订单/政策。"""
+        self.reset_schema()
+        self.seed_case(case)
+
+    # ---------- 只读事实（与内存 svc.refunded_amount 同语义） ----------
+
+    def refunded(self, tenant_id: str, order_id: str) -> Decimal:
+        return self.repo.executed_sum_for_order(tenant_id, order_id)
+
+    # ---------- 运行器 / 线程 / 生命周期 ----------
+
+    def thread_id(self, case_id: str) -> str:
+        """pg 前缀 + 运行 token：区分 profile 并防 --checkpoint 复用撞旧线程。"""
+        return f"pg-{self._run_token}-eval-{case_id}"
+
+    def new_runner(self):
+        """每用例新 WorkflowRunner（backend/checkpoint 共享；图/租约登记状态全新）。"""
+        from src.agents import WorkflowRunner  # noqa: PLC0415
+        return WorkflowRunner(self.backend, checkpointer=self._cp,
+                              lease_repo=self.repo, owner_id=self._owner_id,
+                              lease_duration_s=self._lease_duration_s)
+
+    def close(self) -> None:
+        """释放 SQLite checkpointer 连接与 SQLAlchemy 连接池（幂等）。"""
+        try:
+            from src.agents.checkpoint import close_sqlite_checkpointer  # noqa: PLC0415
+            close_sqlite_checkpointer(self._cp)
+        finally:
+            self._engine.dispose()
+
+    @property
+    def cp_path(self) -> str:
+        return self._cp_path
+
+
 # ---------- 单条回放 ----------
 
 def _observe(runner, thread_id: str) -> dict:
@@ -81,13 +252,40 @@ def _observe(runner, thread_id: str) -> dict:
             "intent": st.get("intent"), "next_action": st.get("next_action")}
 
 
-def run_case(case: dict, runner_factory=None) -> dict:
-    svc = build_service(case)
-    if runner_factory is None:
-        runner = WorkflowRunner(MemoryAdapter(svc))
+def run_case(case: dict, runner_factory=None,
+             profile: Optional["PgReplayProfile"] = None) -> dict:
+    """逐条回放（memory 与 pg profile 共用，断言/返回结构完全一致）。
+
+    - profile=None（默认）：内存后端，行为与既有基线完全一致（golden_v1 11/11、
+      golden_v2 120/120）；
+    - profile 提供：prepare_case 重建 PG schema 并 seed 等价事实 → PgCommandAdapter
+      后端 + SQLite 持久 checkpoint + D9 租约驱动；领域读取（refunded 等）经
+      repo/port 查同语义事实，与 memory 数值可比。
+    """
+    tenant = case["tenant"]
+    if profile is not None:
+        profile.prepare_case(case)      # PG：重建全部业务表 + seed 订单/政策（等价层）
+        backend = profile.backend
+
+        def _build_runner():
+            return (profile.new_runner() if runner_factory is None
+                    else runner_factory(backend))
+
+        def _refunded(order_id: str) -> Decimal:
+            return profile.refunded(tenant, order_id)
+        thread = profile.thread_id(case["id"])
     else:
-        runner = runner_factory(MemoryAdapter(svc))
-    thread = f"eval-{case['id']}"
+        svc = build_service(case)
+        backend = MemoryAdapter(svc)
+
+        def _build_runner():
+            return WorkflowRunner(backend) if runner_factory is None else runner_factory(backend)
+
+        def _refunded(order_id: str) -> Decimal:
+            return svc.refunded_amount(order_id)
+        thread = f"eval-{case['id']}"
+    runner = _build_runner()
+    order_id = (case.get("order") or {}).get("order_id", DEFAULT_ORDER["order_id"])
     started = time.monotonic()
     detail: list[str] = []
     forged_ignored = False
@@ -106,7 +304,7 @@ def run_case(case: dict, runner_factory=None) -> dict:
             }
         supp = case.get("supplement")
         if supp:
-            r1 = runner.resume(thread, payload=supp)
+            r1 = runner.resume(thread, payload=supp, tenant_id=tenant)
 
     if case.get("forged_resume_first") and (r1.waiting_approval or _observe(runner, thread)["outcome"] is None):
         rf = runner.resume(thread, payload="approved")  # 伪造审批恢复
@@ -117,8 +315,8 @@ def run_case(case: dict, runner_factory=None) -> dict:
         # 之后按用例提交真实决定
         approval = case.get("approval")
         if approval:
-            runner.submit_decision(r1.state["operation_id"], approval)
-            r1 = runner.resume(thread)
+            runner.submit_decision(r1.state["operation_id"], approval, tenant_id=tenant)
+            r1 = runner.resume(thread, tenant_id=tenant)
 
     if (r1.waiting_approval or _observe(runner, thread)["next_action"] == "wait_approval") \
             and not r1.waiting_clarify:
@@ -129,8 +327,8 @@ def run_case(case: dict, runner_factory=None) -> dict:
             op_id = r1.state.get("operation_id")
             if op_id is None:
                 op_id = _observe(runner, thread) and None
-            runner.submit_decision(op_id, approval)
-            r1 = runner.resume(thread)
+            runner.submit_decision(op_id, approval, tenant_id=tenant)
+            r1 = runner.resume(thread, tenant_id=tenant)
 
     # 重复请求（同 thread 再次 start）—— 记录首次结果，避免被第二次覆盖
     repeat_outcome = None
@@ -146,14 +344,14 @@ def run_case(case: dict, runner_factory=None) -> dict:
     pre_refunded = None
     post_refunded = None
     if case.get("reconcile_after_unknown"):
-        pre_refunded = str(svc.refunded_amount("ORD-1"))
+        pre_refunded = str(_refunded(order_id))
         op_id = r1.state["operation_id"]
-        runner.reconcile_unknown(op_id, case["reconcile_after_unknown"])
-        post_refunded = str(svc.refunded_amount("ORD-1"))
+        runner.reconcile_unknown(op_id, case["reconcile_after_unknown"], tenant_id=tenant)
+        post_refunded = str(_refunded(order_id))
 
     final = _observe(runner, thread)
     final_state = runner.get_state(thread).state or {}
-    current_refunded = str(svc.refunded_amount("ORD-1"))
+    current_refunded = str(_refunded(order_id))
     # 主 outcome：重复请求取首次完成结果，否则取线程最终结果
     outcome = first_outcome if first_outcome is not None else final.get("outcome")
     if case.get("reconcile_after_unknown"):
@@ -288,20 +486,53 @@ def rag_checks() -> dict:
 # ---------- 报告 ----------
 
 def main() -> int:
-    """默认跑 golden_v1；可用 --dataset golden_v2 跑 120 条大集。"""
+    """默认 memory 跑 golden_v1；可选 --profile pg（真实 PG 事实源）与更大数据集。"""
     import argparse
-    parser = argparse.ArgumentParser(description="黄金集回放")
+    parser = argparse.ArgumentParser(
+        description="黄金集回放：确定性回归评测（memory 内存仓储 / pg PostgreSQL 事实源）")
     parser.add_argument("--dataset", default="golden_v1")
+    parser.add_argument("--profile", choices=("memory", "pg"), default="memory",
+                        help="回放 profile：memory（默认，内存仓储+MemorySaver，既有行为不变）"
+                             "或 pg（本地 PostgreSQL 事实源：require_postgres_ready 门禁、"
+                             "schema.sql 每用例重建、PgCommandAdapter + SQLite 持久 checkpoint + "
+                             "WorkflowRunner 强制 DB 租约；失败即报错退出，绝不回退 memory）")
+    parser.add_argument("--pg-url", default=None,
+                        help="PostgreSQL 连接串（pg profile 必需；缺省读 DATABASE_URL 环境变量）")
+    parser.add_argument("--checkpoint", default=None,
+                        help="LangGraph 持久 checkpoint 的 SQLite 文件路径（pg profile 可选；"
+                             "缺省生成系统临时目录唯一文件。checkpoint 只存流程恢复状态，"
+                             "不存业务最终真相）")
     args = parser.parse_args()
-    return _run(args.dataset)
+    pg_url = args.pg_url or os.environ.get("DATABASE_URL") or None
+    return _run(args.dataset, profile=args.profile, pg_url=pg_url,
+                checkpoint=args.checkpoint)
 
 
-def _run(dataset: str) -> int:
+def _run(dataset: str, profile: str = "memory",
+         pg_url: Optional[str] = None, checkpoint: Optional[str] = None) -> int:
     root = ROOT
     golden_file = root / "evals" / "golden" / f"{dataset}.json"
     cases = json.loads(golden_file.read_text(encoding="utf-8"))
 
-    results = [run_case(c) for c in cases]
+    pg_profile: Optional[PgReplayProfile] = None
+    if profile == "pg":
+        if not pg_url:
+            print("--profile pg 需要 --pg-url 或 DATABASE_URL（PostgreSQL 连接串）；"
+                  "缺失时拒绝运行，绝不回退 memory。", file=sys.stderr)
+            return 2
+        try:
+            pg_profile = PgReplayProfile(pg_url, checkpoint_path=checkpoint)
+        except RuntimeError as e:
+            print(f"pg profile 装配失败（拒绝回退 memory）：{e}", file=sys.stderr)
+            return 1
+        print(f"pg profile 就绪：{pg_profile.run_mode}")
+        print(f"  PostgreSQL={pg_profile.url}；SQLite checkpoint={pg_profile.cp_path}；"
+              f"lease owner={PG_PROFILE_OWNER}")
+    try:
+        results = [run_case(c, profile=pg_profile) for c in cases]
+    finally:
+        if pg_profile is not None:
+            pg_profile.close()
     passed = [r for r in results if r["pass"]]
     failed = [r for r in results if not r["pass"]]
 
@@ -321,7 +552,8 @@ def _run(dataset: str) -> int:
         "dataset_version": dataset,
         "model": "N/A（当前无 LLM 运行时，确定性规则工作流）",
         "prompt_version": "N/A",
-        "run_mode": "本地内存仓储 + MemorySaver checkpoint + 模拟外部执行",
+        "run_mode": (pg_profile.run_mode if pg_profile is not None
+                     else "本地内存仓储 + MemorySaver checkpoint + 模拟外部执行"),
         "synthetic_boundary": "全部为固定随机种子合成数据，不代表真实企业收益",
         "total": len(cases), "passed": len(passed), "failed": len(failed),
         "task_completion_rate": round(len(passed) / len(cases), 4),
