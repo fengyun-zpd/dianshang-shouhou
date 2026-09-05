@@ -1,3 +1,6 @@
+# CI 模板（未在本仓库真实运行：本地仓库尚未推送、无 CI runner——不冒充已运行）。
+# 设计：分层回归 unit/integration/e2e/property/security；PostgreSQL 以服务注入，
+# integration 层真实连库；无 PostgreSQL 时集成测试自动 skip 并标注"数据库集成未实测"。
 name: ci
 
 on:
@@ -11,12 +14,36 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.12"]
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: opspilot
+          POSTGRES_PASSWORD: opspilot
+          POSTGRES_DB: opspilot
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U opspilot"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Run layered regression
+      - name: Install dependencies (D-drive mirror convention)
         run: |
-          python -m pip install pytest
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+      - name: Apply Alembic migrations (PostgreSQL)
+        env:
+          DATABASE_URL: postgresql+psycopg2://opspilot:opspilot@127.0.0.1:5433/opspilot
+        run: |
+          python -m alembic -c alembic.ini upgrade head
+      - name: Layered regression (unit / integration / e2e / property / security)
+        env:
+          DATABASE_URL: postgresql+psycopg2://opspilot:opspilot@127.0.0.1:5433/opspilot
+        run: |
           python scripts/run_tests.py
