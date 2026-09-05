@@ -12,6 +12,8 @@ import pytest
 from sqlalchemy import create_engine, text
 
 from src.repo import (
+    ApprovalRow,
+    AuditRow,
     IdemRow,
     OperationRow,
     OptimisticLockError,
@@ -192,3 +194,58 @@ def test_live_concurrent_same_idem_key_single_winner():
         t.join()
     assert sorted(outcomes) == ["conflict", "ok"]
     assert repo.get_idem("tenant-a", "same-key").payload_hash == "h1"
+
+
+# ---------- unit_of_work：命令级原子写（同一事务跨表；无部分提交） ----------
+
+def test_live_unit_of_work_atomic_commit_multitable(repo):
+    """作用域内 订单+工单+操作+审计+审批+幂等 一次提交全部可见（真实单事务）。"""
+    with repo.unit_of_work():
+        repo.insert_order(_order())
+        repo.insert_ticket(TicketRow("tenant-a", "TKT-1", "ORD-1", "C1", "refund", "破损", "open"))
+        repo.insert_operation(_op("OP-1", "60.00"))
+        repo.insert_audit(AuditRow("tenant-a", "create_refund", "operation", "OP-1",
+                                   "agent", None, "draft", idempotency_key="k-OP-1"))
+        repo.insert_approval(ApprovalRow("tenant-a", "OP-1", "approved", "同意", "approver", 1))
+        repo.insert_idem(IdemRow("tenant-a", "k-OP-1", "h1", "OP-1"))
+    assert repo.get_order("tenant-a", "ORD-1").paid_amount == Decimal("100.00")
+    assert repo.get_ticket("tenant-a", "TKT-1").status == "open"
+    assert repo.get_operation("tenant-a", "OP-1").status == "approved"
+    assert len(repo.audit_of("tenant-a", "operation", "OP-1")) == 1
+    assert len(repo.approvals_of("tenant-a", "OP-1")) == 1
+    assert repo.get_idem("tenant-a", "k-OP-1").refund_id == "OP-1"
+
+
+def test_live_unit_of_work_rollback_no_partial_commit(repo):
+    """作用域内中途异常 → 整单位回滚：任何表都无部分写入（无部分提交）。"""
+    with pytest.raises(ValueError):
+        with repo.unit_of_work():
+            repo.insert_order(_order())
+            repo.insert_audit(AuditRow("tenant-a", "create_ticket", "ticket", "TKT-1",
+                                       "agent", None, "open"))
+            raise ValueError("模拟命令中途失败")
+    engine = create_engine(DATABASE_URL)
+    with engine.connect() as conn:
+        orders = conn.execute(text("SELECT COUNT(*) FROM orders")).scalar()
+        audits = conn.execute(text("SELECT COUNT(*) FROM audit_events")).scalar()
+    engine.dispose()
+    assert orders == 0 and audits == 0
+
+
+def test_live_unit_of_work_scope_reads_own_writes(repo):
+    """作用域内读复用同一连接：可读到本事务未提交写入（同命令内校验需要）。"""
+    with repo.unit_of_work():
+        repo.insert_order(_order())
+        repo.insert_ticket(TicketRow("tenant-a", "TKT-1", "ORD-1", "C1", "refund", "破损", "open"))
+        assert repo.get_order("tenant-a", "ORD-1") is not None      # 未提交也可读
+        assert repo.get_ticket("tenant-a", "TKT-1").status == "open"
+    # 作用域外（新连接）同样可见（已提交）
+    assert repo.get_order("tenant-a", "ORD-1") is not None
+
+
+def test_live_unit_of_work_nested_rejected(repo):
+    """不允许嵌套：作用域内再次进入 → RuntimeError（防事务错乱）。"""
+    with pytest.raises(RuntimeError):
+        with repo.unit_of_work():
+            with repo.unit_of_work():
+                pass

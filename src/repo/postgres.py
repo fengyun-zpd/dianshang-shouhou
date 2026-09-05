@@ -8,10 +8,14 @@
 - try_execute_refund：在单个事务内 SELECT … FOR UPDATE 锁订单行 →
   读取 executed 累计 → 容量校验 → 插入 executed 操作；行锁串行化同订单并发执行；
 - idempotency_records 主键 (tenant_id, idem_key) → 数据库唯一约束；
-- 乐观版本：update_*_versioned 以 WHERE version=expected 执行，rowcount=0 → 冲突。
+- 乐观版本：update_*_versioned 以 WHERE version=expected 执行，rowcount=0 → 冲突；
+- unit_of_work：命令级原子写作用域——进入后本实例全部读写方法复用同一连接与事务
+  （thread-local），正常退出提交、异常回滚（无部分提交）；不允许嵌套；
+  作用域内请勿使用独立开事务的行锁方法（lock_order_for_update / with_order_lock）。
 """
 from __future__ import annotations
 
+import threading
 from contextlib import contextmanager
 from decimal import Decimal
 from typing import Iterator, Optional
@@ -35,15 +39,48 @@ from .interfaces import (
 class PostgresAfterSalesRepository(AfterSalesRepository):
     def __init__(self, url: str):
         self._engine = create_engine(url, pool_pre_ping=True)
+        self._tl = threading.local()  # unit_of_work 作用域：conn（连接）与 active（嵌套检测）
 
     # ---------- 事务 ----------
     def transaction(self):
         return self._engine.begin()
 
+    @contextmanager
+    def unit_of_work(self) -> Iterator[None]:
+        """命令级原子写作用域：作用域内所有读写复用同一连接与事务。
+        正常退出 commit；异常 rollback（无部分提交）；嵌套直接报错。"""
+        if getattr(self._tl, "active", False):
+            raise RuntimeError("unit_of_work 不允许嵌套（请勿在作用域内再次进入）")
+        conn = self._engine.connect()
+        tx = conn.begin()
+        self._tl.conn = conn
+        self._tl.active = True
+        try:
+            yield
+            tx.commit()
+        except BaseException:
+            tx.rollback()
+            raise
+        finally:
+            self._tl.active = False
+            self._tl.conn = None
+            conn.close()
+
+    @contextmanager
+    def _tx(self) -> Iterator:
+        """方法级连接上下文：作用域内返回共享连接（事务由外层 unit_of_work 收尾）；
+        作用域外等价于自开事务（commit/rollback）。"""
+        conn = getattr(self._tl, "conn", None)
+        if conn is not None:
+            yield conn
+            return
+        with self._engine.begin() as conn:
+            yield conn
+
     def lock_order_for_update(self, tenant_id: str, order_id: str) -> Optional[OrderRow]:
         """以 FOR UPDATE 读订单行（单语句事务内持锁，随即释放）；
         长时间持锁的原子容量执行请使用 try_execute_refund / with_order_lock。"""
-        with self._engine.begin() as conn:
+        with self._tx() as conn:
             row = conn.execute(text(
                 "SELECT tenant_id, order_id, customer_id, status, paid_amount, "
                 "days_since_sign, version FROM orders "
@@ -72,7 +109,7 @@ class PostgresAfterSalesRepository(AfterSalesRepository):
 
     # ---------- orders ----------
     def get_order(self, tenant_id: str, order_id: str) -> Optional[OrderRow]:
-        with self._engine.connect() as conn:
+        with self._tx() as conn:
             row = conn.execute(text(
                 "SELECT tenant_id, order_id, customer_id, status, paid_amount, "
                 "days_since_sign, version FROM orders WHERE tenant_id=:t AND order_id=:o"
@@ -80,14 +117,14 @@ class PostgresAfterSalesRepository(AfterSalesRepository):
             return self._order_from(row) if row else None
 
     def insert_order(self, row: OrderRow) -> None:
-        with self._engine.begin() as conn:
+        with self._tx() as conn:
             conn.execute(text(
                 "INSERT INTO orders (tenant_id, order_id, customer_id, status, "
                 "paid_amount, days_since_sign, version) VALUES (:t,:o,:c,:s,:a,:d,:v)"
             ), self._order_params(row))
 
     def update_order_versioned(self, row: OrderRow, expected_version: int) -> None:
-        with self._engine.begin() as conn:
+        with self._tx() as conn:
             res = conn.execute(text(
                 "UPDATE orders SET status=:s, version=version+1 WHERE tenant_id=:t "
                 "AND order_id=:o AND version=:ev"
@@ -97,7 +134,7 @@ class PostgresAfterSalesRepository(AfterSalesRepository):
 
     # ---------- tickets ----------
     def insert_ticket(self, row: TicketRow) -> None:
-        with self._engine.begin() as conn:
+        with self._tx() as conn:
             conn.execute(text(
                 "INSERT INTO tickets (tenant_id, ticket_id, order_id, customer_id, "
                 "request_type, reason, status, resolution, version) "
@@ -105,7 +142,7 @@ class PostgresAfterSalesRepository(AfterSalesRepository):
             ), {**self._ticket_params(row)})
 
     def get_ticket(self, tenant_id: str, ticket_id: str) -> Optional[TicketRow]:
-        with self._engine.connect() as conn:
+        with self._tx() as conn:
             row = conn.execute(text(
                 "SELECT tenant_id, ticket_id, order_id, customer_id, request_type, "
                 "reason, status, resolution, version FROM tickets "
@@ -115,7 +152,7 @@ class PostgresAfterSalesRepository(AfterSalesRepository):
 
     # ---------- refund_operations ----------
     def insert_operation(self, row: OperationRow) -> None:
-        with self._engine.begin() as conn:
+        with self._tx() as conn:
             conn.execute(text(
                 "INSERT INTO refund_operations (tenant_id, operation_id, ticket_id, order_id, "
                 "op_type, amount, status, idempotency_key, created_by, version, "
@@ -124,7 +161,7 @@ class PostgresAfterSalesRepository(AfterSalesRepository):
             ), self._operation_params(row))
 
     def get_operation(self, tenant_id: str, operation_id: str) -> Optional[OperationRow]:
-        with self._engine.connect() as conn:
+        with self._tx() as conn:
             row = conn.execute(text(
                 "SELECT tenant_id, operation_id, ticket_id, order_id, op_type, amount, "
                 "status, idempotency_key, created_by, version, decision_version, executed "
@@ -133,7 +170,7 @@ class PostgresAfterSalesRepository(AfterSalesRepository):
             return self._operation_from(row) if row else None
 
     def update_operation_versioned(self, row: OperationRow, expected_version: int) -> None:
-        with self._engine.begin() as conn:
+        with self._tx() as conn:
             res = conn.execute(text(
                 "UPDATE refund_operations SET status=:s, executed=:ex, version=version+1 "
                 "WHERE tenant_id=:t AND operation_id=:op AND version=:ev"
@@ -143,7 +180,7 @@ class PostgresAfterSalesRepository(AfterSalesRepository):
                 raise OptimisticLockError(f"操作 {row.operation_id} 版本冲突")
 
     def executed_sum_for_order(self, tenant_id: str, order_id: str) -> Decimal:
-        with self._engine.connect() as conn:
+        with self._tx() as conn:
             value = conn.execute(text(
                 "SELECT COALESCE(SUM(amount), 0) FROM refund_operations "
                 "WHERE tenant_id=:t AND order_id=:o AND status='executed'"
@@ -152,7 +189,7 @@ class PostgresAfterSalesRepository(AfterSalesRepository):
 
     def try_execute_refund(self, tenant_id: str, order_id: str, operation: OperationRow) -> bool:
         """单事务：FOR UPDATE 锁订单 → 容量校验 → 插入 executed 操作。并发安全。"""
-        with self._engine.begin() as conn:
+        with self._tx() as conn:
             order = conn.execute(text(
                 "SELECT paid_amount FROM orders WHERE tenant_id=:t AND order_id=:o FOR UPDATE"
             ), {"t": tenant_id, "o": order_id}).fetchone()
@@ -175,7 +212,7 @@ class PostgresAfterSalesRepository(AfterSalesRepository):
 
     # ---------- approval_decisions ----------
     def insert_approval(self, row: ApprovalRow) -> None:
-        with self._engine.begin() as conn:
+        with self._tx() as conn:
             conn.execute(text(
                 "INSERT INTO approval_decisions (tenant_id, operation_id, decision, reason, "
                 "decided_by, decided_version) VALUES (:t,:op,:d,:r,:by,:dv)"
@@ -183,7 +220,7 @@ class PostgresAfterSalesRepository(AfterSalesRepository):
                 "r": row.reason, "by": row.decided_by, "dv": row.decided_version})
 
     def approvals_of(self, tenant_id: str, operation_id: str) -> list[ApprovalRow]:
-        with self._engine.connect() as conn:
+        with self._tx() as conn:
             rows = conn.execute(text(
                 "SELECT tenant_id, operation_id, decision, reason, decided_by, decided_version "
                 "FROM approval_decisions WHERE tenant_id=:t AND operation_id=:op ORDER BY id"
@@ -192,7 +229,7 @@ class PostgresAfterSalesRepository(AfterSalesRepository):
 
     # ---------- audit_events ----------
     def insert_audit(self, row: AuditRow) -> None:
-        with self._engine.begin() as conn:
+        with self._tx() as conn:
             conn.execute(text(
                 "INSERT INTO audit_events (tenant_id, action, entity_type, entity_id, actor, "
                 "before_state, after_state, idempotency_key, note) VALUES "
@@ -202,7 +239,7 @@ class PostgresAfterSalesRepository(AfterSalesRepository):
                 "af": row.after_state, "ik": row.idempotency_key, "note": row.note})
 
     def audit_of(self, tenant_id: str, entity_type: str, entity_id: str) -> list[AuditRow]:
-        with self._engine.connect() as conn:
+        with self._tx() as conn:
             rows = conn.execute(text(
                 "SELECT tenant_id, action, entity_type, entity_id, actor, before_state, "
                 "after_state, idempotency_key, note FROM audit_events "
@@ -213,7 +250,7 @@ class PostgresAfterSalesRepository(AfterSalesRepository):
     # ---------- idempotency_records ----------
     def insert_idem(self, row: IdemRow) -> None:
         try:
-            with self._engine.begin() as conn:
+            with self._tx() as conn:
                 conn.execute(text(
                     "INSERT INTO idempotency_records (tenant_id, idem_key, payload_hash, "
                     "refund_id) VALUES (:t,:k,:h,:rid)"
@@ -223,7 +260,7 @@ class PostgresAfterSalesRepository(AfterSalesRepository):
             raise UniqueViolation(f"幂等键 {row.idem_key} 已存在（租户 {row.tenant_id}）") from e
 
     def get_idem(self, tenant_id: str, idem_key: str) -> Optional[IdemRow]:
-        with self._engine.connect() as conn:
+        with self._tx() as conn:
             row = conn.execute(text(
                 "SELECT tenant_id, idem_key, payload_hash, refund_id FROM idempotency_records "
                 "WHERE tenant_id=:t AND idem_key=:k"

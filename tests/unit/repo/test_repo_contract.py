@@ -9,6 +9,7 @@ from decimal import Decimal
 import pytest
 
 from src.repo import (
+    AuditRow,
     IdemRow,
     MemoryAfterSalesRepository,
     OperationRow,
@@ -100,3 +101,48 @@ def test_concurrent_capacity_single_success(repo):
         t.join()
     assert results.count(True) == 1
     assert repo.executed_sum_for_order(T1, "ORD-1") == Decimal("60.00")
+
+
+# ---------- unit_of_work：命令级原子写作用域 ----------
+
+def test_unit_of_work_commit_visibility(repo):
+    """作用域内多表写：正常退出后全部可见（一次命令 = 一个原子单位）。"""
+    with repo.unit_of_work():
+        repo.insert_order(_order())
+        repo.insert_ticket(TicketRow(T1, "TKT-1", "ORD-1", "C1", "refund", "破损", "open"))
+        repo.insert_audit(AuditRow(T1, "create_ticket", "ticket", "TKT-1", "agent", None, "open"))
+        repo.insert_idem(IdemRow(T1, "key-1", "h1", "TKT-1"))
+    assert repo.get_order(T1, "ORD-1") is not None
+    assert repo.get_ticket(T1, "TKT-1").status == "open"
+    assert len(repo.audit_of(T1, "ticket", "TKT-1")) == 1
+    assert repo.get_idem(T1, "key-1").refund_id == "TKT-1"
+
+
+def test_unit_of_work_rollback_no_partial(repo):
+    """作用域内中途异常 → 整单位回滚（无部分提交）。"""
+    with pytest.raises(ValueError):
+        with repo.unit_of_work():
+            repo.insert_order(_order())
+            repo.insert_audit(AuditRow(T1, "create_ticket", "ticket", "TKT-1", "agent", None, "open"))
+            raise ValueError("模拟命令中途失败")
+    assert repo.get_order(T1, "ORD-1") is None
+    assert repo.audit_of(T1, "ticket", "TKT-1") == []
+
+
+def test_unit_of_work_rollback_preserves_prior_state(repo):
+    """回滚只撤销本次单位内的写，不丢失作用域前的既有状态。"""
+    repo.insert_order(_order(order_id="ORD-0", paid="50.00"))
+    with pytest.raises(ValueError):
+        with repo.unit_of_work():
+            repo.insert_order(_order(order_id="ORD-1", paid="100.00"))
+            raise ValueError("模拟失败")
+    assert repo.get_order(T1, "ORD-0") is not None   # 先前状态保留
+    assert repo.get_order(T1, "ORD-1") is None       # 单位内写被回滚
+
+
+def test_unit_of_work_nested_rejected(repo):
+    """不允许嵌套：作用域内再次进入 → RuntimeError。"""
+    with pytest.raises(RuntimeError):
+        with repo.unit_of_work():
+            with repo.unit_of_work():
+                pass

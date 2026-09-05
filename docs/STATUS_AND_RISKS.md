@@ -23,7 +23,7 @@
 
 ### ✅ 已实现（有代码 + 测试证据）
 
-| 项 | 证据（`.venv` 下 `python -m pytest tests/` → **310 passed**，2026-09-04 实测；PG 容器运行时集成 9/9） |
+| 项 | 证据（`.venv` 下 `python -m pytest tests/` → **318 passed**，2026-09-04 实测；PG 容器运行时集成 13/13） |
 | --- | --- |
 | 工程宪法 `AGENTS.md` v0.2；README 设计基线 + 实施进度节 | 文件存在 |
 | 退款最小闭环（确定性领域服务） | `src/domain/{models,idempotency,refund_service}.py` + `tests/test_refund_service.py`（14 项） |
@@ -96,3 +96,4 @@
 - v0.17（2026-09-04）—— PostgreSQL 事实源闭环：schema/Alembic 0002 增加 DB 级 CHECK（金额非负/退款金额为正/工单与操作状态枚举），数据库可独立阻止非法业务状态；集成测试 9 项（新增 DB 约束拦截与并发同幂等键恰一成功）；全量 **306 passed**。
 - v0.18（2026-09-04）—— 收敛第三~四阶段：FastAPI 安全审查补充（请求体 tenant 不信任、重复点击审批/对账幂等化 409、审计响应无 PII，API 测试 12 项）；RAG 检索排序平局按 chunk_id 稳定化（消除进程间不确定，指标稳定：recall@1=0.23/recall@3=0.80/MRR=0.4583/注入拒绝 1.0）；当前全量 **310 passed**（PG 集成 9/9）。
 - v0.19（2026-09-04）—— 第二轮事实与文档收口（全部以本次真实运行输出为准，本机 PostgreSQL 容器运行中）：`pytest tests/ -q` = **310 passed**（PG 集成 9/9 实测，0 skip）；黄金集回放 v1 = 11/11、v2 = 120/120；Agent/Supervisor 对照 11/11 vs 11/11（outcome/退款 100% 一致，维持单 Agent）；离线影子意图准确率 1.0。文档更新：`docs/TESTING_BASELINE.md` 分层状态由"规划中"实化为 unit 269 / integration 9 / e2e 2 / property 12 / security 4 / 根 14 = 310；README/ARCHITECTURE/TASK_SPLIT/PERSISTENCE/MULE_BRIDGE 中"当前"指针统一为 310 passed 与集成 9/9（历史修订行保留）；PG 边界措辞改为"Repository/schema/Alembic 已实现并本地实测，领域状态机整体 SQL 化未实现"。说明：任务输入基线"297 passed, 6 skipped"为本机 PG 离线旧快照，与本轮容器运行中的真实输出 **310 passed、0 skip** 不一致，已按宪法第二条以真实运行与代码为准，未写入文档。
+- v0.20（2026-09-04）—— 阶段二 PostgreSQL 唯一事实源第一步（命令级原子写地基）：Repository 增加 `unit_of_work` 事务作用域（interfaces + memory 快照回滚 + PG thread-local 共享连接/事务；正常提交、异常整单位回滚=无部分提交、禁嵌套）；全部读写方法接入同一连接上下文（跨表同事务）。契约测试 +4（unit 273）、PG 集成 +4（integration 13，真实 PG 实测跨表原子提交/中途异常零残留/作用域内读自身写/嵌套拒绝）；全量 **318 passed**。文档同步：POSTGRES v1.2、TESTING_BASELINE v0.3、README/ARCHITECTURE/TASK_SPLIT/PERSISTENCE/MULE_BRIDGE 当前指针统一 318/13/13。诚实边界：领域状态机整体 SQL 化与 PG-backed 领域服务运行仍未实现（本能力是其前置地基），checkpoint 仍仅存流程状态。

@@ -37,6 +37,26 @@ class MemoryAfterSalesRepository(AfterSalesRepository):
     def transaction(self) -> Iterator[None]:
         yield
 
+    @contextmanager
+    def unit_of_work(self) -> Iterator[None]:
+        """内存原子写模拟：作用域内持全局锁 + 快照全部容器；异常 → 恢复快照（无部分提交）；
+        不允许嵌套。作用域内读写方法各持 RLock（可重入），串行化到同一把锁上。"""
+        with self._lock:
+            if getattr(self, "_uow_active", False):
+                raise RuntimeError("unit_of_work 不允许嵌套")
+            snap = (dict(self._orders), dict(self._tickets), dict(self._operations),
+                    list(self._approvals), list(self._audits), dict(self._idem),
+                    dict(self._executed))
+            self._uow_active = True
+            try:
+                yield
+            except BaseException:
+                (self._orders, self._tickets, self._operations, self._approvals,
+                 self._audits, self._idem, self._executed) = snap
+                raise
+            finally:
+                self._uow_active = False
+
     def lock_order_for_update(self, tenant_id: str, order_id: str) -> Optional[OrderRow]:
         with self._lock:
             return self._orders.get((tenant_id, order_id))

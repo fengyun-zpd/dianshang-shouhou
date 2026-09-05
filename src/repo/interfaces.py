@@ -105,6 +105,12 @@ class AfterSalesRepository(ABC):
         """事务边界（内存实现为 no-op；PG 实现 BEGIN/COMMIT/ROLLBACK）。"""
 
     @abstractmethod
+    def unit_of_work(self) -> AbstractContextManager[None]:
+        """命令级原子写作用域：进入后本实例全部读写方法在同一事务/原子语义内执行，
+        正常退出提交、异常回滚（无部分提交）；不允许嵌套。
+        用途：单个领域命令的多表落库（业务行 + 审批决定 + 审计 + 幂等）必须整体原子。"""
+
+    @abstractmethod
     def lock_order_for_update(self, tenant_id: str, order_id: str) -> Optional[OrderRow]:
         """以行锁（PG：SELECT … FOR UPDATE）读取订单，用于订单级额度保护。"""
 

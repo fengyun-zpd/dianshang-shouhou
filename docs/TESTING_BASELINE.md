@@ -1,21 +1,21 @@
 # 测试基线（TESTING BASELINE）
 
 > 归属：电商售后多智能体工单系统（`D:\workplace\PyCharmMiscProject\私域`）
-> 版本：v0.2。本文档定义测试分层、验收命令、Bug 分类与回归纪律。
-> 全量基线（2026-09-04 本地实测）：`.venv\Scripts\python.exe -m pytest tests/ -q` → **310 passed**（PostgreSQL 容器运行时集成 9/9 实测；无 PostgreSQL 时集成自动跳过，不伪造通过）。
+> 版本：v0.3。本文档定义测试分层、验收命令、Bug 分类与回归纪律。
+> 全量基线（2026-09-04 本地实测）：`.venv\Scripts\python.exe -m pytest tests/ -q` → **318 passed**（PostgreSQL 容器运行时集成 13/13 实测；无 PostgreSQL 时集成自动跳过，不伪造通过）。
 
 ## 1. 分层策略与验收命令
 
-| 层 | 覆盖内容 | 目录 | 当前状态（收集数，全量 310） |
+| 层 | 覆盖内容 | 目录 | 当前状态（收集数，全量 318） |
 | --- | --- | --- | --- |
-| unit | 纯函数 / 领域服务 / 权限 / 状态机 / 幂等 / API 安全 / RAG / 评测 / 桥接 | `tests/unit/` | ✅ 269 项全绿 |
-| integration | PostgreSQL 真实仓储（TenantContext、行锁容量、幂等唯一、乐观版本、DB CHECK） | `tests/integration/` | ✅ 9 项（PG 容器运行时实测；无 PG 自动跳过并标注"数据库集成未实测"） |
+| unit | 纯函数 / 领域服务 / 权限 / 状态机 / 幂等 / API 安全 / RAG / 评测 / 桥接 / Repository 契约 | `tests/unit/` | ✅ 273 项全绿 |
+| integration | PostgreSQL 真实仓储（TenantContext、行锁容量、幂等唯一、乐观版本、DB CHECK、unit_of_work 原子写） | `tests/integration/` | ✅ 13 项（PG 容器运行时实测；无 PG 自动跳过并标注"数据库集成未实测"） |
 | e2e | 端到端流程 / 审批中断恢复 | `tests/e2e/` | ✅ 2 项 |
 | property | 性质测试（状态机不变量、金额守恒） | `tests/property/` | ✅ 12 项 |
 | security | 越权 / 提示注入 / 租户隔离 / 未知状态 / PII | `tests/security/` | ✅ 4 项 |
 | 根层 | 退款最小闭环 | `tests/test_refund_service.py` | ✅ 14 项（历史基线，保留只读） |
 
-> 汇总：269 + 9 + 2 + 12 + 4 + 14 = **310 passed**（2026-09-04 实测；PG 容器运行时集成 9/9）。
+> 汇总：273 + 13 + 2 + 12 + 4 + 14 = **318 passed**（2026-09-04 实测；PG 容器运行时集成 13/13）。
 
 验收命令（项目根执行）：
 
@@ -59,7 +59,7 @@ python -m pytest tests/ -v             # 全量明细
 - 数据集版本：N/A（固定种子合成数据 seed=42）
 - 运行模式：本地内存领域服务 + MemorySaver checkpoint（PostgreSQL 集成另行实测）
 - 结果：通过 X / 失败 Y / 跳过 Z（python scripts/run_tests.py）
-- PostgreSQL：容器运行时集成 9/9 实测；无 PG 时自动跳过（数据库集成未实测）
+- PostgreSQL：容器运行时集成 13/13 实测；无 PG 时自动跳过（数据库集成未实测）
 - 安全不变量检查（必须全 0，任一非 0 即阻断问题）：
   - 越权成功数：0
   - 重复副作用数：0
@@ -72,3 +72,4 @@ python -m pytest tests/ -v             # 全量明细
 
 - v0.1（本会话）—— 建立分层策略、验收命令、Bug 分类与回归报告模板。
 - v0.2（2026-09-04）—— 分层状态与基线同步实现：integration/e2e/property/security 由"规划中"更新为已实现并全绿（收集数 9/2/12/4，另有根层退款闭环 14 项）；unit 269 项；全量 **310 passed**（PG 容器运行时集成 9/9）；模板补充 PostgreSQL 实测/跳过说明与运行模式。
+- v0.3（2026-09-04）—— Repository 增加 `unit_of_work` 命令级原子写作用域（K4 扩展）：契约测试 +4（unit 273 项）、PG 集成 +4（integration 13 项）；全量 **318 passed**（PG 容器运行时集成 13/13）。
