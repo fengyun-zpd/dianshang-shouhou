@@ -2,7 +2,7 @@
 
 > 归属：电商售后多智能体工单系统（OpsPilot After-Sales，目标远程 `fengyun-zpd/dianshang-shouhou`）
 > 性质：总负责人 Agent 的侦察与实施基线记录。本文档只陈述事实与判断，不把规划写成已实现；实时状态以此文件与测试输出为准。
-> 版本：v0.46（阶段 A 端口收敛与 R7 收口，2026-09-05）
+> 版本：v0.47（单 Agent 作品收敛，2026-09-05）
 
 ## 1. 工作区与目录角色
 
@@ -23,7 +23,7 @@
 
 ### ✅ 已实现（有代码 + 测试证据）
 
-| 项 | 证据（`.venv` 下 `python -m pytest tests/` → **439 passed, 0 xfailed**，2026-09-05 实测；PG 集成 35/35） |
+| 项 | 证据（`.venv` 下 `python -m pytest tests/` → **450 passed, 0 xfailed**，2026-09-05 实测；PG 集成 37/37） |
 | --- | --- |
 | 工程宪法 `AGENTS.md` v0.2；README 设计基线 + 实施进度节 | 文件存在 |
 | 退款最小闭环（确定性领域服务） | `src/domain/{models,idempotency,refund_service}.py` + `tests/test_refund_service.py`（14 项） |
@@ -124,3 +124,4 @@
 - v0.44（2026-09-05）—— 阶段四第 5 节（测试隔离）：scripts/run_pg_tests_isolated.ps1 —— 每 worker 独立 database（opspilot_p4a/b，同实例）各自从空库 Alembic 全程升级（0001→0005 成功）后运行同一批 PG 集成（各 25 passed，exit 0）＝对象级完全隔离，并行亦互不踩库；实测 ISOLATED DOUBLE-RUN PASS。
 - v0.45（2026-09-05）—— 阶段四收口进展：实测新基线 **417 passed, 0 xfailed**（unit 331 / integration 33 / e2e 2 / property 12 / security 4 / regression 11 / phase4 10 / 根 14）；run_tests.py 分层扩展 regression/phase4 独立统计；测试隔离：每 worker 独立 database（scripts/run_pg_tests_isolated.ps1）空库 Alembic 0001→0005 全程升级成功且各跑 PG 集成 25 passed（ISOLATED DOUBLE-RUN PASS）。未完成/进行中（如实）：WorkflowRunner/AfterSalesGateway 端口收敛与 PG adapter 工作流只读能力、Runner 内部强制租约（D9 收口项，repo 原语已有并测）、run_api --backend pg 真实装配、API 审批以认证 principal 为 decided_by、并行两进程集成运行。
 - v0.46（2026-09-05）—— 阶段 A 端口收敛与 R7 收口（commit `4eb2614`）：**全量实测 439 passed, 0 xfailed**（unit 335 / integration 35 / e2e 2 / property 12 / security 4 / regression 11 / phase4 26 / 根 14；PG 集成 35/35）。已完成：① `AfterSalesApplicationPort` 扩展 tenant-first 只读（`list_operations`、`audit_log(tenant)`），Memory/PgCommand 双 Adapter 对称实现；② API 路由全 tenant-first Port 化（删除裸查+手工比租户；保留 decided_by=principal 与 expected_version 严格 422）；③ `AfterSalesGateway`/`WorkflowRunner` 只依赖 Port（bridge/replay/demo/测试调用点包 `MemoryAdapter`）；④ 删除 `PgServiceFacade`（含裸 ID 全扫租户定位路径）；⑤ `run_api --backend memory|pg` 真实装配（PostgresRepository+PgCommandService+PgCommandAdapter+持久 SQLite checkpoint+`WorkflowRunner(lease_repo, owner_id)`，pg 失败退出码非 0 不回退 memory、启动不 seed；`require_expected_version=True`）；⑥ PG e2e 直用 `PgCommandAdapter`（HTTP 全链 SQL 断言不变）；PA1/PA3/PA4/R7 四个 strict xfail 按真实实现转 PASS；D9 收口（Runner 强制租约 live 2 项 + 语义 live 3 项全绿）。遗留（如实）：内存 vs PG 对"存在但异租户 id"查询错误码差异（Memory 403 TENANT_MISMATCH / PG 404 NOT_FOUND，均安全拒绝，PG 端消除差异需全局扫描故维持）；审计水位跨租户交替收集边界与旧实现等价（V1 单流程无影响，docstring 注明）。
+- v0.47（2026-09-05）—— 单 Agent 作品收敛（面向面试）：① **最小政策 RAG 检索接入默认单 Agent** `gather_evidence`（`WorkflowRunner(policy_store=...)` 可选注入；命中 → `policy:<citation>` 进 `evidence_refs`/`order_summary.policy_citations`，查询注入 → `POLICY_INJECTION_DETECTED` 转人工（文档内容零泄漏），无证据不阻断（领域政策为准）；金额/资格仍由领域服务裁决）；新增 9 测试（命中/版本文本不覆盖金额/无政策转人工/RAG 空不阻断/注入/投毒/跨租户/citation 校验/默认一致性）；② **代码结构收敛**：`src/domain/__init__.py` 与 `refund_service.py` 如实标注 `after_sales/` 主实现、旧最小闭环 LEGACY 回归基线（不删除、不新增能力）；③ **文档口径统一**：README 顶部一句话主张 + §2 三档口径（已实现/实验可选/未实现未实测）+ 450 基线；ARCHITECTURE v0.3 数据层如实更新（PG profile 命令路径已实现、memory 仅测试/演示、PgBackedSession 为整库镜像迁移原型）；④ **面试交付物**：`scripts/demo_interview.py`（5 场景真实演示）+ `docs/INTERVIEW_OVERVIEW.md`（时序图/架构取舍/安全不变量报告）；⑤ 全量基线 **450 passed, 0 xfailed**（unit 344 / integration 37 / e2e 2 / property 12 / security 4 / regression 11 / phase4 26 / 根 14）；golden_v1 11/11、A/B 11/11 vs 11/11（维持单 Agent）、shadow offline 意图 1.0、demo 五场景全过；`git diff --check=0`。Supervisor 维持实验性可选运行时；真实 LLM/微调/前端/生产/MuleSoft 接入保持未实现或未实测。
