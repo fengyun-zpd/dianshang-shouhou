@@ -50,10 +50,11 @@ pytestmark = pytest.mark.skipif(
 def _clean_db():
     engine = create_engine(DATABASE_URL)
     with engine.begin() as conn:
-        conn.execute(text(_SCHEMA))  # CREATE TABLE IF NOT EXISTS（幂等）
-        for table in ("approval_decisions", "audit_events", "idempotency_records",
+        # 重建全部表（含 CHECK 约束），保证用例确定性
+        for table in ("audit_events", "idempotency_records", "approval_decisions",
                       "refund_operations", "tickets", "orders"):
-            conn.execute(text(f"DELETE FROM {table}"))
+            conn.execute(text(f"DROP TABLE IF EXISTS {table} CASCADE"))
+        conn.execute(text(_SCHEMA))
     engine.dispose()
 
 
@@ -136,3 +137,58 @@ def test_live_unknown_only_original_key_semantics():
     repo.insert_idem(IdemRow("tenant-a", "orig-key", "h", "OP-UNKNOWN"))
     got = repo.get_idem("tenant-a", "orig-key")
     assert got is not None and got.refund_id == "OP-UNKNOWN"
+
+
+def test_live_db_constraint_rejects_invalid_amount():
+    """数据库独立拒绝非法金额（amount<=0 或负支付金额）。"""
+    from sqlalchemy.exc import IntegrityError
+    repo = PostgresAfterSalesRepository(DATABASE_URL)
+    repo.insert_order(_order())
+    repo.insert_ticket(TicketRow("tenant-a", "TKT-1", "ORD-1", "C1", "refund", "破损", "open"))
+    with pytest.raises(IntegrityError):
+        repo.insert_operation(_op("OP-BAD", "-5.00"))     # 负金额 → CHECK 拦截
+    with pytest.raises(IntegrityError):
+        repo.insert_operation(_op("OP-ZERO", "0.00"))     # 零金额 → CHECK 拦截
+
+
+def test_live_db_constraint_rejects_invalid_status():
+    """数据库独立拒绝非法状态（CHECK 状态枚举）。"""
+    from sqlalchemy.exc import IntegrityError
+    repo = PostgresAfterSalesRepository(DATABASE_URL)
+    repo.insert_order(_order())
+    repo.insert_ticket(TicketRow("tenant-a", "TKT-1", "ORD-1", "C1", "refund", "破损", "open"))
+    bad = _op("OP-BAD-STATUS", "10.00")
+    bad = OperationRow(bad.tenant_id, bad.operation_id, bad.ticket_id, bad.order_id,
+                       bad.op_type, bad.amount, "warped", bad.idempotency_key, bad.created_by)
+    with pytest.raises(IntegrityError):
+        repo.insert_operation(bad)
+
+
+def test_live_concurrent_same_idem_key_single_winner():
+    """数据库幂等唯一约束：并发同 (tenant, key) 插入恰一个成功、另一个 UniqueViolation。"""
+    repo = PostgresAfterSalesRepository(DATABASE_URL)
+    barrier = threading.Barrier(2)
+    outcomes: list[str] = []
+    lock = threading.Lock()
+
+    def worker():
+        try:
+            barrier.wait()
+            PostgresAfterSalesRepository(DATABASE_URL).insert_idem(
+                IdemRow("tenant-a", "same-key", "h1", "OP-1"))
+            with lock:
+                outcomes.append("ok")
+        except UniqueViolation:
+            with lock:
+                outcomes.append("conflict")
+        except Exception:  # noqa: BLE001
+            with lock:
+                outcomes.append("error")
+
+    threads = [threading.Thread(target=worker) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert sorted(outcomes) == ["conflict", "ok"]
+    assert repo.get_idem("tenant-a", "same-key").payload_hash == "h1"

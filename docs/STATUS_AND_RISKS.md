@@ -2,7 +2,7 @@
 
 > 归属：电商售后多智能体工单系统（OpsPilot After-Sales，目标远程 `fengyun-zpd/dianshang-shouhou`）
 > 性质：总负责人 Agent 的侦察与实施基线记录。本文档只陈述事实与判断，不把规划写成已实现；实时状态以此文件与测试输出为准。
-> 版本：v0.16（阶段 0–6 + J/K1 + K2–K6 + 事实/文档统一收口，2026-09-04）
+> 版本：v0.17（阶段 0–6 + J/K1 + K2–K6 + 收口 + PG DB 约束闭环，2026-09-04）
 
 ## 1. 工作区与目录角色
 
@@ -23,7 +23,7 @@
 
 ### ✅ 已实现（有代码 + 测试证据）
 
-| 项 | 证据（`.venv` 下 `python -m pytest tests/` → **303 passed**，2026-09-04 K2–K6 实测） |
+| 项 | 证据（`.venv` 下 `python -m pytest tests/` → **306 passed**，2026-09-04 实测；PG 容器运行时集成 9/9） |
 | --- | --- |
 | 工程宪法 `AGENTS.md` v0.2；README 设计基线 + 实施进度节 | 文件存在 |
 | 退款最小闭环（确定性领域服务） | `src/domain/{models,idempotency,refund_service}.py` + `tests/test_refund_service.py`（14 项） |
@@ -93,3 +93,4 @@
 - v0.14（2026-09-04）—— K3 快照类型严格 + 原子恢复；K4 PostgreSQL Repository/schema/Alembic（本地 PG 集成实测 6/6，行锁并发 60+60 恰一成功）；K5 FastAPI（认证/角色门禁/结构化错误，8 项）；K6（golden_v2 120/120、RAG Recall@K/MRR/引用/注入 1.0、tests/e2e|property|security 24 项）——全量 303 passed。
 - v0.15（2026-09-04）—— 诚实边界收口：K7 审批工作台前端**未实现**（无浏览器测试环境，不声称完成；API 端点已齐备可支撑）；K8 边界=单 Agent 默认/Supervisor 只读子 Agent/Mule 本地契约均已交付且无真实授权连接，**未做任何微调**（无对照数据）；真实 LLM 未实测（未配置 Key，不联网）；PostgreSQL 本地容器**真实实测**、非生产部署。
 - v0.16（2026-09-04）—— 事实与文档统一收口：以真实命令输出为准统一全站基线（`pytest tests/ -q` = **303 passed**，PostgreSQL 容器运行时的集成 6/6 实测，无 PG 自动跳过；README/STATUS/ARCHITECTURE/TASK_SPLIT/PERSISTENCE/MULE_BRIDGE 等“当前”性数字与状态已更新，历史修订保留）；修复 `src/__init__.py`、`src/platform/__init__.py` 过时的“规划中”描述为已实现清单 + 未实现项。前端/真实 LLM/真实 MCP-MuleSoft/微调仍明确标注未实现或未实测；SQLite 仅恢复原型。
+- v0.17（2026-09-04）—— PostgreSQL 事实源闭环：schema/Alembic 0002 增加 DB 级 CHECK（金额非负/退款金额为正/工单与操作状态枚举），数据库可独立阻止非法业务状态；集成测试 9 项（新增 DB 约束拦截与并发同幂等键恰一成功）；全量 **306 passed**。

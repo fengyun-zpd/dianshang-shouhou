@@ -11,7 +11,8 @@ CREATE TABLE IF NOT EXISTS orders (
     paid_amount      NUMERIC(12,2) NOT NULL,
     days_since_sign  INTEGER     NOT NULL DEFAULT 0,
     version          INTEGER     NOT NULL DEFAULT 1,
-    PRIMARY KEY (tenant_id, order_id)
+    PRIMARY KEY (tenant_id, order_id),
+    CONSTRAINT ck_orders_paid_nonneg CHECK (paid_amount >= 0)
 );
 
 -- 工单
@@ -26,7 +27,8 @@ CREATE TABLE IF NOT EXISTS tickets (
     resolution   TEXT,
     version      INTEGER NOT NULL DEFAULT 1,
     PRIMARY KEY (tenant_id, ticket_id),
-    FOREIGN KEY (tenant_id, order_id) REFERENCES orders(tenant_id, order_id)
+    FOREIGN KEY (tenant_id, order_id) REFERENCES orders(tenant_id, order_id),
+    CONSTRAINT ck_tickets_status CHECK (status IN ('open','resolved','rejected','closed'))
 );
 
 -- 退款操作（含 operation_unknown 语义状态）
@@ -44,7 +46,10 @@ CREATE TABLE IF NOT EXISTS refund_operations (
     decision_version INTEGER,
     executed         BOOLEAN NOT NULL DEFAULT FALSE,
     PRIMARY KEY (tenant_id, operation_id),
-    FOREIGN KEY (tenant_id, ticket_id) REFERENCES tickets(tenant_id, ticket_id)
+    FOREIGN KEY (tenant_id, ticket_id) REFERENCES tickets(tenant_id, ticket_id),
+    CONSTRAINT ck_refundop_status CHECK (status IN (
+        'draft','pending_approval','approved','rejected','executed','unknown','failed')),
+    CONSTRAINT ck_refundop_amount CHECK (amount IS NULL OR amount > 0)
 );
 
 -- 审批决定（授权人员提交，带版本）
