@@ -25,15 +25,18 @@ from .state import AgentState
 
 
 def build_workflow(gateway: AfterSalesGateway, checkpointer=None,
-                   evidence_node=None, mode: str = "single"):
+                   evidence_node=None, mode: str = "single",
+                   policy_store=None):
     """构建并编译售后工作流。
 
     - mode="single"（默认）：单 Agent 闭环；
     - mode="supervisor"：evidence_node 为 Supervisor 并行子 Agent 编排节点时，
       将 gather_evidence 替换为其等价物（其余节点/状态 Schema/interrupt 语义一致，
       便于黄金集 A/B 对照）。架构约束：子 Agent 只读；写命令仍经领域服务+审批。
+    - policy_store（可选 PolicyStore）：透传给 gather_evidence 做最小政策证据检索；
+      evidence_node 提供时其覆盖优先（Supervisor 自行注入 policy_store，不受影响）。
     """
-    nodes = build_nodes(gateway)
+    nodes = build_nodes(gateway, policy_store=policy_store)
     if evidence_node is not None:
         nodes["gather_evidence"] = evidence_node
         mode = "supervisor"

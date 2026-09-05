@@ -14,6 +14,7 @@ from langgraph.types import interrupt
 
 from src.domain.after_sales import AfterSalesError
 from src.domain.after_sales.models import OperationStatus
+from src.rag.store import InjectionDetected, PolicyStore
 
 from .intent import clarify_questions, extract_intent
 from .ports import AfterSalesGateway
@@ -40,8 +41,13 @@ def _reason_text(state: AgentState, limit: int = 120) -> str:
     return text[:limit]
 
 
-def build_nodes(gateway: AfterSalesGateway) -> dict[str, Callable[[AgentState], dict]]:
-    """构建全部节点。gateway 经闭包注入（不进入 checkpoint）。"""
+def build_nodes(gateway: AfterSalesGateway,
+                policy_store: Optional[PolicyStore] = None) -> dict[str, Callable[[AgentState], dict]]:
+    """构建全部节点。gateway / policy_store 经闭包注入（不进入 checkpoint）。
+
+    policy_store 为可选政策证据检索（PolicyStore，纯内存单测可独立构造）；
+    不提供时 gather_evidence 与既有基线完全一致（不检索、不新增字段）。
+    """
 
     # ---------- 入口：意图识别 / 缺参判断 ----------
 
@@ -84,16 +90,43 @@ def build_nodes(gateway: AfterSalesGateway) -> dict[str, Callable[[AgentState], 
         refs = [f"order:{order.order_id}", f"customer:{order.customer_id}"]
         refs += [f"history:{t.ticket_id}" for t in history]
         refs.append("logistics:unavailable")  # 物流未接入，显式记录而非虚构
+        summary: dict = {
+            "order_id": order.order_id,
+            "customer_id": order.customer_id,
+            "status": order.status.value,
+            "paid_amount": str(order.paid_amount),
+            "logistics": logistics,
+            "history_count": len(history),
+        }
+        # 最小政策证据检索（可选注入；与 Supervisor policy-agent 语义同构）：
+        # - 只做证据引用与解释，金额/资格仍由 compute_refund_plan 领域服务裁决；
+        # - 查询注入 → 安全拒绝并转人工（不把注入内容当作证据继续）；
+        # - 无证据/空结果不阻断主流程（领域政策为准），显式记录 NO_EVIDENCE。
+        if policy_store is not None:
+            user_request = state.get("user_request") or ""
+            query = (user_request.strip() or " ".join(state.get("reason_tags") or [])) + " 售后政策"
+            try:
+                hits = policy_store.search(tenant, query, top_k=3)
+            except InjectionDetected:
+                # 安全优先：查询命中注入模式，检索被拒绝 → escalate，不产出任何政策证据
+                return {
+                    "error_code": "POLICY_INJECTION_DETECTED",
+                    "outcome": "escalated",
+                    "next_action": "escalate",
+                    "reply": "政策检索请求命中提示注入模式，检索已被安全拒绝；"
+                            "未使用任何检索内容作为证据，已转人工处理",
+                }
+            if hits:
+                citations = [ev.citation() for ev in hits]
+                refs += [f"policy:{c}" for c in citations]
+                summary["policy_citations"] = citations
+                summary["policy_notes"] = []
+            else:
+                summary["policy_citations"] = []
+                summary["policy_notes"] = ["NO_EVIDENCE"]
         return {
             "evidence_refs": refs,
-            "order_summary": {
-                "order_id": order.order_id,
-                "customer_id": order.customer_id,
-                "status": order.status.value,
-                "paid_amount": str(order.paid_amount),
-                "logistics": logistics,
-                "history_count": len(history),
-            },
+            "order_summary": summary,
         }
 
     # ---------- 确定性退款计划（金额唯一来源） ----------

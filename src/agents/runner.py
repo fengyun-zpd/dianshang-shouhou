@@ -72,11 +72,14 @@ class WorkflowRunner:
     原子获得租约（owner_id 稳定唯一）；失约抛 ThreadLeaseError。线程完成（finished）或
     异常路径由 owner 释放租约；等待审批（interrupt）期间保持租约，崩溃后可由同
     fingerprint 且租约过期的其他 owner 接管。
+    policy_store（可选 PolicyStore）：注入 gather_evidence 的最小政策证据检索
+    （证据引用不裁决金额/资格；不提供时行为与基线一致）。
     """
 
     def __init__(self, backend, checkpointer=None,
                  lease_repo=None, owner_id: Optional[str] = None,
-                 lease_duration_s: int = 60):
+                 lease_duration_s: int = 60,
+                 policy_store=None):
         self.backend = backend
         self.gateway = AfterSalesGateway(backend)
         self._thread_tenants: dict[str, str] = {}
@@ -86,6 +89,8 @@ class WorkflowRunner:
             raise ValueError("启用线程租约必须提供稳定 owner_id")
         self._owner_id = owner_id
         self._lease_duration_s = lease_duration_s
+        # 可选政策证据检索（PolicyStore）；None → gather_evidence 与既有基线一致
+        self._policy_store = policy_store
         self.graph = self._build_graph(checkpointer)
 
     # ---------- 租约（D9 硬边界） ----------
@@ -114,7 +119,7 @@ class WorkflowRunner:
     def _build_graph(self, checkpointer=None):
         """构建默认单 Agent 图（子类可覆盖以切换运行时，如 Supervisor 模式）。"""
         from .graph import build_workflow
-        return build_workflow(self.gateway, checkpointer)
+        return build_workflow(self.gateway, checkpointer, policy_store=self._policy_store)
 
     # ---------- 运行 ----------
 
