@@ -1,7 +1,7 @@
 # 目标架构、启动方式与第一版验收清单
 
 > 归属：电商售后多智能体工单系统（目标远程 `fengyun-zpd/dianshang-shouhou`，本地工作区 `D:\workplace\PyCharmMiscProject\私域`）
-> 版本：v0.2。本文档整合本地工作区已确认事实与当前 V1 实现的"架构图 / 启动方式 / 验收清单"。规划能力不写成已实现。
+> 版本：v0.3。本文档整合本地工作区已确认事实与当前 V1 实现的"架构图 / 启动方式 / 验收清单"。规划能力不写成已实现。
 
 ## 1. 业务闭环（目标）
 
@@ -24,12 +24,16 @@
 接入层    FastAPI（✅ 已实现：认证/角色/审计路由）+ 审批工作台界面（规划，未实现）
 编排层    LangGraph 状态机（interrupt/resume）（✅ 阶段 2：src/agents）
 决策层    Agent：意图/澄清/检索/草稿/话术      （✅ 规则化 V1 + 受控 LLM 适配层 src/models；离线基线实测，真实模型未实测）
-领域层    确定性服务：权限/金额/状态/幂等/审计  （✅ 阶段 1：src/domain/after_sales）
-数据层    业务事实源 = PostgreSQL Repository/schema/Alembic（✅ 已实现，本地 PG 实测 9/9）；当前运行时领域服务为内存 + SQLite 恢复原型（领域状态机整体 SQL 化规划中）
+领域层    确定性服务：权限/金额/状态/幂等/审计  （✅ 阶段 1：src/domain/after_sales，主业务实现）
+数据层    业务事实源 = PostgreSQL（✅ PG profile 命令路径已实现：PgCommandService 八命令单事务 + PgCommandAdapter + run_api --backend pg + workflow_threads DB 租约，本地 PG 集成实测 37/37）；memory 仅测试/演示；PgBackedSession 为整库镜像迁移原型
 横切     日志脱敏 · 评测黄金集 · 安全不变量
 ```
 
-当前已实现：领域层售后插件、LangGraph 单 Agent 工作流、工具/RAG、可靠性评测、受控 LLM 适配、Supervisor 实验、Mule Bridge、SQLite 可恢复原型、FastAPI、PostgreSQL Repository/schema/Alembic（本地 PG 集成实测 9/9）；checkpoint 仅存流程状态，业务事实一律重读领域服务。真实外部网络端点（MuleSoft/MCP server 实接）、生产部署与审批工作台界面仍为规划。
+当前已实现：领域层售后插件（`after_sales/` 主实现；旧 `refund_service` 为 LEGACY 回归基线）、
+LangGraph 单 Agent 工作流（含最小政策 RAG 证据检索）、审批 interrupt/resume、可靠性评测、
+受控 LLM 适配、Supervisor 对照实验（实验性可选运行时）、Mule Bridge 本地契约、FastAPI、
+PG profile 命令运行时；checkpoint（SQLite）仅存流程状态，业务事实一律重读领域服务/PG。
+真实外部网络端点（MuleSoft/MCP server 实接）、生产部署、前端审批工作台仍为规划。
 
 ## 3. 本地目录职责（现状与目标）
 
@@ -41,14 +45,21 @@ V1 当前验证（依赖装在 D 盘 `.venv`）：
 
 ```powershell
 cd D:\workplace\PyCharmMiscProject\私域
-.venv\Scripts\python.exe -m pytest tests/ -v                 # 全量回归（当前 439 passed, 0 xfailed，2026-09-05 实测；PG 容器运行时集成 35/35）
+.venv\Scripts\python.exe -m pytest tests/ -v                 # 全量回归（当前 450 passed, 0 xfailed，2026-09-05 实测；PG 容器运行时集成 37/37）
 .venv\Scripts\python.exe -m pytest tests/unit/agents -v     # 单 Agent 工作流
 .venv\Scripts\python.exe -m pytest tests/unit/domain/after_sales -v   # 售后插件（任务卡 A）
 .venv\Scripts\python.exe scripts\run_tests.py                # 分层回归脚本
 .venv\Scripts\python.exe scripts\demo_interrupt_resume.py    # interrupt/resume 演示
+.venv\Scripts\python.exe scripts\run_api.py --backend pg --pg-url postgresql+psycopg2://opspilot:opspilot@127.0.0.1:5433/opspilot  # PG profile API
 ```
 
-依赖：`langgraph==1.2.11` + `pytest==9.1.1`（`requirements.txt`；PyPI 走清华镜像）。数据层：当前运行时领域服务为内存 + SQLite 恢复原型；PostgreSQL Repository/schema/Alembic 已实现并在本地 PG 集成实测（`docs/POSTGRES.md`），领域状态机整体 SQL 化与生产部署为规划。
+依赖：`langgraph==1.2.11` + `pytest==9.1.1`（`requirements.txt`；PyPI 走清华镜像）。
+
+数据层（如实，2026-09-05）：PG profile 命令路径**已实现**——`PgCommandService` 八命令各自单事务落
+PostgreSQL（`AfterSalesApplicationPort` 双 Adapter：memory 演示/测试、pg 命令生产语义），
+`run_api --backend pg` 真实装配 + `WorkflowRunner` DB 租约（`workflow_threads`）；
+checkpoint（SQLite）仅存流程状态。边界：`PgBackedSession` 为"整库镜像写"迁移原型（非生产命令路径）；
+生产部署仍为规划。
 
 ## 5. 第一版验收清单（阶段 0 + 阶段 1）
 
@@ -69,3 +80,4 @@ D1 git init 与 remote；D2 README 更新；D3 单 Agent 闭环启动时机；D4
 
 - v0.1（本会话）—— 建立目标架构、启动方式与第一版验收清单。
 - v0.2（2026-09-04）—— 分层图与数据层状态同步实现：接入层 FastAPI 已实现（界面规划）、决策层受控 LLM 适配已实现（真实模型未实测）、数据层 PostgreSQL Repository 已实现并本地实测（集成 9/9）、领域状态机整体 SQL 化与真实网络端点/控制台仍为规划；全量基线 310 passed。
+- v0.3（2026-09-05）—— 收敛为单 Agent 作品：数据层如实更新为"PG profile 命令路径已实现（PgCommandService 八命令单事务/PgCommandAdapter/run_api --backend pg/workflow_threads DB 租约，集成 37/37），memory 仅测试/演示，PgBackedSession 为整库镜像迁移原型"；领域层明确 `after_sales/` 主实现与旧 `refund_service` LEGACY 基线；编排层注明默认单 Agent 含最小政策 RAG 证据检索、Supervisor 为实验性可选运行时；启动命令补 PG profile；全量基线 450 passed。

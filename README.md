@@ -1,7 +1,9 @@
 # OpsPilot
 
 > 企业售后工单处置 Agent 与可靠性评测平台
-> 阶段：V1 设计基线已实现；生产化路线仍在规划
+> 阶段：V1 已收敛为「单 Agent 默认 + PG 业务事实源」的可靠闭环；生产化路线仍在规划
+
+**一句话主张：OpsPilot 证明 Agent 能在证据不足、越权、重复请求、工具失败和外部结果未知时安全停止、等待或转人工——金额、资格、状态迁移与审批永远由确定性领域服务裁决。**
 
 ## 1. 项目定位
 
@@ -9,17 +11,20 @@
 
 **核心命题**：证明 Agent 能在受控权限内完成多步骤业务任务，并能在 **证据不足、越权、重复请求、工具失败、外部未知状态** 五类情况下安全停止、等待或转人工。
 
-## 2. 当前状态（诚实基线）
+## 2. 当前状态（诚实基线，三档口径）
 
-| 状态 | 内容 |
+| 档位 | 内容 |
 | --- | --- |
-| ✅ 已实现 | 售后领域服务、LangGraph 单 Agent 闭环、工具契约与 RAG、可靠性评测、受控 LLM 适配、Supervisor 实验、Mule Bridge、SQLite 可恢复原型、脱敏与回归工具链 |
-| 🟡 规划中 | 领域状态机整体 SQL 化与生产部署（PostgreSQL Repository/schema/Alembic 已实现且本地实测）、真实网络端点与 MuleSoft/MCP 实接、真实 LLM/微调对照、前端控制台、长期记忆 |
+| ✅ 已实现 | 售后确定性领域服务（`src/domain/after_sales/`）、**单 Agent LangGraph 工作流**（interrupt/resume）、最小本地 RAG（政策证据检索，已接入默认证据编排）、审批与审计、幂等/并发/未知状态对账、PostgreSQL Repository + PG profile 本地验证、受控 LLM adapter（离线基线）、Supervisor 对照实验、测试与回归工具链 |
+| 🧪 实验 / 可选 | **Supervisor 多 Agent**（只读子 Agent，A/B 无业务收益，默认维持单 Agent）；真实模型影子运行（需用户提供安全 Key，未配置即安全降级、标注未实测） |
+| 🟡 未实现 / 未实测 | 真实 LLM 指标；LoRA/QLoRA/DPO 微调；真实 MuleSoft/MCP 接入；前端审批控制台；生产部署；长期记忆；pgvector |
+
+> 全量基线（2026-09-05 实测）：`.venv\Scripts\python.exe -m pytest tests/` → **450 passed, 0 xfailed**（PG 容器运行时集成 37/37）。
 
 约束：
 
 - 下文凡未明确标注「已实现」的能力，均为**设计规划**；
-- 文中所有指标均为**目标值**，黄金集真实跑通前不填任何数字；
+- 已实测数字以本节与 `docs/STATUS_AND_RISKS.md` 为准；未经实测的指标（真实 LLM 准确率/延迟/成本、微调收益）一律标注"未实测"；
 - 演示数据均为**固定随机种子生成的合成数据**，不代表真实企业收益。
 
 ## 3. 为什么选「售后工单处置」而非泛化聊天 / 营销
@@ -208,8 +213,9 @@ RAG、控制台、微调、观测：均标记「规划中」，V1 不前置实�
 - **可恢复持久化原型（SQLite）** `src/persistence/`：`service.export_state/restore_state` + `idempotency.export/import_records`（不改规则）、JSON 安全编解码、SQLite append-only journal（checksum 校验、损坏 fail-closed）、`RecoverableSession` 重启恢复可续跑；6 项单测 + 演示 `scripts/demo_persistence.py` + `docs/PERSISTENCE.md`；
 - **平台层最小落地** `src/platform/`：PII 脱敏（手机/邮箱/身份证）与整行脱敏日志 formatter；8 项单测；
 - **测试工具链**：`scripts/run_tests.py` 分层回归、`tests/conftest.py`（固定种子 42）、pytest markers、`.github/workflows/ci.yml` 模板；
-- 回归（2026-09-05 实测）：`.venv` 下 `python -m pytest tests/` → **439 passed, 0 xfailed**（PG 容器运行时集成 35/35 实测；无 PostgreSQL 时集成自动跳过）；`python scripts/run_tests.py` → `REGRESSION PASS`；黄金集 `.venv\Scripts\python.exe evals\replay.py` → 11/11（引用探针准确率 0.6667）；影子 `.venv\Scripts\python.exe evals\run_model_shadow_eval.py --mode offline` → 意图准确率 1.0；A/B `.venv\Scripts\python.exe evals\compare_agents.py` → 单 Agent 与 Supervisor 均 11/11（默认单 Agent；报告为确定性产物零 diff）。缺陷台账 D1–D12 已全部修复（`docs/DEFECTS_LOG.md`）。
+- 回归（2026-09-05 实测）：`.venv` 下 `python -m pytest tests/` → **450 passed, 0 xfailed**（PG 容器运行时集成 37/37 实测；无 PostgreSQL 时集成自动跳过）；`python scripts/run_tests.py` → `REGRESSION PASS`；黄金集 `.venv\Scripts\python.exe evals\replay.py` → 11/11（引用探针准确率 0.6667；`--profile pg` 亦 11/11）；影子 `.venv\Scripts\python.exe evals\run_model_shadow_eval.py --mode offline` → 意图准确率 1.0；A/B `.venv\Scripts\python.exe evals\compare_agents.py` → 单 Agent 与 Supervisor 均 11/11（默认单 Agent；报告为确定性产物零 diff）。缺陷台账 D1–D12 已全部修复（`docs/DEFECTS_LOG.md`）。
 - **阶段四（PG-first 运行时收口）**：`AfterSalesApplicationPort` 为 API/Gateway/Runner 唯一依赖（memory 演示与 pg profile 双 Adapter，不 isinstance）；PG profile API e2e 真实 HTTP 走 `PgCommandService`（审批 `decided_by=认证 principal`、expected_version 客户端必填）；`WorkflowRunner` 强制 `workflow_threads` 数据库租约（两 Runner 竞争同线程仅持约者推进，失约 `ThreadLeaseError` 零副作用，崩溃过期可接管）；`scripts/run_api.py --backend pg` 真实装配（PostgresRepository+PgCommandService+PgCommandAdapter+持久 SQLite checkpoint+`WorkflowRunner(lease_repo, owner_id)`，失败不回退 memory、启动不 seed）。启动命令：`scripts/run_api.py --backend memory`（本地演示）/ `scripts/run_api.py --backend pg --pg-url postgresql+psycopg2://opspilot:opspilot@127.0.0.1:5433/opspilot`（PG profile）。
+- **收敛（单 Agent 作品化）**：最小政策 RAG 检索已接入**默认单 Agent** `gather_evidence`（`WorkflowRunner(policy_store=...)`；命中 → `policy:<citation>` 进 `evidence_refs`/`order_summary.policy_citations`，查询注入 → 安全拒绝转人工，无证据不阻断——金额/资格仍由领域服务裁决）；旧 `src/domain/refund_service.py` 标注 LEGACY 历史回归基线，`after_sales/` 为主业务实现。
 
 ### 13.2 规划中（未实现，不写成已实现）
 
