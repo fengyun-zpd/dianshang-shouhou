@@ -220,3 +220,21 @@ def test_live_restart_resume_persistent_checkpoint_with_pg_facts(tmp_path, sessi
     engine.dispose()
     assert op_status[0] == "executed" and op_status[1] is True
     assert n_audit >= 5
+
+
+def test_live_reload_recovers_policy_and_order_items_without_injection(session):
+    """D8 PG 实证：save→load()（无参）政策与订单明细自 PostgreSQL 完整恢复（SQL 断言行存在）。"""
+    svc = _full_service()                       # baseline_service：政策 + 带 items 的 ORD-1
+    session.save(svc)
+    svc2 = session.load()                       # 无参：不重新注入政策
+    st2 = svc2.export_state()
+    assert len(st2["policies"]) == 1
+    assert st2["policies"][0].policy_id == "P-DAMAGED-FULL"
+    o = list(st2["orders"].values())[0]
+    assert len(o.items) == 1
+    engine = create_engine(DATABASE_URL)
+    with engine.connect() as conn:
+        n_pol = conn.execute(text("SELECT COUNT(*) FROM policies")).scalar()
+        n_it = conn.execute(text("SELECT COUNT(*) FROM order_items")).scalar()
+    engine.dispose()
+    assert n_pol == 1 and n_it == 1

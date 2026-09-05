@@ -159,16 +159,23 @@ def test_d7_pg_save_failure_no_memory_db_fork(session, monkeypatch):
     assert svc.export_state() == db_view.export_state()
 
 
-@pytest.mark.xfail(reason="D8：政策与订单明细(items)不入表，load() 需外部重传政策且明细丢失，"
-                          "重启后不能完整恢复（第二/四阶段入表或等价机制）", strict=False)
 def test_d8_restart_recovers_policy_and_items_fully():
+    """D8 修复验证：save→load()（无参）政策与订单明细自 DB 完整恢复，无需调用方重新注入。"""
     svc = service_with_policies(("P-DAMAGED-FULL", ("damaged",), "1.00", 30))  # 订单带 items + 政策
     s = PgBackedSession(MemoryAfterSalesRepository())
     s.save(svc)
-    svc2 = s.load()                                     # 无外部重传
-    assert len(svc2.export_state()["policies"]) == 1    # 现状 [] → 缺陷
-    o = list(svc2.export_state()["orders"].values())[0]
-    assert len(o.items) == 1                            # 现状 [] → 缺陷
+    svc2 = s.load()                                     # 无参：policy/items 自表恢复
+    st2 = svc2.export_state()
+    assert len(st2["policies"]) == 1
+    p = st2["policies"][0]
+    assert p.policy_id == "P-DAMAGED-FULL"
+    assert p.reason_tags == ("damaged",) and p.refund_ratio == Decimal("1.00")
+    o = list(st2["orders"].values())[0]
+    assert len(o.items) == 1 and o.items[0].sku == "SKU-1"
+    assert o.items[0].unit_price == Decimal("100.00")
+    st1 = svc.export_state()
+    assert st2["policies"][0] == st1["policies"][0]
+    assert list(st2["orders"].values())[0].items == list(st1["orders"].values())[0].items
 
 
 @pytest.mark.xfail(reason="D12：Agent/Supervisor 对照报告含逐 run 耗时(ms)，运行间随机浮动使工作区报告 "

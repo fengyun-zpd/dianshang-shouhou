@@ -319,11 +319,13 @@ class PostgresAfterSalesRepository(AfterSalesRepository):
             return [IdemRow(r[0], r[1], r[2], r[3]) for r in rows]
 
     def clear_all(self) -> None:
-        """按 FK 依赖序清空全部业务行（audit→idem→approval→operations→tickets→orders）。
-        0004 表（policies/order_items/entity_seq）不在镜像写域内（命令数据面单独写入）。"""
+        """按 FK 依赖序清空全部镜像业务行（子表先于父表：refund_operations/tickets/order_items
+        引用 orders，须先删；policy/entity_seq 无 FK 依赖随后）。entity_seq 虽由命令 id 分配使用，
+        镜像模式下由内存导出重建，清空无一致性影响。"""
         with self._tx() as conn:
             for table in ("audit_events", "idempotency_records", "approval_decisions",
-                          "refund_operations", "tickets", "orders"):
+                          "refund_operations", "tickets", "order_items", "orders",
+                          "policies", "entity_seq"):
                 conn.execute(text(f"DELETE FROM {table}"))
 
     # ---------- 0004 命令数据面：政策/明细装载与租户自增序列 ----------

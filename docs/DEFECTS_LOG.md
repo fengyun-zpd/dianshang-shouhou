@@ -2,7 +2,7 @@
 
 > 版本：v1.0（2026-09-04）。第一阶段产物：先补回归测试并执行，记录每项 pass/缺陷证据，
 > **不做大面积重构**。修复按第二阶段起逐项进行；修复后把对应 XFAIL 测试改为 PASS 并更新本表。
-> 证据来源：`tests/regression/test_defect_ledger_regressions.py`（`8 passed, 3 xfailed`，
+> 证据来源：`tests/regression/test_defect_ledger_regressions.py`（`9 passed, 2 xfailed`，
 > 2026-09-04 实测，PG 容器运行中）+ 既有测试引用。
 > 严重级：P0=阻断（数据覆盖/跨租户/分叉），P1=并发/恢复/审计完整性问题。
 
@@ -17,7 +17,7 @@
 | D5 | 并发审批只有一个成功 | 部分 | PASS `test_d5_*`（顺序同版本二次审批被拒=版本 CAS 有效）；**并发真双跑**缺操作级锁/DB CAS | P1 | 二（op 级锁/DB CAS） |
 | D6 | PG `with_order_lock` 业务期间保持锁 | **已修复（提交 阶段二）** | PASS `test_d6_*`（FOR UPDATE 事务保持至 yield 体完成；contender 阻塞至持有者提交 dt≈0.6s） | P0 | 二 ✅ |
 | D7 | PG 保存失败内存与 DB 不分叉 | **缺陷** | XFAIL `test_d7_*`（save 失败后内存含新状态、DB 为旧镜像） | P0 | 二（废弃 clear/reinsert；失败回滚+重读） |
-| D8 | 重启后政策/订单明细/审批/审计完整恢复 | **缺陷** | XFAIL `test_d8_*`（政策与 items 不入表，load 需外部重传且明细丢失；审批/审计/幂等已保真） | P1 | 二/四 |
+| D8 | 重启后政策/订单明细/审批/审计完整恢复 | **已修复（提交 阶段三）** | PASS `test_d8_*` + live（`PgBackedSession.load()` 无参自 policies/order_items 表完整恢复政策与明细；Alembic 0004 + PolicyRow/OrderItemRow 装载方法；审批/审计/幂等此前已保真） | P1 | 三 ✅ |
 | D9 | 两进程同时 resume 同一线程单推进 | 未实现 | 无跨进程租约/DB 锁（设计项；单实例重复 resume 幂等已有测试保障） | P1 | 四（workflow_threads+租约） |
 | D10 | unknown 仅原 `operation_id` 对账 | 通过 | PASS `test_d10_*`（换新键 → `OPERATION_UNKNOWN_CONFLICT`；原键 reconcile 成功） | — | 保持 |
 | D11 | 外部未知不自动换键重试 | 通过 | PASS `test_d11_*`（timeout→unknown，无二次 create_refund 审计） | — | 保持 |

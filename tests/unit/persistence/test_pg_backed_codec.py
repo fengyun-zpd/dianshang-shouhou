@@ -60,8 +60,7 @@ def test_order_row_roundtrip():
     back = order_from_row(r)
     assert back.order_id == o.order_id and back.tenant_id == o.tenant_id
     assert back.paid_amount == Decimal("88.50") and back.status == o.status
-    # 订单明细 items 为展示数据、不入表（如实声明的诚实边界）
-    assert back.items == []
+    # 单行编解码不含 items（明细由 load 从 order_items 表按 (tenant, order) 组装恢复，见 D8）
 
 
 def test_ticket_row_roundtrip_with_meta():
