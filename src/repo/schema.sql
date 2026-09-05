@@ -96,3 +96,45 @@ CREATE INDEX IF NOT EXISTS idx_audit_tenant_entity ON audit_events(tenant_id, en
 -- 累计已执行退款 = SELECT COALESCE(SUM(amount),0) FROM refund_operations
 --   WHERE tenant_id=? AND order_id=? AND status='executed'
 -- 容量校验：sum + 本次 <= paid_amount，否则拒绝（与领域错误码 AFTER_SALES_AMOUNT_EXCEEDS_REMAINING 对应）。
+
+-- ============ Alembic 0004：PG-first 命令服务数据模型（阶段三） ============
+-- 政策（含版本与生效期；单一政策多版本行，命令/恢复按 tenant+request_type+生效期取用）
+CREATE TABLE IF NOT EXISTS policies (
+    tenant_id     TEXT NOT NULL,
+    policy_id     TEXT NOT NULL,
+    request_type  TEXT NOT NULL,
+    reason_tags   TEXT NOT NULL,            -- JSON 数组字符串，如 '["damaged"]'
+    window_days   INTEGER NOT NULL,
+    refund_ratio  NUMERIC(5,4) NOT NULL,
+    effective_from DATE NOT NULL,
+    version       INTEGER NOT NULL DEFAULT 1,
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, policy_id, version),
+    CONSTRAINT ck_policies_ratio CHECK (refund_ratio > 0 AND refund_ratio <= 1),
+    CONSTRAINT ck_policies_window CHECK (window_days >= 0),
+    CONSTRAINT ck_policies_effective CHECK (effective_from IS NOT NULL)
+);
+
+-- 订单明细（订单快照展示/证据完整恢复；退款上限仍以 orders.paid_amount 为准）
+CREATE TABLE IF NOT EXISTS order_items (
+    tenant_id   TEXT NOT NULL,
+    order_id    TEXT NOT NULL,
+    sku         TEXT NOT NULL,
+    name        TEXT NOT NULL,
+    quantity    INTEGER NOT NULL,
+    unit_price  NUMERIC(12,2) NOT NULL,
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, order_id, sku),
+    FOREIGN KEY (tenant_id, order_id) REFERENCES orders(tenant_id, order_id),
+    CONSTRAINT ck_order_items_qty CHECK (quantity > 0),
+    CONSTRAINT ck_order_items_price CHECK (unit_price >= 0)
+);
+
+-- 租户作用域自增序列（替代内存全局 _seq；跨进程安全 id 分配）
+CREATE TABLE IF NOT EXISTS entity_seq (
+    tenant_id TEXT NOT NULL,
+    kind      TEXT NOT NULL,                -- 'ticket' | 'operation'
+    next_val  BIGINT NOT NULL DEFAULT 1,
+    PRIMARY KEY (tenant_id, kind),
+    CONSTRAINT ck_entity_seq_kind CHECK (kind IN ('ticket', 'operation'))
+);

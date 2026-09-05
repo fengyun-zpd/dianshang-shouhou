@@ -22,10 +22,12 @@ docker run -d --name opspilot-pg -e POSTGRES_PASSWORD=opspilot -e POSTGRES_DB=op
   approval_decisions / idempotency_records / audit_events）均带 `tenant_id`；
   金额 `NUMERIC(12,2)`；幂等键主键 `(tenant_id, idem_key)`（数据库唯一约束）；
   订单行锁/累计见文件尾注释。
-- Alembic：`alembic.ini` + `alembic/env.py` + `alembic/versions/0001..0003`。
-  已在本机 PG 实测：`python -m alembic -c alembic.ini upgrade head` → 版本 `0003`
-  （0001 六表 + 0002 DB 级 CHECK 约束：金额非负/退款金额为正、工单与操作状态枚举 +
-   0003 tickets 增列 created_by / reason_tags——PG-backed 工单保真恢复所需）。
+- Alembic：`alembic.ini` + `alembic/env.py` + `alembic/versions/0001..0004`。
+  已在本机 PG 实测：`python -m alembic -c alembic.ini upgrade head` → 版本 `0004`
+  （0001 六表 + 0002 DB 级 CHECK + 0003 tickets 增 created_by/reason_tags +
+   0004 PG-first 数据面：policies（含版本/生效期，`(tenant, policy, version)` 唯一与 ratio/window
+   CHECK）/order_items（`(tenant, order, sku)` PK + FK + quantity/price CHECK）/entity_seq
+   （租户作用域自增 `(tenant, kind)`，kind ∈ ticket|operation））。
 - 可复现启动（无 PostgreSQL 时）：`docker run -d --name opspilot-pg -e POSTGRES_PASSWORD=opspilot
   -e POSTGRES_DB=opspilot -e POSTGRES_USER=opspilot -p 5433:5432 postgres:16-alpine`；
   daemon/容器不可达时 PG 集成测试自动 `skip`（数据库集成未实测），不伪造通过。

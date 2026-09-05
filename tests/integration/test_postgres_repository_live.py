@@ -54,7 +54,7 @@ def _clean_db():
     with engine.begin() as conn:
         # 重建全部表（含 CHECK 约束），保证用例确定性
         for table in ("audit_events", "idempotency_records", "approval_decisions",
-                      "refund_operations", "tickets", "orders"):
+                      "refund_operations", "tickets", "orders", "policies", "order_items", "entity_seq"):
             conn.execute(text(f"DROP TABLE IF EXISTS {table} CASCADE"))
         conn.execute(text(_SCHEMA))
     engine.dispose()
