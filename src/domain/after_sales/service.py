@@ -71,6 +71,14 @@ class AfterSalesService:
     # ---------- 数据注入（固定随机种子合成数据；生产为 PostgreSQL，规划中） ----------
 
     def seed_order(self, order: Order) -> None:
+        existing = self._orders.get(order.order_id)
+        if existing is not None and existing.tenant_id != order.tenant_id:
+            # D1：内存订单存储以 order_id 为键——跨租户同 order_id 不能静默互相覆盖；
+            # 多租户同 order_id 共存的权威语义由 PostgreSQL (tenant_id, order_id) 主键承载。
+            raise ValueError(
+                f"order_id {order.order_id} 已被租户 {existing.tenant_id} 占用；"
+                "内存后端拒绝跨租户覆盖（多租户共存请使用 PostgreSQL 唯一事实源）",
+            )
         self._orders[order.order_id] = order
 
     def seed_policy(self, policy: PolicyRule) -> None:

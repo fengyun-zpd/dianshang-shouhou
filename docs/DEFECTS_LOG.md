@@ -2,7 +2,7 @@
 
 > 版本：v1.0（2026-09-04）。第一阶段产物：先补回归测试并执行，记录每项 pass/缺陷证据，
 > **不做大面积重构**。修复按第二阶段起逐项进行；修复后把对应 XFAIL 测试改为 PASS 并更新本表。
-> 证据来源：`tests/regression/test_defect_ledger_regressions.py`（`7 passed, 4 xfailed`，
+> 证据来源：`tests/regression/test_defect_ledger_regressions.py`（`8 passed, 3 xfailed`，
 > 2026-09-04 实测，PG 容器运行中）+ 既有测试引用。
 > 严重级：P0=阻断（数据覆盖/跨租户/分叉），P1=并发/恢复/审计完整性问题。
 
@@ -10,7 +10,7 @@
 
 | 编号 | 缺陷/回归项 | 现状 | 证据 | 严重级 | 归属阶段 |
 | --- | --- | --- | --- | --- | --- |
-| D1 | 跨租户同 `order_id` 不互相覆盖 | **缺陷** | XFAIL `test_d1_*`（`_orders[order_id]` 裸键，第二次 seed 覆盖第一次） | P0 | 二（索引改 `(tenant,entity)`） |
+| D1 | 跨租户同 `order_id` 不互相覆盖 | **已修复（提交 阶段二）** | PASS `test_d1_*`（seed 跨租户同 order_id 显式拒绝 fail-closed 不静默覆盖；多租户共存权威语义由 PG `(tenant_id, order_id)` 主键承载） | P0 | 二 ✅ |
 | D2 | 跨租户同 `idempotency_key` 互不冲突 | **已修复（提交 阶段二）** | PASS `test_d2_*`（命令内幂等键统一为 `f"{tenant}:{key}"` 租户前缀规范键：store/审计/操作实体同值；跨租户同原始 key 各自成功、同租户幂等语义保留） | P0 | 二 ✅ |
 | D3 | 客户只能读取自己的工单 | 通过 | PASS `test_d3_*`；API `test_customer_only_own_ticket` | — | 保持 |
 | D4 | 审批与拒绝携带 `expected_version` | **已修复（提交 阶段二）** | PASS `test_d4_*`（`RejectCommand.decision_version`；过期版本拒绝→409 语义；拒绝亦推进版本） | P1 | 二 ✅ |

@@ -88,15 +88,15 @@ def _create_ticket(svc, tenant, order_id, customer_id, key):
 
 # ============ XFAIL：已知缺陷（修复前如实记录） ============
 
-@pytest.mark.xfail(reason="D1：领域索引为裸 order_id，跨租户同 order_id 相互覆盖（第二阶段修 (tenant,entity)）",
-                   strict=False)
 def test_d1_cross_tenant_same_order_id_not_overwritten():
+    """D1 修复验证：内存后端 seed 跨租户同 order_id 显式拒绝（fail-closed，不静默覆盖）；
+    多租户同 order_id 共存的权威语义由 PostgreSQL (tenant_id, order_id) 主键承载（repo 已测）。"""
     svc = AfterSalesService()
     svc.seed_order(make_order(order_id="ORD-X", tenant_id="T1", paid="100.00"))
-    svc.seed_order(make_order(order_id="ORD-X", tenant_id="T2", paid="200.00"))
-    orders = svc.export_state()["orders"]
-    assert len(orders) == 2
-    assert orders["ORD-X"].tenant_id == "T1"
+    with pytest.raises(ValueError, match="跨租户覆盖"):
+        svc.seed_order(make_order(order_id="ORD-X", tenant_id="T2", paid="200.00"))
+    # 原订单未被覆盖，仍属于 T1
+    assert svc.export_state()["orders"]["ORD-X"].tenant_id == "T1"
 
 
 def test_d2_cross_tenant_same_idem_key_not_conflict():
