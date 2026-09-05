@@ -14,7 +14,9 @@ from .interfaces import (
     IdemRow,
     OperationRow,
     OptimisticLockError,
+    OrderItemRow,
     OrderRow,
+    PolicyRow,
     TicketRow,
     UniqueViolation,
 )
@@ -31,6 +33,9 @@ class MemoryAfterSalesRepository(AfterSalesRepository):
         self._audits: list[AuditRow] = []
         self._idem: dict[tuple[str, str], IdemRow] = {}
         self._executed: dict[tuple[str, str], Decimal] = {}
+        self._policies: list[PolicyRow] = []
+        self._order_items: dict[tuple[str, str, str], OrderItemRow] = {}
+        self._seq: dict[tuple[str, str], int] = {}
         self._lock = threading.RLock()
 
     @contextmanager
@@ -46,13 +51,15 @@ class MemoryAfterSalesRepository(AfterSalesRepository):
                 raise RuntimeError("unit_of_work 不允许嵌套")
             snap = (dict(self._orders), dict(self._tickets), dict(self._operations),
                     list(self._approvals), list(self._audits), dict(self._idem),
-                    dict(self._executed))
+                    dict(self._executed), list(self._policies),
+                    dict(self._order_items), dict(self._seq))
             self._uow_active = True
             try:
                 yield
             except BaseException:
                 (self._orders, self._tickets, self._operations, self._approvals,
-                 self._audits, self._idem, self._executed) = snap
+                 self._audits, self._idem, self._executed, self._policies,
+                 self._order_items, self._seq) = snap
                 raise
             finally:
                 self._uow_active = False
@@ -175,3 +182,35 @@ class MemoryAfterSalesRepository(AfterSalesRepository):
             self._audits.clear()
             self._idem.clear()
             self._executed.clear()
+            self._policies.clear()
+            self._order_items.clear()
+            self._seq.clear()
+
+    # ---------- 0004 命令数据面 ----------
+    def insert_policy(self, row: PolicyRow) -> None:
+        with self._lock:
+            key = (row.tenant_id, row.policy_id, row.version)
+            if any((p.tenant_id, p.policy_id, p.version) == key for p in self._policies):
+                raise UniqueViolation(f"政策 {row.policy_id} v{row.version} 已存在（租户 {row.tenant_id}）")
+            self._policies.append(row)
+
+    def list_policies(self) -> list[PolicyRow]:
+        with self._lock:
+            return list(self._policies)
+
+    def insert_order_item(self, row: OrderItemRow) -> None:
+        with self._lock:
+            key = (row.tenant_id, row.order_id, row.sku)
+            if key in self._order_items:
+                raise UniqueViolation(f"明细 {row.sku} 已存在（{row.order_id}）")
+            self._order_items[key] = row
+
+    def list_order_items(self) -> list[OrderItemRow]:
+        with self._lock:
+            return list(self._order_items.values())
+
+    def next_seq(self, tenant_id: str, kind: str) -> int:
+        with self._lock:
+            key = (tenant_id, kind)
+            self._seq[key] = self._seq.get(key, 0) + 1
+            return self._seq[key]

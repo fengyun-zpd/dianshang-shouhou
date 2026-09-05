@@ -30,7 +30,9 @@ from .interfaces import (
     IdemRow,
     OperationRow,
     OptimisticLockError,
+    OrderItemRow,
     OrderRow,
+    PolicyRow,
     TicketRow,
     UniqueViolation,
 )
@@ -317,11 +319,64 @@ class PostgresAfterSalesRepository(AfterSalesRepository):
             return [IdemRow(r[0], r[1], r[2], r[3]) for r in rows]
 
     def clear_all(self) -> None:
-        """按 FK 依赖序清空全部业务行（audit→idem→approval→operations→tickets→orders）。"""
+        """按 FK 依赖序清空全部业务行（audit→idem→approval→operations→tickets→orders）。
+        0004 表（policies/order_items/entity_seq）不在镜像写域内（命令数据面单独写入）。"""
         with self._tx() as conn:
             for table in ("audit_events", "idempotency_records", "approval_decisions",
                           "refund_operations", "tickets", "orders"):
                 conn.execute(text(f"DELETE FROM {table}"))
+
+    # ---------- 0004 命令数据面：政策/明细装载与租户自增序列 ----------
+    def insert_policy(self, row: PolicyRow) -> None:
+        try:
+            with self._tx() as conn:
+                conn.execute(text(
+                    "INSERT INTO policies (tenant_id, policy_id, request_type, reason_tags,"
+                    " window_days, refund_ratio, effective_from, version) VALUES "
+                    "(:t,:pid,:rt,:tags,:w,:ratio,:eff,:v)"
+                ), {"t": row.tenant_id, "pid": row.policy_id, "rt": row.request_type,
+                    "tags": row.reason_tags, "w": row.window_days,
+                    "ratio": str(row.refund_ratio), "eff": row.effective_from,
+                    "v": row.version})
+        except IntegrityError as e:
+            raise UniqueViolation(
+                f"政策 {row.policy_id} v{row.version} 已存在（租户 {row.tenant_id}）") from e
+
+    def list_policies(self) -> list[PolicyRow]:
+        with self._tx() as conn:
+            rows = conn.execute(text(
+                "SELECT tenant_id, policy_id, request_type, reason_tags, window_days,"
+                " refund_ratio, effective_from, version FROM policies ORDER BY tenant_id, policy_id, version"
+            )).fetchall()
+            return [PolicyRow(r[0], r[1], r[2], r[3], int(r[4]),
+                              Decimal(str(r[5])), str(r[6]), int(r[7])) for r in rows]
+
+    def insert_order_item(self, row: OrderItemRow) -> None:
+        with self._tx() as conn:
+            conn.execute(text(
+                "INSERT INTO order_items (tenant_id, order_id, sku, name, quantity, unit_price)"
+                " VALUES (:t,:o,:sku,:name,:q,:price)"
+            ), {"t": row.tenant_id, "o": row.order_id, "sku": row.sku, "name": row.name,
+                "q": row.quantity, "price": str(row.unit_price)})
+
+    def list_order_items(self) -> list[OrderItemRow]:
+        with self._tx() as conn:
+            rows = conn.execute(text(
+                "SELECT tenant_id, order_id, sku, name, quantity, unit_price"
+                " FROM order_items ORDER BY tenant_id, order_id, sku"
+            )).fetchall()
+            return [OrderItemRow(r[0], r[1], r[2], r[3], int(r[4]), Decimal(str(r[5])))
+                    for r in rows]
+
+    def next_seq(self, tenant_id: str, kind: str) -> int:
+        """租户作用域原子递增：INSERT … ON CONFLICT DO UPDATE（跨连接安全，单语句）。"""
+        with self._tx() as conn:
+            value = conn.execute(text(
+                "INSERT INTO entity_seq (tenant_id, kind, next_val) VALUES (:t,:k,1)"
+                " ON CONFLICT (tenant_id, kind) DO UPDATE"
+                " SET next_val = entity_seq.next_val + 1 RETURNING next_val"
+            ), {"t": tenant_id, "k": kind}).scalar()
+            return int(value)
 
     # ---------- helpers ----------
     @staticmethod

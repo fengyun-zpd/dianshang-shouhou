@@ -14,7 +14,9 @@ from src.repo import (
     MemoryAfterSalesRepository,
     OperationRow,
     OptimisticLockError,
+    OrderItemRow,
     OrderRow,
+    PolicyRow,
     TicketRow,
     UniqueViolation,
 )
@@ -146,3 +148,28 @@ def test_unit_of_work_nested_rejected(repo):
         with repo.unit_of_work():
             with repo.unit_of_work():
                 pass
+
+
+# ---------- 0004 命令数据面（memory 契约） ----------
+
+def test_policy_insert_list_version_unique(repo):
+    repo.insert_policy(PolicyRow("T1", "P-1", "refund", '["damaged"]', 30,
+                                 Decimal("1.0000"), "2026-01-01", 1))
+    with pytest.raises(UniqueViolation):   # 同 (tenant, policy, version) 重复
+        repo.insert_policy(PolicyRow("T1", "P-1", "refund", '["damaged"]', 30,
+                                     Decimal("1.0000"), "2026-01-01", 1))
+    repo.insert_policy(PolicyRow("T1", "P-1", "refund", '["damaged"]', 30,
+                                 Decimal("0.5000"), "2027-01-01", 2))   # 新版本共存
+    repo.insert_policy(PolicyRow("T2", "P-1", "refund", '["damaged"]', 30,
+                                 Decimal("1.0000"), "2026-01-01", 1))   # 跨租户
+    assert len(repo.list_policies()) == 3
+
+
+def test_order_item_and_next_seq(repo):
+    repo.insert_order(_order())
+    repo.insert_order_item(OrderItemRow("T1", "ORD-1", "S1", "商品A", 2, Decimal("50.00")))
+    assert len(repo.list_order_items()) == 1
+    assert repo.next_seq("T1", "ticket") == 1
+    assert repo.next_seq("T1", "ticket") == 2        # 同租户同 kind 递增
+    assert repo.next_seq("T1", "operation") == 1     # kind 隔离
+    assert repo.next_seq("T2", "ticket") == 1        # 租户隔离

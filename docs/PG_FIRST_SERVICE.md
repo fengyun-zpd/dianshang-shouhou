@@ -103,9 +103,9 @@ with repo.unit_of_work():                       # 单事务；异常整体回滚
    纯规则模块（权限/订单租户·客户匹配/金额容量/表驱动状态机/expected_version CAS/幂等命中/
    unknown 守卫/关单定性，9 项单测）已接入 service（版本校验与状态迁移判定改用 rules，
    错误码与消息文本保持）；全量 353 passed / 3 xfailed。
-2. schema 0004 数据模型（已完成：policies/order_items/entity_seq 建表 + 迁移 0003→0004 本机实测
-   version=0004 + live 测试 4 项——版本唯一/CHECK/FK/序列递增）；Repository 命令面方法与
-   政策/明细装载（收编 D8）在下一步。
+2. schema 0004 数据模型（已完成）+ Repository 命令数据面方法（已完成：PolicyRow/OrderItemRow、
+   insert/list_policies、insert/list_order_items、next_seq 租户原子递增；契约 +2 / PG live +2，
+   8 连接并发取号不重复）。政策/明细的 pg_backed 装载恢复（D8 转 PASS）与八命令事务接口下一步。
 3. create_ticket PG-first + 集成测试（D8 收编第一步）。
 4. create_refund_draft/submit/approve/reject（版本 CAS）。
 5. execute/reconcile/close_ticket（订单行锁容量/unknown 原键）。

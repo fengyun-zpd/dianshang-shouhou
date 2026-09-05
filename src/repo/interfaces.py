@@ -98,6 +98,30 @@ class IdemRow:
     refund_id: str
 
 
+@dataclass(frozen=True)
+class PolicyRow:
+    """政策行（0004）：reason_tags 为 JSON 数组字符串；同 (tenant, policy_id, version) 唯一。"""
+    tenant_id: str
+    policy_id: str
+    request_type: str
+    reason_tags: str          # '["damaged","broken"]'
+    window_days: int
+    refund_ratio: Decimal
+    effective_from: str       # 'YYYY-MM-DD'
+    version: int = 1
+
+
+@dataclass(frozen=True)
+class OrderItemRow:
+    """订单明细行（0004）：退款上限以 orders.paid_amount 为准，明细供展示/证据完整恢复。"""
+    tenant_id: str
+    order_id: str
+    sku: str
+    name: str
+    quantity: int
+    unit_price: Decimal
+
+
 class AfterSalesRepository(ABC):
     """表级 Repository 契约（实现：内存 / PostgreSQL）。"""
 
@@ -194,3 +218,23 @@ class AfterSalesRepository(ABC):
     @abstractmethod
     def clear_all(self) -> None:
         """清空全部业务行（PG-backed 会话整库镜像写用；实现按 FK 依赖序删除）。"""
+
+    # ---------- 0004 命令数据面：政策/明细装载与租户自增序列 ----------
+    @abstractmethod
+    def insert_policy(self, row: PolicyRow) -> None:
+        """同 (tenant_id, policy_id, version) 已存在 → UniqueViolation。"""
+
+    @abstractmethod
+    def list_policies(self) -> list[PolicyRow]:
+        """全表政策（恢复装载用）。"""
+
+    @abstractmethod
+    def insert_order_item(self, row: OrderItemRow) -> None: ...
+
+    @abstractmethod
+    def list_order_items(self) -> list[OrderItemRow]:
+        """全表明细（恢复装载用）。"""
+
+    @abstractmethod
+    def next_seq(self, tenant_id: str, kind: str) -> int:
+        """租户作用域自增序列（kind ∈ ticket|operation）；原子递增并返回新值（PG 单语句）。"""

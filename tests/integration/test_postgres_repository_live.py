@@ -17,7 +17,9 @@ from src.repo import (
     IdemRow,
     OperationRow,
     OptimisticLockError,
+    OrderItemRow,
     OrderRow,
+    PolicyRow,
     PostgresAfterSalesRepository,
     TicketRow,
     UniqueViolation,
@@ -249,3 +251,47 @@ def test_live_unit_of_work_nested_rejected(repo):
         with repo.unit_of_work():
             with repo.unit_of_work():
                 pass
+
+
+# ---------- 0004 命令数据面（真实 PG：policy/order_items/next_seq） ----------
+
+def test_live_policy_and_order_item_surface(repo):
+    repo.insert_policy(PolicyRow("tenant-a", "P-1", "refund", '["damaged"]', 30,
+                                 Decimal("1.0000"), "2026-01-01", 1))
+    with pytest.raises(UniqueViolation):   # 同 (tenant, policy, version) 重复
+        repo.insert_policy(PolicyRow("tenant-a", "P-1", "refund", '["damaged"]', 30,
+                                     Decimal("1.0000"), "2026-01-01", 1))
+    repo.insert_policy(PolicyRow("tenant-a", "P-1", "refund", '["damaged"]', 30,
+                                 Decimal("0.5000"), "2027-01-01", 2))
+    repo.insert_policy(PolicyRow("tenant-b", "P-1", "refund", '["damaged"]', 30,
+                                 Decimal("1.0000"), "2026-01-01", 1))
+    assert len(repo.list_policies()) == 3
+    repo.insert_order(_order())
+    repo.insert_order_item(OrderItemRow("tenant-a", "ORD-1", "S1", "商品A", 2, Decimal("50.00")))
+    rows = repo.list_order_items()
+    assert len(rows) == 1 and rows[0].unit_price == Decimal("50.00") and rows[0].quantity == 2
+
+
+def test_live_next_seq_atomic_across_connections():
+    """真实 PG：多连接并发取号 (tenant,kind) 不重复（ON CONFLICT DO UPDATE 原子递增）。"""
+    outcomes: list[int] = []
+    lock = threading.Lock()
+    barrier = threading.Barrier(8)
+
+    def worker():
+        try:
+            barrier.wait()
+            v = PostgresAfterSalesRepository(DATABASE_URL).next_seq("tenant-a", "ticket")
+        except Exception:  # noqa: BLE001
+            v = -1
+        with lock:
+            outcomes.append(v)
+
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len(outcomes) == 8
+    assert sorted(outcomes) == list(range(1, 9))   # 1..8 各一次，无重复
+    assert PostgresAfterSalesRepository(DATABASE_URL).next_seq("tenant-b", "ticket") == 1
