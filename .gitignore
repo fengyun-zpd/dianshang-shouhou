@@ -3,6 +3,7 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .venv/
+.venv-*/          # 旧解释器备份（临时，成功重建后删除）
 venv/
 .hypothesis/
 .pytest_cache/
