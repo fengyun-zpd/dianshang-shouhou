@@ -2,7 +2,7 @@
 
 > 归属：电商售后多智能体工单系统（OpsPilot After-Sales，目标远程 `fengyun-zpd/dianshang-shouhou`）
 > 性质：总负责人 Agent 的侦察与实施基线记录。本文档只陈述事实与判断，不把规划写成已实现；实时状态以此文件与测试输出为准。
-> 版本：v0.17（阶段 0–6 + J/K1 + K2–K6 + 收口 + PG DB 约束闭环，2026-09-04）
+> 版本：v0.46（阶段 A 端口收敛与 R7 收口，2026-09-05）
 
 ## 1. 工作区与目录角色
 
@@ -23,7 +23,7 @@
 
 ### ✅ 已实现（有代码 + 测试证据）
 
-| 项 | 证据（`.venv` 下 `python -m pytest tests/` → **417 passed, 0 xfailed**，2026-09-05 实测；PG 集成 33/33） |
+| 项 | 证据（`.venv` 下 `python -m pytest tests/` → **439 passed, 0 xfailed**，2026-09-05 实测；PG 集成 35/35） |
 | --- | --- |
 | 工程宪法 `AGENTS.md` v0.2；README 设计基线 + 实施进度节 | 文件存在 |
 | 退款最小闭环（确定性领域服务） | `src/domain/{models,idempotency,refund_service}.py` + `tests/test_refund_service.py`（14 项） |
@@ -123,3 +123,4 @@
 - v0.43（2026-09-05）—— 阶段四第 3 节（runtime profile 门禁骨架）：src/api/runtime.py（RuntimeProfile memory|pg；pg 要求 PostgreSQL 可达 + alembic schema=0005 + 健康探测，不满足 RuntimeError **绝不静默降级内存**；require_postgres_ready/build_pg_command_service）；run_api.py 增 --require-pg 门禁（失败退出码 1）；单测 4 项（profile 值/可达且 0005 ok/不可达 raise/版本不符 raise）；全量 406 passed 0 xfailed。API/Gateway/Runner 的 AfterSalesApplicationPort 化与 PG profile HTTP e2e 为进行中（不声称已切换）。
 - v0.44（2026-09-05）—— 阶段四第 5 节（测试隔离）：scripts/run_pg_tests_isolated.ps1 —— 每 worker 独立 database（opspilot_p4a/b，同实例）各自从空库 Alembic 全程升级（0001→0005 成功）后运行同一批 PG 集成（各 25 passed，exit 0）＝对象级完全隔离，并行亦互不踩库；实测 ISOLATED DOUBLE-RUN PASS。
 - v0.45（2026-09-05）—— 阶段四收口进展：实测新基线 **417 passed, 0 xfailed**（unit 331 / integration 33 / e2e 2 / property 12 / security 4 / regression 11 / phase4 10 / 根 14）；run_tests.py 分层扩展 regression/phase4 独立统计；测试隔离：每 worker 独立 database（scripts/run_pg_tests_isolated.ps1）空库 Alembic 0001→0005 全程升级成功且各跑 PG 集成 25 passed（ISOLATED DOUBLE-RUN PASS）。未完成/进行中（如实）：WorkflowRunner/AfterSalesGateway 端口收敛与 PG adapter 工作流只读能力、Runner 内部强制租约（D9 收口项，repo 原语已有并测）、run_api --backend pg 真实装配、API 审批以认证 principal 为 decided_by、并行两进程集成运行。
+- v0.46（2026-09-05）—— 阶段 A 端口收敛与 R7 收口（commit `4eb2614`）：**全量实测 439 passed, 0 xfailed**（unit 335 / integration 35 / e2e 2 / property 12 / security 4 / regression 11 / phase4 26 / 根 14；PG 集成 35/35）。已完成：① `AfterSalesApplicationPort` 扩展 tenant-first 只读（`list_operations`、`audit_log(tenant)`），Memory/PgCommand 双 Adapter 对称实现；② API 路由全 tenant-first Port 化（删除裸查+手工比租户；保留 decided_by=principal 与 expected_version 严格 422）；③ `AfterSalesGateway`/`WorkflowRunner` 只依赖 Port（bridge/replay/demo/测试调用点包 `MemoryAdapter`）；④ 删除 `PgServiceFacade`（含裸 ID 全扫租户定位路径）；⑤ `run_api --backend memory|pg` 真实装配（PostgresRepository+PgCommandService+PgCommandAdapter+持久 SQLite checkpoint+`WorkflowRunner(lease_repo, owner_id)`，pg 失败退出码非 0 不回退 memory、启动不 seed；`require_expected_version=True`）；⑥ PG e2e 直用 `PgCommandAdapter`（HTTP 全链 SQL 断言不变）；PA1/PA3/PA4/R7 四个 strict xfail 按真实实现转 PASS；D9 收口（Runner 强制租约 live 2 项 + 语义 live 3 项全绿）。遗留（如实）：内存 vs PG 对"存在但异租户 id"查询错误码差异（Memory 403 TENANT_MISMATCH / PG 404 NOT_FOUND，均安全拒绝，PG 端消除差异需全局扫描故维持）；审计水位跨租户交替收集边界与旧实现等价（V1 单流程无影响，docstring 注明）。

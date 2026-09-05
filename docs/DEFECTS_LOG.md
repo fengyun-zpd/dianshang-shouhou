@@ -14,11 +14,11 @@
 | D2 | 跨租户同 `idempotency_key` 互不冲突 | **已修复（提交 阶段二）** | PASS `test_d2_*`（命令内幂等键统一为 `f"{tenant}:{key}"` 租户前缀规范键：store/审计/操作实体同值；跨租户同原始 key 各自成功、同租户幂等语义保留） | P0 | 二 ✅ |
 | D3 | 客户只能读取自己的工单 | **已补强（提交 阶段三第一步）** | PASS `test_customer_cannot_read_other_customers_ticket` / `test_customer_can_read_own_ticket_only` / `test_d3_*`——API `GET /tickets/{id}` 增加 CUSTOMER 资源级授权（越权 → 403 `AFTER_SALES_PERMISSION_DENIED`，响应不含目标工单字段/电话）；原 `test_customer_only_own_ticket` 仅覆盖创建侧，不作为完整证据 | — | 三 ✅（资源授权） |
 | D4 | 审批与拒绝携带 `expected_version` | **已修复（提交 阶段二）** | PASS `test_d4_*`（`RejectCommand.decision_version`；过期版本拒绝→409 语义；拒绝亦推进版本） | P1 | 二 ✅ |
-| D5 | 并发审批只有一个成功 | 部分 | PASS `test_d5_*`（顺序同版本二次审批被拒=版本 CAS 有效）；**并发真双跑**缺操作级锁/DB CAS | P1 | 二（op 级锁/DB CAS） |
+| D5 | 并发审批只有一个成功 | **已修复（阶段三第五步收口）** | PASS `test_d5_*`（顺序同版本二次审批被拒=版本 CAS 有效）+ PG live 并发（`test_pg_commands_live.py`：两连接并发 approve 恰一成功，另一转 `DECISION_VERSION_MISMATCH` 零残留） | P1 | 三 ✅ |
 | D6 | PG `with_order_lock` 业务期间保持锁 | **已修复（提交 阶段二）** | PASS `test_d6_*`（FOR UPDATE 事务保持至 yield 体完成；contender 阻塞至持有者提交 dt≈0.6s） | P0 | 二 ✅ |
 | D7 | PG 保存失败内存与 DB 不分叉 | **已修复（提交 阶段三第五步收口）** | PASS `test_d7_*`——生产命令路径（`PgCommandService`）不调用 clear_all/镜像重插（源码断言）；命令失败整事务回滚零残留由 PG live 实证（`test_live_no_partial_commit_on_validation_failure` 等）；`PgBackedSession` 全量镜像写仅作兼容迁移工具并如实标注 | P0 | 三 ✅ |
 | D8 | 重启后政策/订单明细/审批/审计完整恢复 | **已修复（提交 阶段三）** | PASS `test_d8_*` + live（`PgBackedSession.load()` 无参自 policies/order_items 表完整恢复政策与明细；Alembic 0004 + PolicyRow/OrderItemRow 装载方法；审批/审计/幂等此前已保真） | P1 | 三 ✅ |
-| D9 | 两进程同时 resume 同一线程单推进 | **部分实现（验收中）** | repo 原语 claim_thread/release_thread（获租/续租/过期接管，并发单胜/竞争单推进已测）；Runner 内部强制租约未完成（阶段四收口项） | P1 | 四（收口中） | 无跨进程租约/DB 锁（设计项；单实例重复 resume 幂等已有测试保障） | P1 | 四（workflow_threads+租约） |
+| D9 | 两进程同时 resume 同一线程单推进 | **已修复（阶段四收口，2026-09-05 实测）** | `workflow_threads` 表（tenant/thread/fingerprint/lease_owner/lease_until/generation）；`claim_thread`（INSERT..ON CONFLICT 原子获租/续租/过期接管，fp 不可变——同 owner 续租不改 fp、异 fp 拒绝不覆盖）；`WorkflowRunner(lease_repo, owner_id)` 强制租约：acquire-before-invoke，读 checkpoint/update_state/invoke 前必须持约，失约 `ThreadLeaseError` 零副作用；finished/异常 owner 释放、等审批保持、崩溃过期可接管；resume 从 workflow_threads 既有 fp 续租。验收：`test_runner_lease_live.py` 2 项（竞争恰一推进+失约零副作用；过期接管+旧 owner 持约期被拒）+ `test_d9_workflow_lease_live.py` 3 项（fp 语义/并发 claim）+ run_api pg profile 默认强制租约（`test_run_api_pg_backend_live.py`） | P1 | 四 ✅ |
 | D10 | unknown 仅原 `operation_id` 对账 | 通过 | PASS `test_d10_*`（换新键 → `OPERATION_UNKNOWN_CONFLICT`；原键 reconcile 成功） | — | 保持 |
 | D11 | 外部未知不自动换键重试 | 通过 | PASS `test_d11_*`（timeout→unknown，无二次 create_refund 审计） | — | 保持 |
 | D12 | 报告生成无随机时间差异 | **已修复（提交 阶段三第七步前哨）** | PASS `test_d12_*`（`compare_agents.py` 报告移除 P50/P95 与逐 case 耗时列，结论仅由通过率决定；两次运行报告哈希相同=跨运行零 diff） | P1 | 七 ✅ |

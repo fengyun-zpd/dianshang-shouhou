@@ -1,23 +1,23 @@
 # 测试基线（TESTING BASELINE）
 
 > 归属：电商售后多智能体工单系统（`D:\workplace\PyCharmMiscProject\私域`）
-> 版本：v0.8。本文档定义测试分层、验收命令、Bug 分类与回归纪律。
-> 全量基线（2026-09-05 本地实测）：`.venv\Scripts\python.exe -m pytest tests/ -q` → **417 passed, 0 xfailed**（PostgreSQL 容器运行时集成 33/33 实测；无 PostgreSQL 时集成自动跳过；缺陷台账 D1–D12 已全部修复）。
+> 版本：v0.9。本文档定义测试分层、验收命令、Bug 分类与回归纪律。
+> 全量基线（2026-09-05 本地实测）：`.venv\Scripts\python.exe -m pytest tests/ -q` → **439 passed, 0 xfailed**（PostgreSQL 容器运行时集成 35/35 实测；无 PostgreSQL 时集成自动跳过；缺陷台账 D1–D12 已全部修复，含 D9 跨进程租约）。
 
 ## 1. 分层策略与验收命令
 
-| 层 | 覆盖内容 | 目录 | 当前状态（收集数，全量 417） |
+| 层 | 覆盖内容 | 目录 | 当前状态（收集数，全量 439） |
 | --- | --- | --- | --- |
-| unit | 纯函数/领域服务/权限/状态机/幂等/API安全与 health/RAG/评测/桥接/Repository 契约/PG-backed codec/持久 checkpoint/PG-first 命令服务/rules/ports与 adapters/runtime profile | `tests/unit/` | ✅ 331 项全绿 |
-| integration | PostgreSQL 实首（行锁/幂等三元组/0004数据面/PG-first 命令单事务与并发 CAS/PG profile HTTP e2e/0005约束/D9 租约 live | `tests/integration/` | ✅ 33 项 |
+| unit | 纯函数/领域服务/权限/状态机/幂等/API安全与 health/RAG/评测/桥接/Repository 契约/PG-backed codec/持久 checkpoint/PG-first 命令服务/rules/ports与 adapters/runtime profile | `tests/unit/` | ✅ 335 项全绿 |
+| integration | PostgreSQL 实首（行锁/幂等三元组/0004数据面/PG-first 命令单事务与并发 CAS/PG profile HTTP e2e/0005约束/D9 租约 live/run_api pg 装配 live | `tests/integration/` | ✅ 35 项 |
 | e2e | 端到端流程/审批中断恢复 | `tests/e2e/` | ✅ 2 项 |
 | property | 性质测试 | `tests/property/` | ✅ 12 项 |
 | security | 越权/注入/租户隔离/未知态/PII | `tests/security/` | ✅ 4 项 |
 | regression | 缺陷台账 D1–D12 | `tests/regression/` | ✅ 11 项 |
-| phase4 | 阶段四契约（审批事实/幂等三元组/政策版本/D9 租约） | `tests/phase4/` | ✅ 10 项 |
+| phase4 | 阶段四契约（审批事实/幂等三元组/政策版本/D9 租约/端口收敛/run_api pg 装配） | `tests/phase4/` | ✅ 26 项 |
 | 根层 | 退款最小闭环 | `tests/test_refund_service.py` | ✅ 14 项 |
 
-> 汇总：331 + 33 + 2 + 12 + 4 + 11 + 10 + 14 = **417 passed, 0 xfailed**（2026-09-05 实测）。
+> 汇总：335 + 35 + 2 + 12 + 4 + 11 + 26 + 14 = **439 passed, 0 xfailed**（2026-09-05 实测）。
 
 
 验收命令（项目根执行）：
@@ -79,3 +79,4 @@ python -m pytest tests/ -v             # 全量明细
 - v0.4（2026-09-04）—— PG-backed 领域会话（`src/persistence/pg_backed.py`）：codec/roundtrip 单测 +7（unit 281 项，无 PG 依赖）；PG 集成 +4（integration 17 项：SQL 断言事实在 PG/roundtrip/save 失败整单位回滚/重启无重复副作用）；API 认证身份 `TokenResolver` 端口 +1；全量 **330 passed**（PG 集成 17/17）。
 - v0.5（2026-09-04）—— 可持久化 LangGraph checkpoint（阶段三）：`src/agents/checkpoint.py`（SqliteSaver 落 SQLite 文件）+ 单测 +3（unit 284：跨实例/同文件重启 resume 不重放、注入伪造业务视图不覆盖领域事实、checkpoint 真实落盘）+ PG 集成 +1（integration 18：挂起审批→业务事实落 PG→重启后领域从 PG 重建+持久 checkpoint resume→审批/执行正确无重复副作用，SQL 断言 executed）；全量 **334 passed**（PG 集成 18/18）。
 - v0.6（2026-09-04）—— 升级目标第一阶段：缺陷台账回归层 `tests/regression`（11 项 = 4 passed + 7 xfailed）；`docs/DEFECTS_LOG.md` 记录 D1–D12 证据/严重级/归属阶段；全量 **338 passed, 7 xfailed**（xfail=已知缺陷，修复后转 PASS，不伪造通过）。
+- v0.9（2026-09-05）—— 阶段 A 端口收敛与 R7 收口：phase4 26 项（PA1/PA3/PA4/R7 四个 strict xfail 按真实实现转 PASS——API/Gateway/Runner 只依赖 `AfterSalesApplicationPort`、删除 `PgServiceFacade`、`run_api --backend pg` 真实装配）；integration 35 项（新增 `test_run_api_pg_backend_live` 2 项）；unit 335 项；全量 **439 passed, 0 xfailed**（实测，PG 容器运行时集成 35/35）；缺陷台账 D9 转 PASS（Runner 内部强制租约完成）。

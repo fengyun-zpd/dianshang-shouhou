@@ -48,7 +48,7 @@ MCP（Model Context Protocol）作为跨服务/跨 Agent 网络协议属**规划
   （FORBIDDEN_ACTIONS 协议中不存在）/未知动作/跨租户注入拒绝/租户一致容忍/Schema 校验/正常只读查询/
   政策注入拒绝/发起请求到审批（零执行、零退款）/熔断 fail-closed/审计无 PII 与请求体/
   角色矩阵（审批/执行/关单永不进入桥接层）/未知结果按原 `operation_id` 对账（禁止换键重试）。
-- 全量回归：`.venv\Scripts\python.exe -m pytest tests/` → 395 passed, 0 xfailed（2026-09-04 实测；PostgreSQL 集成 31/31，无 PG 自动跳过）。
+- 全量回归：`.venv\Scripts\python.exe -m pytest tests/` → 439 passed, 0 xfailed（2026-09-05 实测；PostgreSQL 集成 35/35，无 PG 自动跳过）。
 - 未接入真实 MuleSoft / 网络端点（无凭据、不连外部）；身份映射为内存配置（生产可换 DB/配置）。
 - 修订：v1.1（2026-09-04）补充角色矩阵与未知结果对账语义。
 - 修订：v1.2（2026-09-04）测试计数与实际收集同步为 14 项（含角色矩阵与未知对账），全量基线 310 passed、PG 集成 9/9。
