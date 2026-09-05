@@ -244,12 +244,39 @@ def audit(request: Request,
 
 # ---------- 工厂 ----------
 
-def create_app(service: AfterSalesService, registry: TokenResolver) -> FastAPI:
+def create_app(service: AfterSalesService, registry: TokenResolver,
+               pg_probe=None) -> FastAPI:
+    """FastAPI 工厂。pg_probe：可调用 → bool，用于 /health/ready 反映 PostgreSQL 可用性
+    （None=未配置外部依赖探测，ready 恒 ok）。业务命令层默认仍为注入的 service
+    （内存 AfterSalesService 或未来 PG-first 装配），本工厂不连接任何真实外部系统。"""
     app = FastAPI(title="OpsPilot After-Sales API", version="0.1")
     app.state.service = service
     app.state.registry = registry
+    app.state.pg_probe = pg_probe
     app.add_middleware(AuthMiddleware, registry=registry)
     app.add_middleware(RequestIdMiddleware)
+
+    @app.get("/health/live", tags=["ops"])
+    def liveness():
+        return {"status": "ok"}
+
+    @app.get("/health/ready", tags=["ops"])
+    def readiness(request: Request):
+        probe = app.state.pg_probe
+        if probe is not None:
+            try:
+                ok = bool(probe())
+            except Exception:  # noqa: BLE001
+                ok = False
+            if not ok:
+                from fastapi.responses import JSONResponse
+                return JSONResponse(
+                    status_code=503,
+                    content={"status": "degraded",
+                             "reason": "PostgreSQL 不可用（业务事实源依赖）"},
+                )
+        return {"status": "ok", "deps": {"postgresql": "ok" if probe is not None else "not-configured"}}
+
     app.include_router(router)
     register_error_handlers(app)
     return app

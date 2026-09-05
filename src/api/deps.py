@@ -57,6 +57,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
         self._registry = registry
 
     async def dispatch(self, request: Request, call_next):
+        # 探活/就绪端点对负载均衡与监控公开，不要求凭据
+        if request.url.path.startswith("/health"):
+            return await call_next(request)
         token = request.headers.get("X-Api-Key")
         identity = self._registry.resolve(token)
         if identity is None:
