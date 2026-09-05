@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
+from decimal import Decimal
 
 from src.domain.after_sales.models import (
     AfterSalesError,
@@ -22,13 +23,25 @@ from src.domain.after_sales.models import (
     Role,
     TicketStatus,
 )
+from src.domain.after_sales.models import (
+    AfterSalesError,
+    AfterSalesErrorCode,
+    AfterSalesTicket,
+    Operation,
+    OperationStatus,
+    Role,
+    TERMINAL_OPERATION_STATUSES,
+    TicketStatus,
+)
 from src.domain.after_sales.policies import detect_conflict, match_policies
 from src.domain.after_sales.rules import (
     check_operation_transition,
     require_role,
+    validate_amount_positive,
     validate_customer_order_match,
     validate_decision_version,
     validate_order_access,
+    validate_refund_capacity,
 )
 from src.domain.idempotency import payload_hash as _payload_hash
 from src.persistence.pg_backed import (
@@ -37,7 +50,13 @@ from src.persistence.pg_backed import (
     policy_from_row,
     ticket_from_row,
 )
-from src.repo import AfterSalesRepository, AuditRow, IdemRow, TicketRow
+from src.repo import (
+    AfterSalesRepository,
+    AuditRow,
+    IdemRow,
+    OperationRow,
+    TicketRow,
+)
 
 
 def _fkey(tenant_id: str, raw_key: str) -> str:
@@ -167,3 +186,159 @@ class PgCommandService:
                         OperationStatus(row.status), OperationStatus.REJECTED,
                         note=cmd.reason)
         return operation_from_row(final_row)
+
+    # ---------- 退款草稿（Agent；订单行锁+容量+unknown 守卫） ----------
+
+    def create_refund_draft(self, tenant_id: str, cmd) -> Operation:
+        require_role(cmd.actor, (Role.AGENT,), "只有 Agent 可以创建退款草稿")
+        amount = Decimal(str(cmd.amount)).quantize(Decimal("0.01"))
+        validate_amount_positive(amount)
+        with self._repo.unit_of_work():
+            trow = self._repo.get_ticket(tenant_id, cmd.ticket_id)
+            if trow is None:
+                raise AfterSalesError(AfterSalesErrorCode.TICKET_NOT_FOUND,
+                                      f"工单 {cmd.ticket_id} 不存在")
+            if trow.status == "closed":
+                raise AfterSalesError(AfterSalesErrorCode.INVALID_STATE_TRANSITION,
+                                      "工单已关闭，禁止追加退款操作")
+            order = order_from_row(self._repo.lock_order_for_update(tenant_id, trow.order_id))
+            fkey = _fkey(tenant_id, cmd.idempotency_key)
+            phash = _payload_hash({
+                "ticket_id": cmd.ticket_id, "order_id": order.order_id,
+                "amount": str(amount), "reason_detail": cmd.reason_detail,
+            })
+            existing = self._repo.get_idem(tenant_id, fkey)
+            if existing is not None:
+                if existing.payload_hash == phash and existing.refund_id != "<pending>":
+                    row = self._repo.get_operation(tenant_id, existing.refund_id)
+                    if row is not None:
+                        return operation_from_row(row)
+                raise AfterSalesError(AfterSalesErrorCode.IDEMPOTENCY_CONFLICT,
+                                      "同键异载荷：退款草稿被拒绝")
+            if any(o.status == "unknown" for o in self._ops_of_order(tenant_id, order.order_id)):
+                raise AfterSalesError(
+                    AfterSalesErrorCode.OPERATION_UNKNOWN_CONFLICT,
+                    f"订单 {order.order_id} 存在未知态操作，只能以原幂等键查询对账，禁止换键重试")
+            executed = self._repo.executed_sum_for_order(tenant_id, order.order_id)
+            validate_refund_capacity(order.paid_amount, executed, amount)
+            op_id = f"OP-{self._repo.next_seq(tenant_id, 'operation'):05d}"
+            row = OperationRow(tenant_id, op_id, cmd.ticket_id, order.order_id, "refund",
+                               amount, "draft", fkey, cmd.actor.value, 1, None, False)
+            self._repo.insert_operation(row)
+            self._repo.insert_idem(IdemRow(tenant_id, fkey, phash, op_id))
+            self._audit(tenant_id, "create_refund", "operation", op_id, cmd.actor,
+                        None, OperationStatus.DRAFT, idem_key=fkey)
+        return operation_from_row(row)
+
+    # ---------- 执行（SYSTEM；仅 approved；行锁容量；timeout→unknown） ----------
+
+    def execute(self, tenant_id: str, cmd) -> Operation:
+        require_role(cmd.actor, (Role.SYSTEM,), "只有领域服务可以执行已批准动作")
+        if cmd.external_result not in ("success", "timeout"):
+            raise AfterSalesError(AfterSalesErrorCode.MISSING_REQUIRED_FIELD,
+                                  f"未知 external_result：{cmd.external_result!r}")
+        with self._repo.unit_of_work():
+            seed = self._load_op(tenant_id, cmd.operation_id)
+            order = order_from_row(self._repo.lock_order_for_update(tenant_id, seed.order_id))
+            row = self._load_op(tenant_id, cmd.operation_id)   # 行锁后重读最新
+            if row.status != "approved":
+                raise AfterSalesError(
+                    AfterSalesErrorCode.INVALID_STATE_TRANSITION,
+                    f"只有 approved 操作可执行，当前 {row.status}（unknown 态只能对账收口）")
+            if cmd.external_result == "success":
+                executed = self._repo.executed_sum_for_order(tenant_id, row.order_id)
+                validate_refund_capacity(order.paid_amount, executed, row.amount or _ZERO)
+                target = replace(row, status="executed", executed=True)
+                self._repo.update_operation_versioned(target, expected_version=row.version)
+                final = self._repo.get_operation(tenant_id, row.operation_id)
+                self._audit(tenant_id, "execute", "operation", row.operation_id, cmd.actor,
+                            OperationStatus(row.status), OperationStatus.EXECUTED)
+            else:  # timeout → unknown（不累计；只能原 operation_id 对账）
+                target = replace(row, status="unknown")
+                self._repo.update_operation_versioned(target, expected_version=row.version)
+                final = self._repo.get_operation(tenant_id, row.operation_id)
+                self._audit(tenant_id, "execute_timeout", "operation", row.operation_id,
+                            cmd.actor, OperationStatus(row.status), OperationStatus.UNKNOWN)
+        return operation_from_row(final)
+
+    # ---------- unknown 对账（SYSTEM；仅原 operation_id） ----------
+
+    def reconcile(self, tenant_id: str, cmd) -> Operation:
+        require_role(cmd.actor, (Role.SYSTEM,), "只有领域服务可以对账")
+        if cmd.result not in ("success", "failed"):
+            raise AfterSalesError(AfterSalesErrorCode.MISSING_REQUIRED_FIELD,
+                                  f"未知对账结果：{cmd.result!r}")
+        with self._repo.unit_of_work():
+            seed = self._load_op(tenant_id, cmd.operation_id)
+            order = order_from_row(self._repo.lock_order_for_update(tenant_id, seed.order_id))
+            row = self._load_op(tenant_id, cmd.operation_id)
+            if row.status != "unknown":
+                raise AfterSalesError(
+                    AfterSalesErrorCode.INVALID_STATE_TRANSITION,
+                    f"只有 unknown 态操作可对账，当前 {row.status}")
+            if cmd.result == "success":
+                executed = self._repo.executed_sum_for_order(tenant_id, row.order_id)
+                validate_refund_capacity(order.paid_amount, executed, row.amount or _ZERO)
+                target = replace(row, status="executed", executed=True)
+                self._repo.update_operation_versioned(target, expected_version=row.version)
+                self._audit(tenant_id, "reconcile_success", "operation", row.operation_id,
+                            cmd.actor, OperationStatus(row.status), OperationStatus.EXECUTED)
+            else:
+                target = replace(row, status="failed")
+                self._repo.update_operation_versioned(target, expected_version=row.version)
+                self._audit(tenant_id, "reconcile_failed", "operation", row.operation_id,
+                            cmd.actor, OperationStatus(row.status), OperationStatus.FAILED)
+            final = self._repo.get_operation(tenant_id, row.operation_id)
+        return operation_from_row(final)
+
+    # ---------- 关单（AGENT/SYSTEM；无未决操作；依结果定性） ----------
+
+    def close_ticket(self, tenant_id: str, cmd) -> AfterSalesTicket:
+        require_role(cmd.actor, (Role.AGENT, Role.SYSTEM), "只有 Agent 或领域服务可以关闭工单")
+        with self._repo.unit_of_work():
+            trow = self._repo.get_ticket(tenant_id, cmd.ticket_id)
+            if trow is None:
+                raise AfterSalesError(AfterSalesErrorCode.TICKET_NOT_FOUND,
+                                      f"工单 {cmd.ticket_id} 不存在")
+            if trow.status == "closed":
+                raise AfterSalesError(AfterSalesErrorCode.INVALID_STATE_TRANSITION,
+                                      "工单已关闭，终态不可再变更")
+            self._repo.lock_order_for_update(tenant_id, trow.order_id)
+            ops = self._ops_of_ticket(tenant_id, cmd.ticket_id)
+            if any(o.status not in TERMINAL_OPERATION_STATUSES for o in ops):
+                open_ids = [o.operation_id for o in ops
+                            if o.status not in TERMINAL_OPERATION_STATUSES]
+                raise AfterSalesError(
+                    AfterSalesErrorCode.TICKET_HAS_OPEN_OPERATIONS,
+                    f"工单存在未决操作 {open_ids}，禁止关闭")
+            executed = any(o.status == "executed" for o in ops)
+            rejected = any(o.status == "rejected" for o in ops)
+            before = TicketStatus(trow.status)
+            if executed or rejected:
+                resolution = "refunded" if executed else "rejected"
+                qual_status = "resolved" if executed else "rejected"
+                upd = replace(trow, status=qual_status, resolution=resolution)
+                self._repo.update_ticket_versioned(upd, expected_version=trow.version)
+                trow = self._repo.get_ticket(tenant_id, cmd.ticket_id)
+                self._audit(tenant_id, "resolve_ticket" if executed else "reject_ticket",
+                            "ticket", cmd.ticket_id, cmd.actor, before,
+                            TicketStatus(qual_status))
+            closing = replace(trow, status="closed")
+            self._repo.update_ticket_versioned(closing, expected_version=trow.version)
+            self._audit(tenant_id, "close_ticket", "ticket", cmd.ticket_id, cmd.actor,
+                        before, TicketStatus.CLOSED)
+            final_t = self._repo.get_ticket(tenant_id, cmd.ticket_id)
+        return ticket_from_row(final_t)
+
+    # ---------- 租户内操作扫描（V1 全扫；未来可加 per-order/per-ticket 查询索引） ----------
+
+    def _ops_of_order(self, tenant_id: str, order_id: str) -> list:
+        return [r for r in self._repo.list_operations()
+                if r.tenant_id == tenant_id and r.order_id == order_id]
+
+    def _ops_of_ticket(self, tenant_id: str, ticket_id: str) -> list:
+        return [r for r in self._repo.list_operations()
+                if r.tenant_id == tenant_id and r.ticket_id == ticket_id]
+
+
+_ZERO = Decimal("0.00")

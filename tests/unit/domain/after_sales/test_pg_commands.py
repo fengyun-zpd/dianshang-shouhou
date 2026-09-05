@@ -145,3 +145,122 @@ def test_reject_path_and_role_gate(ctx):
     with pytest.raises(AfterSalesError) as ei:        # 角色门禁
         svc.approve("T1", ApproveCommand("OP-1", Role.CUSTOMER, decision_version=9))
     assert ei.value.code == AfterSalesErrorCode.PERMISSION_DENIED
+
+
+# ---------- 退款草稿 / 执行 / 对账 / 关单 ----------
+
+from src.domain.after_sales import (  # noqa: E402
+    CloseTicketCommand,
+    CreateRefundCommand,
+    ExecuteCommand,
+    ReconcileCommand,
+)
+
+
+def _ticket(repo, status="open"):
+    repo.insert_ticket(TicketRow("T1", "TKT-1", "ORD-1", "C1", "refund", "破损", status,
+                                 created_by="agent", reason_tags='["damaged"]'))
+
+
+def test_draft_idempotent_no_capacity_at_draft(ctx):
+    """草稿创建幂等；草稿不占容量（容量在执行/对账成功期拦截）。"""
+    repo, svc = ctx
+    _ticket(repo)
+    op = svc.create_refund_draft("T1", CreateRefundCommand("TKT-1", Decimal("60.00"),
+                                                           "破损", Role.AGENT, "k-1"))
+    assert op.status == OperationStatus.DRAFT and op.amount == Decimal("60.00")
+    again = svc.create_refund_draft("T1", CreateRefundCommand("TKT-1", Decimal("60.00"),
+                                                              "破损", Role.AGENT, "k-1"))
+    assert again.operation_id == op.operation_id            # 同键幂等
+    # 60+40+1 三张草稿均可建（未执行不占容量），累计仍 0
+    svc.create_refund_draft("T1", CreateRefundCommand("TKT-1", Decimal("40.00"),
+                                                      "破损", Role.AGENT, "k-2"))
+    svc.create_refund_draft("T1", CreateRefundCommand("TKT-1", Decimal("1.00"),
+                                                      "破损", Role.AGENT, "k-3"))
+    assert len(repo.list_operations()) == 3
+    assert repo.executed_sum_for_order("T1", "ORD-1") == Decimal("0.00")
+
+
+def test_draft_unknown_order_guard(ctx):
+    repo, svc = ctx
+    _ticket(repo)
+    repo.insert_operation(OperationRow("T1", "OP-UNKNOWN", "TKT-1", "ORD-1", "refund",
+                                       Decimal("30.00"), "unknown", "T1:old", "agent"))
+    with pytest.raises(AfterSalesError) as ei:
+        svc.create_refund_draft("T1", CreateRefundCommand("TKT-1", Decimal("10.00"),
+                                                          "x", Role.AGENT, "k-new"))
+    assert ei.value.code == AfterSalesErrorCode.OPERATION_UNKNOWN_CONFLICT
+
+
+def _submit_approve(svc, repo, op_id):
+    svc.submit("T1", SubmitCommand(op_id, Role.AGENT))
+    svc.approve("T1", ApproveCommand(op_id, Role.APPROVER,
+                                     decision_version=repo.get_operation("T1", op_id).version))
+
+
+def test_execute_capacity_and_timeout(ctx):
+    repo, svc = ctx
+    _ticket(repo)
+    svc.create_refund_draft("T1", CreateRefundCommand("TKT-1", Decimal("60.00"),
+                                                      "破损", Role.AGENT, "k-1"))
+    svc.create_refund_draft("T1", CreateRefundCommand("TKT-1", Decimal("60.00"),
+                                                      "再退", Role.AGENT, "k-2"))  # 草稿阶段按已执行=0 可建
+    ops = sorted(repo.list_operations(), key=lambda r: r.operation_id)
+    op1, op2 = ops[0].operation_id, ops[1].operation_id
+    _submit_approve(svc, repo, op1)
+    _submit_approve(svc, repo, op2)
+    done = svc.execute("T1", ExecuteCommand(op1, Role.SYSTEM, external_result="success"))
+    assert done.status == OperationStatus.EXECUTED
+    assert repo.executed_sum_for_order("T1", "ORD-1") == Decimal("60.00")
+    # 第二张已批准 60：执行被容量拒绝（不迁移不累计）
+    with pytest.raises(AfterSalesError) as ei:
+        svc.execute("T1", ExecuteCommand(op2, Role.SYSTEM, "success"))
+    assert ei.value.code == AfterSalesErrorCode.AMOUNT_EXCEEDS_REMAINING
+    assert repo.executed_sum_for_order("T1", "ORD-1") == Decimal("60.00")
+    # timeout → unknown（不累计）
+    unk = svc.execute("T1", ExecuteCommand(op2, Role.SYSTEM, "timeout"))
+    assert unk.status == OperationStatus.UNKNOWN
+    assert repo.executed_sum_for_order("T1", "ORD-1") == Decimal("60.00")
+
+
+def test_reconcile_original_only(ctx):
+    """unknown 只能原 operation 对账：success → executed（容量）；终态后重复对账被拒。"""
+    repo, svc = ctx
+    _ticket(repo)
+    svc.create_refund_draft("T1", CreateRefundCommand("TKT-1", Decimal("60.00"),
+                                                      "破损", Role.AGENT, "k-1"))
+    op_id = repo.list_operations()[0].operation_id
+    _submit_approve(svc, repo, op_id)
+    svc.execute("T1", ExecuteCommand(op_id, Role.SYSTEM, "timeout"))
+    assert repo.get_operation("T1", op_id).status == "unknown"
+    done = svc.reconcile("T1", ReconcileCommand(op_id, Role.SYSTEM, "success"))
+    assert done.status == OperationStatus.EXECUTED
+    assert repo.executed_sum_for_order("T1", "ORD-1") == Decimal("60.00")
+    with pytest.raises(AfterSalesError) as ei:              # 终态重复对账 → 拒绝
+        svc.reconcile("T1", ReconcileCommand(op_id, Role.SYSTEM, "success"))
+    assert ei.value.code == AfterSalesErrorCode.INVALID_STATE_TRANSITION
+
+
+def test_close_ticket_paths(ctx):
+    repo, svc = ctx
+    _ticket(repo)
+    # 无未决操作 → 直接关单
+    closed = svc.close_ticket("T1", CloseTicketCommand("TKT-1", Role.AGENT))
+    assert closed.status.value == "closed"
+
+
+def test_close_blocks_open_operations_and_qualifies(ctx):
+    repo, svc = ctx
+    _ticket(repo)
+    svc.create_refund_draft("T1", CreateRefundCommand("TKT-1", Decimal("60.00"),
+                                                      "破损", Role.AGENT, "k-1"))
+    op_id = repo.list_operations()[0].operation_id
+    with pytest.raises(AfterSalesError) as ei:               # 未决草稿 → 禁止关单
+        svc.close_ticket("T1", CloseTicketCommand("TKT-1", Role.AGENT))
+    assert ei.value.code == AfterSalesErrorCode.TICKET_HAS_OPEN_OPERATIONS
+    svc.submit("T1", SubmitCommand(op_id, Role.AGENT))
+    svc.approve("T1", ApproveCommand(op_id, Role.APPROVER,
+                                     decision_version=repo.get_operation("T1", op_id).version))
+    svc.execute("T1", ExecuteCommand(op_id, Role.SYSTEM, "success"))
+    t = svc.close_ticket("T1", CloseTicketCommand("TKT-1", Role.AGENT))
+    assert t.status.value == "closed" and t.resolution == "refunded"

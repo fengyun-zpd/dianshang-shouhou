@@ -108,10 +108,17 @@ class MemoryAfterSalesRepository(AfterSalesRepository):
 
     def update_operation_versioned(self, row: OperationRow, expected_version: int) -> None:
         with self._lock:
-            cur = self._operations.get((row.tenant_id, row.operation_id))
+            key = (row.tenant_id, row.operation_id)
+            cur = self._operations.get(key)
             if cur is None or cur.version != expected_version:
                 raise OptimisticLockError("操作版本不匹配")
-            self._operations[(row.tenant_id, row.operation_id)] = replace(row, version=expected_version + 1)
+            was_executed = cur.status == "executed"
+            self._operations[key] = replace(row, version=expected_version + 1)
+            # 执行累计维护：迁移为 executed 时累加（与 try_execute_refund/_executed 语义一致）
+            if row.status == "executed" and row.executed and not was_executed:
+                ok = (row.tenant_id, row.order_id)
+                self._executed[ok] = self._executed.get(ok, Decimal("0.00")) \
+                    + (row.amount or Decimal("0.00"))
 
     def executed_sum_for_order(self, tenant_id: str, order_id: str) -> Decimal:
         with self._lock:
