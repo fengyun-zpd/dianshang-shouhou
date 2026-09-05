@@ -177,3 +177,46 @@ def test_live_reload_no_duplicate_side_effect_and_append_audit(session):
     session.save(svc2)                       # 关单后再次镜像
     svc3 = session.load(policies=POLS)
     assert svc3.export_state()["tickets"][orig.ticket_id].status.value == "closed"
+
+
+def test_live_restart_resume_persistent_checkpoint_with_pg_facts(tmp_path, session):
+    """完整重启链：工作流挂起于审批（checkpoint 落 SQLite）→ 业务事实 save 到 PG →
+    “进程重启”后领域服务从 PG 重建（业务事实重读 PG）+ 同一持久 checkpoint resume →
+    审批/执行正确完成且无重复副作用；SQL 直接断言 PG 行最终状态。"""
+    from src.agents import WorkflowRunner
+    from src.agents.checkpoint import open_sqlite_checkpointer
+    from tests.unit.domain.after_sales.helpers import baseline_service
+
+    svc1 = baseline_service()                      # ORD-1 paid 100 + 破损全额政策
+    cp_db = tmp_path / "checkpoints.sqlite"
+    cp1 = open_sqlite_checkpointer(str(cp_db))
+    r1 = WorkflowRunner(svc1, checkpointer=cp1)
+    pending = r1.start("T1", "订单 ORD-1 商品破损，要求退款", thread_id="restart-pg")
+    assert pending.waiting_approval
+    op_id = pending.state["operation_id"]
+    session.save(svc1)                             # 业务事实（pending_approval）落 PG
+
+    # “进程重启”：领域服务从 PG 行表重建 + 同一 SQLite 文件重开持久 checkpoint
+    svc2 = session.load(policies=POLS)
+    cp2 = open_sqlite_checkpointer(str(cp_db))
+    r2 = WorkflowRunner(svc2, checkpointer=cp2)
+    r2.submit_decision(op_id, "approved")          # 授权人员决定（作用于重建后的领域）
+    final = r2.resume("restart-pg", tenant_id="T1")
+    assert final.finished and final.outcome == "refunded"
+    assert svc2.refunded_amount("ORD-1") == Decimal("100.00")
+    assert svc2.get_operation(op_id).status.value == "executed"
+    # 不重放：工单/操作仅各一；建单审计仅一条
+    assert len(svc2.export_state()["tickets"]) == 1
+    assert len(svc2.export_state()["operations"]) == 1
+    assert len([e for e in svc2.audit_log() if e.action == "create_ticket"]) == 1
+
+    session.save(svc2)                             # 执行后事实再镜像回 PG
+    engine = create_engine(DATABASE_URL)
+    with engine.connect() as conn:
+        op_status = conn.execute(text(
+            "SELECT status, executed FROM refund_operations "
+            "WHERE operation_id=:op"), {"op": op_id}).fetchone()
+        n_audit = conn.execute(text("SELECT COUNT(*) FROM audit_events")).scalar()
+    engine.dispose()
+    assert op_status[0] == "executed" and op_status[1] is True
+    assert n_audit >= 5

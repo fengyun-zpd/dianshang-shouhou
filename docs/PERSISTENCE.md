@@ -42,7 +42,7 @@
 .venv\Scripts\python.exe -m pytest tests/unit/persistence -v   # 37 项（原型 6 + 校验 12 + 原子恢复 4 + K3 严格类型/恢复安全 15）
 ```
 
-全量回归：`.venv\Scripts\python.exe -m pytest tests/` → 330 passed（2026-09-04 实测；PG 容器运行时集成 17/17）。
+全量回归：`.venv\Scripts\python.exe -m pytest tests/` → 334 passed（2026-09-04 实测；PG 容器运行时集成 18/18）。
 
 ## 5. 限制与下一步（诚实边界）
 
@@ -51,7 +51,7 @@
 - **PostgreSQL 唯一事实源已落地**（任务卡 K4，`docs/POSTGRES.md`）：Repository 接口 + 内存/PG 实现、
   schema/Alembic 0001+0003（含 DB 唯一约束与 CHECK）、`FOR UPDATE` 行锁与 `try_execute_refund`
   原子容量执行、`unit_of_work` 命令级原子写、`PgBackedSession` 整库镜像写/装载重建
-  （`src/persistence/pg_backed.py`，事实确在 PG 行表），已在本地 PG 集成实测 17/17（无 PG 自动跳过）；
+  （`src/persistence/pg_backed.py`，事实确在 PG 行表），已在本地 PG 集成实测 18/18（无 PG 自动跳过）；
 - 领域状态机（create/approve/execute/reconcile/close 的**增量 SQL 化编排**）仍未实现：
   当前领域命令仍内存裁决（PG-backed 会话为命令后全量镜像写、单实例原型），跨进程并发一致性
   与"命令即单事务"的整体 SQL 迁移是后续工程；

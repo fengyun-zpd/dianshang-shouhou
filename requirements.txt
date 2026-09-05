@@ -7,6 +7,8 @@ pydantic==2.13.5
 SQLAlchemy==2.0.52
 alembic==1.19.1
 psycopg2-binary==2.9.12
+# 阶段三：LangGraph 可持久化 checkpoint（SQLite 文件；业务事实仍以领域服务/PG 为准）
+langgraph-checkpoint-sqlite==3.1.1
 # K5 FastAPI 接入层
 fastapi==0.141.1
 uvicorn[standard]==0.37.0
