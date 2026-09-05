@@ -267,3 +267,8 @@ class AfterSalesRepository(ABC):
     @abstractmethod
     def release_thread(self, tenant_id: str, thread_id: str, owner: str) -> bool:
         """owner 匹配才释放租约（置 lease_owner/lease_until=NULL）；不匹配返回 False。"""
+
+    @abstractmethod
+    def get_thread(self, tenant_id: str, thread_id: str):
+        """读取 workflow_threads 事实行（request_fingerprint/lease_owner/lease_until/
+        generation/status）；不存在返回 None。供 resume 以既有 fingerprint 续租/接管。"""

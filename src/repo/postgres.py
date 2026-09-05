@@ -426,6 +426,15 @@ class PostgresAfterSalesRepository(AfterSalesRepository):
             ), {"t": tenant_id, "th": thread_id, "owner": owner}).fetchone()
             return row is not None
 
+    def get_thread(self, tenant_id: str, thread_id: str):
+        """读取 workflow_threads 行摘要 (request_fingerprint, lease_owner, generation)。"""
+        with self._tx() as conn:
+            row = conn.execute(text(
+                "SELECT request_fingerprint, lease_owner, generation"
+                " FROM workflow_threads WHERE tenant_id=:t AND thread_id=:th"
+            ), {"t": tenant_id, "th": thread_id}).fetchone()
+            return row if row else None
+
     # ---------- helpers ----------
     @staticmethod
     def _order_from(r) -> OrderRow:

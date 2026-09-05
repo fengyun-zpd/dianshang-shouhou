@@ -27,6 +27,17 @@ class ThreadConflictError(ValueError):
     """线程生命周期冲突：同一 thread 提交不同请求 / 复用无指纹线程 / 未绑定租户。"""
 
 
+class ThreadLeaseError(RuntimeError):
+    """未持有 workflow_threads 数据库租约（他人持约未过期 / request_fingerprint 不符）：
+    禁止读 checkpoint、推进图或产生任何副作用。"""
+
+
+def _lease_fingerprint_str(tenant_id: str, request: str, order_id_hint: Optional[str]) -> str:
+    """租约 request_fingerprint：由 tenant/request/order 确定性生成（禁止空串）。"""
+    import json as _json
+    return _json.dumps(_make_request_fingerprint(tenant_id, request, order_id_hint), sort_keys=True)
+
+
 def _make_request_fingerprint(tenant_id: str, request: str, order_id_hint: Optional[str]) -> dict:
     """请求指纹：tenant + 规范化请求 + 订单提示。租户绑定不可变且进入指纹。"""
     norm = "|".join([tenant_id, order_id_hint or "", (request or "").strip()])
@@ -52,13 +63,50 @@ class RunResult:
 
 
 class WorkflowRunner:
-    """基于确定性领域服务 + LangGraph 的单 Agent 售后工作流运行器。"""
+    """基于确定性领域服务 + LangGraph 的单 Agent 售后工作流运行器。
 
-    def __init__(self, service: AfterSalesService, checkpointer=None):
+    lease_repo（可选，D9 硬租约）：提供 AfterSalesRepository 的 workflow_threads 租约。
+    提供时 start/resume 必须在读 checkpoint、graph.update_state/invoke 与任何副作用前
+    原子获得租约（owner_id 稳定唯一）；失约抛 ThreadLeaseError。线程完成（finished）或
+    异常路径由 owner 释放租约；等待审批（interrupt）期间保持租约，崩溃后可由同
+    fingerprint 且租约过期的其他 owner 接管。
+    """
+
+    def __init__(self, service: AfterSalesService, checkpointer=None,
+                 lease_repo=None, owner_id: Optional[str] = None,
+                 lease_duration_s: int = 60):
         self.service = service
         self.gateway = AfterSalesGateway(service)
         self._thread_tenants: dict[str, str] = {}
+        self._lease_repo = lease_repo
+        if lease_repo is not None and not owner_id:
+            raise ValueError("启用线程租约必须提供稳定 owner_id")
+        self._owner_id = owner_id
+        self._lease_duration_s = lease_duration_s
         self.graph = self._build_graph(checkpointer)
+
+    # ---------- 租约（D9 硬边界） ----------
+
+    def _lease_enabled(self) -> bool:
+        return self._lease_repo is not None
+
+    def _acquire_lease(self, tenant_id: str, thread_id: str, fingerprint: str) -> None:
+        """原子获租/续租/接管；失败 → ThreadLeaseError（不读 checkpoint、不推进图）。"""
+        ok = self._lease_repo.claim_thread(
+            tenant_id, thread_id, self._owner_id, self._lease_duration_s, fingerprint)
+        if not ok:
+            raise ThreadLeaseError(
+                f"线程 {thread_id} 未获租约：他人持约未过期或 request_fingerprint 不符（拒绝覆盖）")
+
+    def _release_lease(self, tenant_id: str, thread_id: str) -> None:
+        """仅当前 owner 释放；不匹配（他人已接管）则保持他人租约。"""
+        self._lease_repo.release_thread(tenant_id, thread_id, self._owner_id)
+
+    def _existing_thread_fingerprint(self, tenant_id: str, thread_id: str) -> str:
+        row = self._lease_repo.get_thread(tenant_id, thread_id)
+        if row is None or not row[0]:
+            raise ThreadLeaseError(f"线程 {thread_id} 无 workflow_threads 事实，无法续租")
+        return row[0]
 
     def _build_graph(self, checkpointer=None):
         """构建默认单 Agent 图（子类可覆盖以切换运行时，如 Supervisor 模式）。"""
@@ -88,31 +136,43 @@ class WorkflowRunner:
         self._bind_thread(tid, tenant_id)
         cfg = self._cfg(tid)
         fp = _make_request_fingerprint(tenant_id, request, order_id_hint)
+        acquired = False
+        result = None
+        if self._lease_enabled():
+            # 持约后才允许读 checkpoint / invoke（失约即拒绝，异请求不覆盖既有事实）
+            self._acquire_lease(tenant_id, tid, _lease_fingerprint_str(tenant_id, request, order_id_hint))
+            acquired = True
+        try:
+            existing = self._peek_thread(cfg)
+            if existing is not None:
+                values, interrupts = existing
+                old_fp = values.get("thread_request_fingerprint")
+                if old_fp is None:
+                    raise ThreadConflictError(
+                        f"线程 {tid} 无请求指纹（疑似跨版本/损坏 checkpoint），拒绝复用")
+                if old_fp != fp:
+                    raise ThreadConflictError(
+                        f"线程 {tid} 已被其他请求占用（指纹不一致）：同一 thread 只能继续原请求")
+                # 同请求重复提交 → 返回原/当前结果（不重放、无新副作用）
+                result = self._build_result(tid, values, interrupts)
+                return result
 
-        existing = self._peek_thread(cfg)
-        if existing is not None:
-            values, interrupts = existing
-            old_fp = values.get("thread_request_fingerprint")
-            if old_fp is None:
-                raise ThreadConflictError(
-                    f"线程 {tid} 无请求指纹（疑似跨版本/损坏 checkpoint），拒绝复用")
-            if old_fp != fp:
-                raise ThreadConflictError(
-                    f"线程 {tid} 已被其他请求占用（指纹不一致）：同一 thread 只能继续原请求")
-            # 同请求重复提交 → 返回原/当前结果（不重放、无新副作用）
-            return self._build_result(tid, values, interrupts)
-
-        inputs: dict = {
-            **new_state(),
-            "tenant_id": tenant_id,
-            "thread_id": tid,
-            "user_request": request,
-            "order_id": order_id_hint,
-            "simulate_external": simulate_external,
-            "thread_request_fingerprint": fp,
-        }
-        raw = self.graph.invoke(inputs, cfg)
-        return self._finalize(tid, raw)
+            inputs: dict = {
+                **new_state(),
+                "tenant_id": tenant_id,
+                "thread_id": tid,
+                "user_request": request,
+                "order_id": order_id_hint,
+                "simulate_external": simulate_external,
+                "thread_request_fingerprint": fp,
+            }
+            raw = self.graph.invoke(inputs, cfg)
+            result = self._finalize(tid, raw)
+            return result
+        finally:
+            if acquired and (result is None or result.finished):
+                # 异常（result 未赋值）或线程完成 → 由 owner 释放；等待（interrupt）保持租约
+                self._release_lease(tenant_id, tid)
 
     def resume(self, thread_id: str, payload="_continue_", simulate_external: Optional[str] = None,
                tenant_id: Optional[str] = None) -> RunResult:
@@ -125,12 +185,24 @@ class WorkflowRunner:
         """
         self._bind_thread(thread_id, tenant_id)
         cfg = self._cfg(thread_id)
-        if simulate_external is not None:
-            if simulate_external not in _ALLOWED_EXTERNAL:
-                raise ValueError(f"simulate_external 仅允许 {_ALLOWED_EXTERNAL}")
-            self.graph.update_state(cfg, {"simulate_external": simulate_external})
-        raw = self.graph.invoke(Command(resume=payload), cfg)
-        return self._finalize(thread_id, raw)
+        acquired = False
+        result = None
+        if self._lease_enabled():
+            # 持约后才允许 update_state / 读 checkpoint / invoke；指纹取 workflow_threads 既有事实
+            fp = self._existing_thread_fingerprint(self._thread_tenants[thread_id], thread_id)
+            self._acquire_lease(self._thread_tenants[thread_id], thread_id, fp)
+            acquired = True
+        try:
+            if simulate_external is not None:
+                if simulate_external not in _ALLOWED_EXTERNAL:
+                    raise ValueError(f"simulate_external 仅允许 {_ALLOWED_EXTERNAL}")
+                self.graph.update_state(cfg, {"simulate_external": simulate_external})
+            raw = self.graph.invoke(Command(resume=payload), cfg)
+            result = self._finalize(thread_id, raw)
+            return result
+        finally:
+            if acquired and (result is None or result.finished):
+                self._release_lease(self._thread_tenants[thread_id], thread_id)
 
     def get_state(self, thread_id: str, tenant_id: Optional[str] = None) -> RunResult:
         self._bind_thread(thread_id, tenant_id)

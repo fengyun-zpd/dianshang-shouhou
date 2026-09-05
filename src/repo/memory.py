@@ -270,3 +270,12 @@ class MemoryAfterSalesRepository(AfterSalesRepository):
                 table[key] = (None, None, cur[2])
                 return True
             return False
+
+    def get_thread(self, tenant_id: str, thread_id: str):
+        with self._lock:
+            table = self.__init_threads()
+            key = (tenant_id, thread_id)
+            cur = table.get(key)
+            if cur is None:
+                return None
+            return (self._thread_fp.get(key, ""), cur[0], cur[2])  # (fp, owner, generation)

@@ -24,12 +24,13 @@ def _read(rel: str) -> str:
 
 # ---------- R1/R2 ----------
 
-@red
 def test_runner_exposes_lease_error_and_injection():
-    """Runner 需提供 ThreadLeaseError 与 lease/owner 构造注入（现状缺失 → RED）。"""
+    """Runner 提供 ThreadLeaseError 与 lease/owner 注入。
+    行为断言见 tests/phase4/test_runner_lease_live.py（真实 PG 双 Runner 竞争）。"""
     src = _read("src/agents/runner.py")
     assert "ThreadLeaseError" in src
-    assert "owner" in src and "lease" in src
+    assert "def _acquire_lease" in src and "lease_repo" in src and "owner_id" in src
+    assert "class ThreadLeaseError" in src
 
 
 # ---------- R3/R4 ----------
