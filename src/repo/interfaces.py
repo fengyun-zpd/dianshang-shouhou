@@ -254,9 +254,15 @@ class AfterSalesRepository(ABC):
     @abstractmethod
     def claim_thread(self, tenant_id: str, thread_id: str, owner: str,
                      lease_duration_s: int, fingerprint: str = "") -> bool:
-        """原子获租/续租/接管：owner 可续租（generation+1）；租约过期（lease_until < now）
-        或无人持约时可被接管；他人未过期持约 → False（不抢占）。
-        首次获约即创建事实行（含请求指纹/状态/generation）。"""
+        """原子获租/续租/接管。
+
+        request_fingerprint 不可变语义（阶段四收口 R3/R4）：
+        - 新行：以 fingerprint 创建事实（首次获约）；
+        - 续租/接管一律要求传入 fingerprint 与既有 request_fingerprint **相等**；
+          fingerprint 不同 → 拒绝（同 owner 重复 start 异请求/异 fp 接管均不得覆盖既有事实）；
+        - 同 owner 续租只更新 lease（generation+1），**不修改** request_fingerprint；
+        - 异 owner 接管仅在租约过期（lease_until IS NULL 或 < now）且 fingerprint 相等时允许。
+        """
 
     @abstractmethod
     def release_thread(self, tenant_id: str, thread_id: str, owner: str) -> bool:

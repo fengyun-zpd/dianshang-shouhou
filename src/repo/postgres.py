@@ -396,6 +396,8 @@ class PostgresAfterSalesRepository(AfterSalesRepository):
     # ---------- D9：workflow_threads 跨进程租约 ----------
     def claim_thread(self, tenant_id: str, thread_id: str, owner: str,
                      lease_duration_s: int, fingerprint: str = "") -> bool:
+        """R3/R4 指纹不可变语义：仅当传入 fingerprint 与既有行相等才允许续租/接管；
+        fingerprint 不同 → 不更新（RETURNING 无行 → False），绝不覆盖既有 thread 事实。"""
         with self._tx() as conn:
             row = conn.execute(text(
                 "INSERT INTO workflow_threads (tenant_id, thread_id, status,"
@@ -405,11 +407,11 @@ class PostgresAfterSalesRepository(AfterSalesRepository):
                 " SET lease_owner=EXCLUDED.lease_owner,"
                 "     lease_until=EXCLUDED.lease_until,"
                 "     status='active',"
-                "     request_fingerprint=EXCLUDED.request_fingerprint,"
                 "     generation=workflow_threads.generation + 1"
-                " WHERE workflow_threads.lease_owner = EXCLUDED.lease_owner"
-                "    OR workflow_threads.lease_until IS NULL"
-                "    OR workflow_threads.lease_until < now()"
+                " WHERE workflow_threads.request_fingerprint = EXCLUDED.request_fingerprint"
+                "   AND (workflow_threads.lease_owner = EXCLUDED.lease_owner"
+                "        OR workflow_threads.lease_until IS NULL"
+                "        OR workflow_threads.lease_until < now())"
                 " RETURNING thread_id"
             ), {"t": tenant_id, "th": thread_id, "fp": fingerprint, "owner": owner,
                 "d": lease_duration_s}).fetchone()

@@ -34,13 +34,14 @@ def test_runner_exposes_lease_error_and_injection():
 
 # ---------- R3/R4 ----------
 
-@red
 def test_claim_thread_fingerprint_semantics_documented_and_enforced():
-    """claim_thread 契约须含 fp 语义：同 owner 续租不可变、异 fp 接管/重复 start 拒绝。"""
+    """claim_thread 契约含 fp 语义：同 owner 续租不可变、异 fp 接管/重复 start 拒绝。
+    行为断言见 tests/phase4/test_d9_workflow_lease_live.py（live，PG）。"""
     src = _read("src/repo/interfaces.py")
     block = src[src.index("def claim_thread"):]
-    doc = block[:600]
-    assert "不可变" in doc or "mismatch" in doc.lower() or "不覆盖" in doc
+    doc = block[:700]
+    assert "不可变" in doc
+    assert "不同 → 拒绝" in doc or "拒绝" in doc
 
 
 # ---------- R5 ----------

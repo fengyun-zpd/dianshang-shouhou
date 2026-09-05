@@ -69,23 +69,39 @@ def _gen(thread_id):
     return v
 
 
+def _fp(thread_id):
+    engine = create_engine(DATABASE_URL)
+    with engine.connect() as conn:
+        v = conn.execute(text(
+            "SELECT request_fingerprint FROM workflow_threads WHERE thread_id=:th"),
+            {"th": thread_id}).scalar()
+    engine.dispose()
+    return v
+
+
 def test_claim_renew_expiry_takeover_and_release(repo):
     assert repo.claim_thread("T1", "th-1", "owner-a", 60, "fp-1") is True
     assert _gen("th-1")[0] == 1
-    # 同 owner 续租（generation+1）
-    assert repo.claim_thread("T1", "th-1", "owner-a", 60) is True
+    # 同 owner 续租（同 fp，generation+1；fingerprint 不可变）
+    assert repo.claim_thread("T1", "th-1", "owner-a", 60, "fp-1") is True
     assert _gen("th-1")[0] == 2
-    # 异 owner 未过期 → 拒绝（不抢占）
-    assert repo.claim_thread("T1", "th-1", "owner-b", 60) is False
-    # 过期后可被接管（generation+1）
+    assert _fp("th-1") == "fp-1"
+    # 同 owner 异 fp → 拒绝（R3：fingerprint 不可变；重复 start 异请求不覆盖事实）
+    assert repo.claim_thread("T1", "th-1", "owner-a", 60, "fp-other") is False
+    assert _fp("th-1") == "fp-1"
+    # 异 owner 同 fp 未过期 → 拒绝（不抢占）
+    assert repo.claim_thread("T1", "th-1", "owner-b", 60, "fp-1") is False
+    # 过期后：同 fp 可被接管（generation+1）；异 fp 接管仍拒绝（R4）
     _expire("th-1")
-    assert repo.claim_thread("T1", "th-1", "owner-b", 60) is True
+    assert repo.claim_thread("T1", "th-1", "owner-b", 60, "fp-other") is False
+    assert repo.claim_thread("T1", "th-1", "owner-b", 60, "fp-1") is True
     assert _gen("th-1")[0] == 3 and _gen("th-1")[1] == "owner-b"
+    assert _fp("th-1") == "fp-1"
     # 非 owner 释放失败；owner 释放成功
     assert repo.release_thread("T1", "th-1", "owner-a") is False
     assert repo.release_thread("T1", "th-1", "owner-b") is True
-    # 释放后他人可获约（generation+1）
-    assert repo.claim_thread("T1", "th-1", "owner-c", 60) is True
+    # 释放后他人可获约（同 fp，generation+1）
+    assert repo.claim_thread("T1", "th-1", "owner-c", 60, "fp-1") is True
 
 
 def test_concurrent_claim_single_winner(repo):
@@ -142,8 +158,8 @@ def test_two_runners_resume_single_lease_holder_progresses(repo):
         assert final.finished and final.outcome == "refunded"
         assert svc.refunded_amount("ORD-1") == Decimal("100.00")
         assert repo.release_thread("T1", "lease-resume", "runner-a") is True
-        # 释放后 B 可获约（先前未执行写的 B 如今可接管——用于后续恢复）
-        assert repo.claim_thread("T1", "lease-resume", "runner-b", 60) is True
+        # 释放后 B 可获约（同 fp 接管；先前未执行写的 B 如今可恢复）
+        assert repo.claim_thread("T1", "lease-resume", "runner-b", 60, "fp-resume") is True
     finally:
         if cp is not None:
             close_sqlite_checkpointer(cp)

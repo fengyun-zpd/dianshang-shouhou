@@ -242,6 +242,7 @@ class MemoryAfterSalesRepository(AfterSalesRepository):
 
     def claim_thread(self, tenant_id: str, thread_id: str, owner: str,
                      lease_duration_s: int, fingerprint: str = "") -> bool:
+        """R3/R4：fingerprint 必须与既有行相等才可续租/接管；不同 → False（不覆盖事实）。"""
         import time as _time
         now = _time.monotonic()
         with self._lock:
@@ -253,9 +254,10 @@ class MemoryAfterSalesRepository(AfterSalesRepository):
                 self._thread_fp[key] = fingerprint
                 return True
             prev_owner, until, gen = cur
+            if self._thread_fp.get(key) != fingerprint:
+                return False                       # 指纹不可变：不同 → 拒绝续租/接管
             if prev_owner == owner or until is None or now > until:
                 table[key] = (owner, now + lease_duration_s, gen + 1)
-                self._thread_fp[key] = fingerprint
                 return True
             return False
 
