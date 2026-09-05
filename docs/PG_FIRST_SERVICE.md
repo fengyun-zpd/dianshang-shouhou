@@ -99,7 +99,10 @@ with repo.unit_of_work():                       # 单事务；异常整体回滚
 
 ## 7. 里程碑切分（逐命令可验证落地）
 
-1. rules.py 抽取 + 内存 service 改用（全量回归保持 342+）。
+1. **rules.py 抽取 + 内存 service 改用（已完成，提交 阶段三第二步）**：`src/domain/after_sales/rules.py`
+   纯规则模块（权限/订单租户·客户匹配/金额容量/表驱动状态机/expected_version CAS/幂等命中/
+   unknown 守卫/关单定性，9 项单测）已接入 service（版本校验与状态迁移判定改用 rules，
+   错误码与消息文本保持）；全量 353 passed / 3 xfailed。
 2. schema 0004（policies/order_items/entity_seq）+ repo 方法 + 契约测试。
 3. create_ticket PG-first + 集成测试（D8 收编第一步）。
 4. create_refund_draft/submit/approve/reject（版本 CAS）。

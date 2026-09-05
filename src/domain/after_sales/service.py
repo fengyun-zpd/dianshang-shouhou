@@ -50,6 +50,11 @@ from .models import (
     parse_money,
 )
 from .policies import PolicyRule, detect_conflict, match_policies
+from .rules import (  # 确定性规则纯函数（单一规则事实源；内存/PG 后端共用）
+    check_operation_transition,
+    check_ticket_transition,
+    validate_decision_version,
+)
 
 
 class AfterSalesService:
@@ -417,11 +422,7 @@ class AfterSalesService:
         if cmd.actor != Role.APPROVER:
             raise AfterSalesError(AfterSalesErrorCode.PERMISSION_DENIED, "只有授权人员可以审批")
         op = self.get_operation(cmd.operation_id)
-        if cmd.decision_version != op.version:
-            raise AfterSalesError(
-                AfterSalesErrorCode.DECISION_VERSION_MISMATCH,
-                f"决定版本 {cmd.decision_version} 与当前版本 {op.version} 不一致",
-            )
+        validate_decision_version(op.version, cmd.decision_version)   # rules：CAS 语义
         op, before = self._apply_op_transition(op, OperationStatus.APPROVED)
         op.decision_version = cmd.decision_version
         op.version += 1
@@ -432,11 +433,7 @@ class AfterSalesService:
         if cmd.actor != Role.APPROVER:
             raise AfterSalesError(AfterSalesErrorCode.PERMISSION_DENIED, "只有授权人员可以审批")
         op = self.get_operation(cmd.operation_id)
-        if cmd.decision_version != op.version:
-            raise AfterSalesError(
-                AfterSalesErrorCode.DECISION_VERSION_MISMATCH,
-                f"决定版本 {cmd.decision_version} 与当前版本 {op.version} 不一致（拒绝被并发拦截）",
-            )
+        validate_decision_version(op.version, cmd.decision_version)   # rules：CAS 语义（同版本竞争恰一成功）
         op, before = self._apply_op_transition(op, OperationStatus.REJECTED)
         op.version += 1  # 拒绝亦推进版本：同 expected_version 的审批/拒绝竞争恰一成功
         self._record("reject", "operation", op.operation_id, cmd.actor, before, OperationStatus.REJECTED, note=cmd.reason)
@@ -547,21 +544,13 @@ class AfterSalesService:
         return order
 
     def _apply_ticket_transition(self, ticket: AfterSalesTicket, target: TicketStatus):
-        if target not in TICKET_TRANSITIONS[ticket.status]:
-            raise AfterSalesError(
-                AfterSalesErrorCode.INVALID_STATE_TRANSITION,
-                f"非法工单状态迁移 {ticket.status.value} -> {target.value}",
-            )
+        check_ticket_transition(ticket.status, target)   # rules：表驱动状态机判定
         before = ticket.status
         ticket.status = target
         return ticket, before
 
     def _apply_op_transition(self, op: Operation, target: OperationStatus):
-        if target not in OPERATION_TRANSITIONS[op.status]:
-            raise AfterSalesError(
-                AfterSalesErrorCode.INVALID_STATE_TRANSITION,
-                f"非法操作状态迁移 {op.status.value} -> {target.value}",
-            )
+        check_operation_transition(op.status, target)    # rules：表驱动状态机判定
         before = op.status
         op.status = target
         return op, before
