@@ -1,8 +1,8 @@
 # 测试基线（TESTING BASELINE）
 
 > 归属：电商售后多智能体工单系统（`D:\workplace\PyCharmMiscProject\私域`）
-> 版本：v0.5。本文档定义测试分层、验收命令、Bug 分类与回归纪律。
-> 全量基线（2026-09-04 本地实测）：`.venv\Scripts\python.exe -m pytest tests/ -q` → **334 passed**（PostgreSQL 容器运行时集成 18/18 实测；无 PostgreSQL 时集成自动跳过，不伪造通过）。
+> 版本：v0.6。本文档定义测试分层、验收命令、Bug 分类与回归纪律。
+> 全量基线（2026-09-04 本地实测）：`.venv\Scripts\python.exe -m pytest tests/ -q` → **338 passed, 7 xfailed**（PostgreSQL 容器运行时集成 18/18 实测；无 PostgreSQL 时集成自动跳过，不伪造通过。7 项 xfailed = 已知缺陷台账 `docs/DEFECTS_LOG.md`，修复后转 PASS）。
 
 ## 1. 分层策略与验收命令
 
@@ -15,7 +15,8 @@
 | security | 越权 / 提示注入 / 租户隔离 / 未知状态 / PII | `tests/security/` | ✅ 4 项 |
 | 根层 | 退款最小闭环 | `tests/test_refund_service.py` | ✅ 14 项（历史基线，保留只读） |
 
-> 汇总：284 + 18 + 2 + 12 + 4 + 14 = **334 passed**（2026-09-04 实测；PG 容器运行时集成 18/18）。
+> 汇总：284 + 18 + 2 + 12 + 4 + 14 + regression 11（4 passed + 7 xfailed 缺陷台账）
+> = **338 passed, 7 xfailed**（2026-09-04 实测；PG 容器运行时集成 18/18）。
 
 验收命令（项目根执行）：
 
@@ -75,3 +76,4 @@ python -m pytest tests/ -v             # 全量明细
 - v0.3（2026-09-04）—— Repository 增加 `unit_of_work` 命令级原子写作用域（K4 扩展）：契约测试 +4（unit 273 项）、PG 集成 +4（integration 13 项）；全量 **318 passed**（PG 容器运行时集成 13/13）。
 - v0.4（2026-09-04）—— PG-backed 领域会话（`src/persistence/pg_backed.py`）：codec/roundtrip 单测 +7（unit 281 项，无 PG 依赖）；PG 集成 +4（integration 17 项：SQL 断言事实在 PG/roundtrip/save 失败整单位回滚/重启无重复副作用）；API 认证身份 `TokenResolver` 端口 +1；全量 **330 passed**（PG 集成 17/17）。
 - v0.5（2026-09-04）—— 可持久化 LangGraph checkpoint（阶段三）：`src/agents/checkpoint.py`（SqliteSaver 落 SQLite 文件）+ 单测 +3（unit 284：跨实例/同文件重启 resume 不重放、注入伪造业务视图不覆盖领域事实、checkpoint 真实落盘）+ PG 集成 +1（integration 18：挂起审批→业务事实落 PG→重启后领域从 PG 重建+持久 checkpoint resume→审批/执行正确无重复副作用，SQL 断言 executed）；全量 **334 passed**（PG 集成 18/18）。
+- v0.6（2026-09-04）—— 升级目标第一阶段：缺陷台账回归层 `tests/regression`（11 项 = 4 passed + 7 xfailed）；`docs/DEFECTS_LOG.md` 记录 D1–D12 证据/严重级/归属阶段；全量 **338 passed, 7 xfailed**（xfail=已知缺陷，修复后转 PASS，不伪造通过）。

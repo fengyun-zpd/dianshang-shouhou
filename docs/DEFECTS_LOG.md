@@ -1,0 +1,41 @@
+# 缺陷台账（DEFECTS LOG）
+
+> 版本：v1.0（2026-09-04）。第一阶段产物：先补回归测试并执行，记录每项 pass/缺陷证据，
+> **不做大面积重构**。修复按第二阶段起逐项进行；修复后把对应 XFAIL 测试改为 PASS 并更新本表。
+> 证据来源：`tests/regression/test_defect_ledger_regressions.py`（`4 passed, 7 xfailed`，
+> 2026-09-04 实测，PG 容器运行中）+ 既有测试引用。
+> 严重级：P0=阻断（数据覆盖/跨租户/分叉），P1=并发/恢复/审计完整性问题。
+
+## 总览
+
+| 编号 | 缺陷/回归项 | 现状 | 证据 | 严重级 | 归属阶段 |
+| --- | --- | --- | --- | --- | --- |
+| D1 | 跨租户同 `order_id` 不互相覆盖 | **缺陷** | XFAIL `test_d1_*`（`_orders[order_id]` 裸键，第二次 seed 覆盖第一次） | P0 | 二（索引改 `(tenant,entity)`） |
+| D2 | 跨租户同 `idempotency_key` 互不冲突 | **缺陷** | XFAIL `test_d2_*`（`IdempotencyStore` 裸 key 全局冲突） | P0 | 二（幂等租户作用域） |
+| D3 | 客户只能读取自己的工单 | 通过 | PASS `test_d3_*`；API `test_customer_only_own_ticket` | — | 保持 |
+| D4 | 审批与拒绝携带 `expected_version` | **缺陷** | XFAIL `test_d4_*`（`RejectCommand` 无 `decision_version` 字段；approve 已有） | P1 | 二 |
+| D5 | 并发审批只有一个成功 | 部分 | PASS `test_d5_*`（顺序同版本二次审批被拒=版本 CAS 有效）；**并发真双跑**缺操作级锁/DB CAS | P1 | 二（op 级锁/DB CAS） |
+| D6 | PG `with_order_lock` 业务期间保持锁 | **缺陷** | XFAIL `test_d6_*`（实现为 FOR UPDATE 读取后立即 commit，业务代码执行期无锁，contender 未被阻塞 dt≈0.03s） | P0 | 二/三 |
+| D7 | PG 保存失败内存与 DB 不分叉 | **缺陷** | XFAIL `test_d7_*`（save 失败后内存含新状态、DB 为旧镜像） | P0 | 二（废弃 clear/reinsert；失败回滚+重读） |
+| D8 | 重启后政策/订单明细/审批/审计完整恢复 | **缺陷** | XFAIL `test_d8_*`（政策与 items 不入表，load 需外部重传且明细丢失；审批/审计/幂等已保真） | P1 | 二/四 |
+| D9 | 两进程同时 resume 同一线程单推进 | 未实现 | 无跨进程租约/DB 锁（设计项；单实例重复 resume 幂等已有测试保障） | P1 | 四（workflow_threads+租约） |
+| D10 | unknown 仅原 `operation_id` 对账 | 通过 | PASS `test_d10_*`（换新键 → `OPERATION_UNKNOWN_CONFLICT`；原键 reconcile 成功） | — | 保持 |
+| D11 | 外部未知不自动换键重试 | 通过 | PASS `test_d11_*`（timeout→unknown，无二次 create_refund 审计） | — | 保持 |
+| D12 | 报告生成无随机时间差异 | **缺陷** | XFAIL `test_d12_*`（agent_compare.md 含逐 run 耗时 ms，运行间浮动致 diff） | P1 | 七（报告稳定化） |
+
+## 逐项证据与修复方向（简）
+
+- **D1/D2（P0，第二阶段）**：`src/domain/after_sales/service.py` 索引 `_orders/_tickets/_operations` 为裸键
+  （seed/写入路径），`IdempotencyStore`（`src/domain/idempotency.py`）`_records` 为裸 key。方向：
+  全部领域索引与幂等键改为 `(tenant_id, entity_id/key)` 作用域；Repository 层已是 `(tenant, id)` 主键。
+- **D4/D5（P1）**：`RejectCommand` 增加 `decision_version` 并在 `reject()` 校验；并发审批需操作行
+  版本 CAS（`update_operation_versioned` 已具 DB CAS 语义，命令路径接入之）。
+- **D6（P0）**：`src/repo/postgres.py::with_order_lock` 读取行后 `tx.commit()` 即释放锁；须改为
+  锁保持至上下文退出（业务代码在未提交事务内执行，退出时提交/回滚），与 `unit_of_work` 语义一致。
+- **D7（P0）**：`PgBackedSession` 为命令后全量 clear/reinsert 镜像写：save 失败时内存（已被命令
+  mutate）与 DB（回滚旧镜像）分叉。方向：第二阶段废弃该生产路径，改为 PG-first 命令事务
+  （第三阶段 command service），失败整体回滚并重读事实。
+- **D8（P1）**：政策与订单明细不入表；需要 policy/order_items 持久化（表+迁移）或等价装载机制，
+  实现"重启完整恢复"。审批（approval_decisions）/审计/幂等已保真（既有 live 测试）。
+- **D9（P1）**：第四阶段 `workflow_threads` 表 + resume 租约/DB 锁后补 two-process 测试。
+- **D12（P1）**：对照报告移除/稳定化逐 run 耗时列（保留确定性指标），第七阶段复跑验证零 diff。
