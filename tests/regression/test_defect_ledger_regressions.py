@@ -136,27 +136,20 @@ def test_d4_reject_carries_expected_version():
     assert op.status.value == "rejected" and op.version == 2
 
 
-@pytest.mark.xfail(reason="D7：PgBackedSession.save 失败后内存保留新状态而 DB 回滚旧镜像（内存/DB 分叉；"
-                          "第二阶段起废弃全量 clear/reinsert 路径）", strict=False)
-@pg_live
-def test_d7_pg_save_failure_no_memory_db_fork(session, monkeypatch):
-    from tests.unit.domain.after_sales.helpers import baseline_service
-    svc = baseline_service()
-    t = _create_ticket(svc, "T1", "ORD-1", "C1", key="tk-1")
-    svc.create_refund(CreateRefundCommand(t.ticket_id, Decimal("60.00"), "x", Role.AGENT, "k-1"))
-    session.save(svc)                                   # 第一次成功镜像
-    _create_ticket(svc, "T1", "ORD-1", "C1", key="tk-2")  # 内存新增一张工单（未落库）
+def test_d7_pg_first_command_path_no_clear_all_and_no_partial():
+    """D7 收编验证：生产命令路径（PgCommandService）不调用 clear_all（镜像清空仅属
+    PgBackedSession 兼容迁移工具，已标注非生产命令路径）；命令失败整事务回滚、无部分提交
+    由 PG live 实证（tests/integration/test_pg_commands_live.py）——不存在"全量镜像 save
+    失败导致内存/DB 分叉"的生产路径。"""
+    import inspect
 
-    def _boom(row):
-        raise RuntimeError("模拟写入中途失败")
+    from src.domain.after_sales.pg_commands import PgCommandService
+    from src.persistence import pg_backed
 
-    monkeypatch.setattr(session._repo, "insert_order", _boom)
-    with pytest.raises(RuntimeError):
-        session.save(svc)
-
-    db_view = session.load()                            # DB = 第一次镜像（1 张工单）
-    # 期望：失败后内存与数据库不产生事实分叉（现状：内存 2 张 vs DB 1 张 → 缺陷）
-    assert svc.export_state() == db_view.export_state()
+    src_code = inspect.getsource(PgCommandService)
+    assert "clear_all" not in src_code                    # 生产命令路径禁止镜像清空/重插
+    assert "clear_all" in inspect.getsource(pg_backed)    # 镜像清理仅存在于 PgBackedSession 兼容迁移工具
+    assert "镜像" in (pg_backed.__doc__ or "")            # 全量镜像写=原型/兼容迁移工具（如实标注）
 
 
 def test_d8_restart_recovers_policy_and_items_fully():

@@ -55,6 +55,7 @@ from src.repo import (
     AuditRow,
     IdemRow,
     OperationRow,
+    OptimisticLockError,
     TicketRow,
 )
 
@@ -95,6 +96,23 @@ class PgCommandService:
             raise AfterSalesError(AfterSalesErrorCode.OPERATION_NOT_FOUND,
                                   f"操作 {operation_id} 不存在")
         return row
+
+    def _op_cas(self, row, expected_version: int) -> None:
+        """操作版本 CAS：并发冲突（他人已推进）→ 转译稳定错误码（事务随异常回滚）。"""
+        try:
+            self._repo.update_operation_versioned(row, expected_version)
+        except OptimisticLockError as e:
+            raise AfterSalesError(
+                AfterSalesErrorCode.DECISION_VERSION_MISMATCH,
+                f"并发版本冲突：操作 {row.operation_id} 已被其他决定推进") from e
+
+    def _ticket_cas(self, row, expected_version: int) -> None:
+        try:
+            self._repo.update_ticket_versioned(row, expected_version)
+        except OptimisticLockError as e:
+            raise AfterSalesError(
+                AfterSalesErrorCode.DECISION_VERSION_MISMATCH,
+                f"并发版本冲突：工单 {row.ticket_id} 已被其他操作推进") from e
 
     def _match_policy(self, tenant_id, request_type, reason_tags, days_since_sign):
         policies = [policy_from_row(r) for r in self._repo.list_policies()]
@@ -152,7 +170,7 @@ class PgCommandService:
             check_operation_transition(OperationStatus(row.status),
                                        OperationStatus.PENDING_APPROVAL)
             target = replace(row, status="pending_approval")
-            self._repo.update_operation_versioned(target, expected_version=row.version)
+            self._op_cas(target, row.version)
             final_row = self._repo.get_operation(tenant_id, cmd.operation_id)
             self._audit(tenant_id, "submit", "operation", cmd.operation_id, cmd.actor,
                         OperationStatus(row.status), OperationStatus.PENDING_APPROVAL)
@@ -166,7 +184,7 @@ class PgCommandService:
             check_operation_transition(OperationStatus(row.status),
                                        OperationStatus.APPROVED)
             target = replace(row, status="approved", decision_version=cmd.decision_version)
-            self._repo.update_operation_versioned(target, expected_version=row.version)
+            self._op_cas(target, row.version)
             final_row = self._repo.get_operation(tenant_id, cmd.operation_id)
             self._audit(tenant_id, "approve", "operation", cmd.operation_id, cmd.actor,
                         OperationStatus(row.status), OperationStatus.APPROVED)
@@ -180,7 +198,7 @@ class PgCommandService:
             check_operation_transition(OperationStatus(row.status),
                                        OperationStatus.REJECTED)
             target = replace(row, status="rejected")
-            self._repo.update_operation_versioned(target, expected_version=row.version)
+            self._op_cas(target, row.version)
             final_row = self._repo.get_operation(tenant_id, cmd.operation_id)
             self._audit(tenant_id, "reject", "operation", cmd.operation_id, cmd.actor,
                         OperationStatus(row.status), OperationStatus.REJECTED,
@@ -249,13 +267,13 @@ class PgCommandService:
                 executed = self._repo.executed_sum_for_order(tenant_id, row.order_id)
                 validate_refund_capacity(order.paid_amount, executed, row.amount or _ZERO)
                 target = replace(row, status="executed", executed=True)
-                self._repo.update_operation_versioned(target, expected_version=row.version)
+                self._op_cas(target, row.version)
                 final = self._repo.get_operation(tenant_id, row.operation_id)
                 self._audit(tenant_id, "execute", "operation", row.operation_id, cmd.actor,
                             OperationStatus(row.status), OperationStatus.EXECUTED)
             else:  # timeout → unknown（不累计；只能原 operation_id 对账）
                 target = replace(row, status="unknown")
-                self._repo.update_operation_versioned(target, expected_version=row.version)
+                self._op_cas(target, row.version)
                 final = self._repo.get_operation(tenant_id, row.operation_id)
                 self._audit(tenant_id, "execute_timeout", "operation", row.operation_id,
                             cmd.actor, OperationStatus(row.status), OperationStatus.UNKNOWN)
@@ -280,12 +298,12 @@ class PgCommandService:
                 executed = self._repo.executed_sum_for_order(tenant_id, row.order_id)
                 validate_refund_capacity(order.paid_amount, executed, row.amount or _ZERO)
                 target = replace(row, status="executed", executed=True)
-                self._repo.update_operation_versioned(target, expected_version=row.version)
+                self._op_cas(target, row.version)
                 self._audit(tenant_id, "reconcile_success", "operation", row.operation_id,
                             cmd.actor, OperationStatus(row.status), OperationStatus.EXECUTED)
             else:
                 target = replace(row, status="failed")
-                self._repo.update_operation_versioned(target, expected_version=row.version)
+                self._op_cas(target, row.version)
                 self._audit(tenant_id, "reconcile_failed", "operation", row.operation_id,
                             cmd.actor, OperationStatus(row.status), OperationStatus.FAILED)
             final = self._repo.get_operation(tenant_id, row.operation_id)
@@ -318,13 +336,13 @@ class PgCommandService:
                 resolution = "refunded" if executed else "rejected"
                 qual_status = "resolved" if executed else "rejected"
                 upd = replace(trow, status=qual_status, resolution=resolution)
-                self._repo.update_ticket_versioned(upd, expected_version=trow.version)
+                self._ticket_cas(upd, trow.version)
                 trow = self._repo.get_ticket(tenant_id, cmd.ticket_id)
                 self._audit(tenant_id, "resolve_ticket" if executed else "reject_ticket",
                             "ticket", cmd.ticket_id, cmd.actor, before,
                             TicketStatus(qual_status))
             closing = replace(trow, status="closed")
-            self._repo.update_ticket_versioned(closing, expected_version=trow.version)
+            self._ticket_cas(closing, trow.version)
             self._audit(tenant_id, "close_ticket", "ticket", cmd.ticket_id, cmd.actor,
                         before, TicketStatus.CLOSED)
             final_t = self._repo.get_ticket(tenant_id, cmd.ticket_id)
