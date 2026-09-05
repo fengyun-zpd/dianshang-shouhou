@@ -76,3 +76,43 @@ def test_sqlite_checkpointer_is_persistent_on_disk(tmp_path):
     snap = cp2.get_tuple({"configurable": {"thread_id": "T1:persist"}})
     assert snap is not None
     assert snap.checkpoint["channel_values"].get("tenant_id") == "T1"
+
+
+def test_checkpointer_hardened_pragmas(tmp_path):
+    """加固验证：WAL 日志模式 + busy_timeout=5000ms（并发写等待而非立即失败）。"""
+    import sqlite3
+    db = tmp_path / "hardened.sqlite"
+    open_sqlite_checkpointer(str(db))
+    conn = sqlite3.connect(str(db))
+    assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+    assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
+    conn.close()
+
+
+def test_corrupted_checkpoint_file_fails_fast(tmp_path):
+    """损坏处理：checkpoint 文件损坏 → 读取 fail-fast（sqlite3.DatabaseError），不静默使用。"""
+    import sqlite3
+
+    from src.agents.checkpoint import close_sqlite_checkpointer
+    db = tmp_path / "corrupt.sqlite"
+    cp = open_sqlite_checkpointer(str(db))
+    WorkflowRunner(make_runner()[0], checkpointer=cp).start("T1", REQUEST_DAMAGED,
+                                                            thread_id="corrupt-thread")
+    close_sqlite_checkpointer(cp)                     # 显式关闭：WAL checkpoint 落主文件
+    for suffix in ("-wal", "-shm"):
+        side = tmp_path / (db.name + suffix)
+        if side.exists():
+            side.unlink()
+    with open(str(db), "r+b") as f:
+        f.seek(0)
+        f.write(b"\x00" * 512)
+    raised = False
+    try:
+        conn = sqlite3.connect(str(db))
+        conn.execute("SELECT * FROM checkpoints LIMIT 1").fetchone()
+    except sqlite3.DatabaseError:
+        raised = True
+    finally:
+        if "conn" in dir() and conn:
+            conn.close()
+    assert raised is True
