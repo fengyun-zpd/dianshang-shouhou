@@ -163,6 +163,23 @@ def submit(operation_id: str, request: Request,
 
 # ---------- 审批 / 执行 / 对账 ----------
 
+def _decision_expected_version(request: Request, body, op_version: int) -> int:
+    """审批/拒绝的 expected_version 解析。
+
+    require_expected_version=True（pg profile）→ 客户端必填；缺失 → 422 稳定错误，
+    服务端**禁止**用当前 op.version 兜底（防读-改-写竞态/误导）。memory/演示保留宽松兜底。
+    """
+    if body.expected_version is not None:
+        return body.expected_version
+    if getattr(request.app.state, "require_expected_version", False):
+        from fastapi import HTTPException as _HTTPException
+        raise _HTTPException(
+            status_code=422,
+            detail={"code": "EXPECTED_VERSION_REQUIRED",
+                    "message": "pg profile：expected_version 必填，服务端不代填（防并发覆盖）"})
+    return op_version
+
+
 @router.post("/operations/{operation_id}/approve", response_model=OperationOut)
 def approve(operation_id: str, body: DecisionIn, request: Request,
             identity: ApiIdentity = Depends(get_identity)):
@@ -171,7 +188,7 @@ def approve(operation_id: str, body: DecisionIn, request: Request,
     op = svc.get_operation(operation_id)
     if op.tenant_id != identity.tenant_id:
         raise AfterSalesError(AfterSalesErrorCode.TENANT_MISMATCH, "操作不属于当前租户")
-    expected = body.expected_version if body.expected_version is not None else op.version
+    expected = _decision_expected_version(request, body, op.version)
     op = svc.approve(ApproveCommand(operation_id=operation_id, actor=Role.APPROVER,
                                     decision_version=expected))
     return _operation_out(request, identity.tenant_id, op)
@@ -185,7 +202,7 @@ def reject(operation_id: str, body: DecisionIn, request: Request,
     op = svc.get_operation(operation_id)
     if op.tenant_id != identity.tenant_id:
         raise AfterSalesError(AfterSalesErrorCode.TENANT_MISMATCH, "操作不属于当前租户")
-    expected = body.expected_version if body.expected_version is not None else op.version
+    expected = _decision_expected_version(request, body, op.version)
     op = svc.reject(RejectCommand(operation_id=operation_id, actor=Role.APPROVER,
                                   reason=body.reason or "审批人拒绝",
                                   decision_version=expected))
@@ -244,15 +261,17 @@ def audit(request: Request,
 
 # ---------- 工厂 ----------
 
-def create_app(service: AfterSalesService, registry: TokenResolver,
-               pg_probe=None) -> FastAPI:
-    """FastAPI 工厂。pg_probe：可调用 → bool，用于 /health/ready 反映 PostgreSQL 可用性
-    （None=未配置外部依赖探测，ready 恒 ok）。业务命令层默认仍为注入的 service
-    （内存 AfterSalesService 或未来 PG-first 装配），本工厂不连接任何真实外部系统。"""
+def create_app(service, registry: TokenResolver,
+               pg_probe=None, require_expected_version: bool = False) -> FastAPI:
+    """FastAPI 工厂。service 为实现 AfterSalesApplicationPort 的后端（Memory/PgCommand
+    Adapter 均可，调用方不 isinstance）。require_expected_version=True（pg profile）：
+    审批/拒绝必须由客户端提交 expected_version，服务端不代填（422）。
+    pg_probe：可调用 → bool，用于 /health/ready 反映 PostgreSQL 可用性。"""
     app = FastAPI(title="OpsPilot After-Sales API", version="0.1")
     app.state.service = service
     app.state.registry = registry
     app.state.pg_probe = pg_probe
+    app.state.require_expected_version = require_expected_version
     app.add_middleware(AuthMiddleware, registry=registry)
     app.add_middleware(RequestIdMiddleware)
 

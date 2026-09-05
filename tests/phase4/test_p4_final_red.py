@@ -57,16 +57,16 @@ def test_api_approve_passes_identity_principal():
 
 # ---------- R6 ----------
 
-@red
 def test_pg_approve_requires_client_expected_version():
-    """pg profile 审批缺 expected_version → 稳定拒绝；服务端不得用 op.version 替客户端补。"""
+    """pg profile 审批缺 expected_version → 稳定拒绝；服务端不得用 op.version 替客户端补。
+    行为断言见 tests/unit/api/test_decision_version_required.py。"""
     src = _read("src/api/app.py")
     approve_idx = src.index("def approve(")
     block = src[approve_idx:approve_idx + 1200]
     assert "expected_version" in block
-    # 服务端不得回退到读当前版本填充（现为 else op.version → RED）
-    assert "else op.version" not in block
+    assert "else op.version" not in block      # 服务端不再以当前版本兜底
     assert "or op.version" not in block
+    assert "EXPECTED_VERSION_REQUIRED" in src
 
 
 # ---------- R7 ----------
