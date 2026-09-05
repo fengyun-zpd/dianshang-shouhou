@@ -74,7 +74,21 @@ def main() -> int:
                         help="业务后端：仅 memory（开发演示，不连真实系统）；PG-first 命令路由为规划")
     parser.add_argument("--pg-url", default=os.environ.get("DATABASE_URL", ""),
                         help="PostgreSQL 连接串；提供后 /health/ready 真实探测其可用性")
+    parser.add_argument("--require-pg", action="store_true",
+                        help="pg profile 门禁：要求 PostgreSQL 可达且 schema 版本=0005；"
+                             "不满足则退出码 1（拒绝静默降级到内存）")
     args = parser.parse_args()
+
+    if args.require_pg:
+        from src.api.runtime import require_postgres_ready
+        url = args.pg_url or os.environ.get("DATABASE_URL", "")
+        if not url:
+            print("--require-pg 需要 --pg-url 或 DATABASE_URL", file=sys.stderr)
+            return 2
+        require_postgres_ready(url)   # 不满足 → RuntimeError（不 fallback）
+        print("pg profile 门禁通过（PostgreSQL 可达、schema=0005）；"
+              "注意：API 业务后端仍为 memory——PG-first 命令路由接入 API 为进行中（阶段四第 3 节），"
+              "本入口不静默声称已切换。")
 
     svc, reg = build_memory_backend()
     probe = make_pg_probe(args.pg_url) if args.pg_url else None
