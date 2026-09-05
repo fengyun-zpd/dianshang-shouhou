@@ -194,6 +194,7 @@ RAG、控制台、微调、观测：均标记「规划中」，V1 不前置实�
 ## 12. 文档导航
 
 - 工程宪法（自动代理工作规则）：[`AGENTS.md`](./AGENTS.md)
+- 面试交付物（时序图 / 架构取舍 / 安全不变量报告 / 5 分钟演示）：[`docs/INTERVIEW_OVERVIEW.md`](./docs/INTERVIEW_OVERVIEW.md) · [`scripts/demo_interview.py`](./scripts/demo_interview.py)
 - 官方资料：[LangGraph overview](https://docs.langchain.com/oss/python/langgraph/overview) · [Hugging Face TRL quickstart](https://huggingface.co/docs/trl/quickstart) · [QLoRA 论文](https://arxiv.org/abs/2305.14314) · [DPO 论文](https://arxiv.org/abs/2305.18290)
 
 ## 13. 实施进度（2026-09-04 追加，历史基线保留）
