@@ -112,10 +112,24 @@ def test_d2_cross_tenant_same_idem_key_not_conflict():
     assert len(svc.export_state()["tickets"]) == 2
 
 
-@pytest.mark.xfail(reason="D4：RejectCommand 无 expected_version；拒绝缺少版本并发控制（第二阶段补）",
-                   strict=False)
 def test_d4_reject_carries_expected_version():
+    """D4 修复验证：RejectCommand 携带 expected_version；版本不符拒绝被拦截；正确版本成功。"""
+    from src.domain.after_sales.models import AfterSalesError
     assert "decision_version" in RejectCommand.__dataclass_fields__
+    svc = service_with_policies(("P-DAMAGED-FULL", ("damaged",), "1.00", 30))
+    t = _create_ticket(svc, "T1", "ORD-1", "C1", key="tk-r4")
+    op = svc.create_refund(CreateRefundCommand(t.ticket_id, Decimal("60.00"), "x", Role.AGENT, "k-r4"))
+    svc.submit(SubmitCommand(op.operation_id, Role.AGENT))
+    assert svc.get_operation(op.operation_id).version == 1
+    # 过期版本拒绝 → DECISION_VERSION_MISMATCH
+    with pytest.raises(AfterSalesError) as ei:
+        svc.reject(RejectCommand(op.operation_id, Role.APPROVER, reason="重复申请",
+                                 decision_version=2))
+    assert ei.value.code == AfterSalesErrorCode.DECISION_VERSION_MISMATCH
+    # 正确版本拒绝成功
+    op = svc.reject(RejectCommand(op.operation_id, Role.APPROVER, reason="重复申请",
+                                  decision_version=1))
+    assert op.status.value == "rejected" and op.version == 2
 
 
 @pytest.mark.xfail(reason="D7：PgBackedSession.save 失败后内存保留新状态而 DB 回滚旧镜像（内存/DB 分叉；"
@@ -219,11 +233,9 @@ def test_d11_external_timeout_never_auto_retries_new_key():
 
 
 @pg_live
-@pytest.mark.xfail(reason="D6：with_order_lock 实现为 FOR UPDATE 读取后立即 commit（锁随事务提交释放），"
-                          "业务代码执行期间并未持锁（实测 contender 未被阻塞 dt≈0.03s）；第二阶段改为"
-                          "锁保持至上下文退出/命令事务提交", strict=False)
-def test_d6_with_order_lock_held_through_business_execution():
-    """D6 缺陷确认：期望 with_order_lock 在业务代码执行期间保持行锁（第二事务阻塞至持有者提交）。"""
+def test_d6_with_order_lock_held_through_business_execution(session):
+    """D6 修复验证：with_order_lock 在业务代码执行期间保持行锁（第二事务阻塞至持有者提交）。
+    session fixture 负责重建表（清残留），此处仅复用其清理副作用。"""
     repo = PostgresAfterSalesRepository(DATABASE_URL)
     repo.insert_order(OrderRow("T1", "ORD-L", "C1", "delivered", Decimal("100.00"), 2))
     repo.insert_ticket(TicketRow("T1", "TKT-L", "ORD-L", "C1", "refund", "x", "open"))

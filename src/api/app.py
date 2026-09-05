@@ -166,8 +166,9 @@ def approve(operation_id: str, body: DecisionIn, request: Request,
     op = svc.get_operation(operation_id)
     if op.tenant_id != identity.tenant_id:
         raise AfterSalesError(AfterSalesErrorCode.TENANT_MISMATCH, "操作不属于当前租户")
+    expected = body.expected_version if body.expected_version is not None else op.version
     op = svc.approve(ApproveCommand(operation_id=operation_id, actor=Role.APPROVER,
-                                    decision_version=op.version))
+                                    decision_version=expected))
     return _operation_out(request, identity.tenant_id, op)
 
 
@@ -179,8 +180,10 @@ def reject(operation_id: str, body: DecisionIn, request: Request,
     op = svc.get_operation(operation_id)
     if op.tenant_id != identity.tenant_id:
         raise AfterSalesError(AfterSalesErrorCode.TENANT_MISMATCH, "操作不属于当前租户")
+    expected = body.expected_version if body.expected_version is not None else op.version
     op = svc.reject(RejectCommand(operation_id=operation_id, actor=Role.APPROVER,
-                                  reason=body.reason or "审批人拒绝"))
+                                  reason=body.reason or "审批人拒绝",
+                                  decision_version=expected))
     return _operation_out(request, identity.tenant_id, op)
 
 

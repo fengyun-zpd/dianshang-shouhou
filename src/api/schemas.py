@@ -46,7 +46,10 @@ class OperationOut(BaseModel):
 
 
 class DecisionIn(BaseModel):
+    """审批/拒绝决定。expected_version：调用方已知的操作版本（期望）；不传时服务端以
+    读到的当前版本提交（宽松兼容）；传入时与领域当前版本不符将返回 DECISION_VERSION_MISMATCH。"""
     reason: Optional[str] = None
+    expected_version: Optional[int] = None
 
 
 class ExecuteIn(BaseModel):

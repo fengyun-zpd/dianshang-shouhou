@@ -129,7 +129,10 @@ class AfterSalesGateway:
                 operation_id=operation_id, actor=Role.APPROVER, decision_version=op.version,
             ))
         if decision == "rejected":
-            return self._svc.reject(RejectCommand(operation_id=operation_id, actor=Role.APPROVER, reason=reason or "审批人拒绝"))
+            return self._svc.reject(RejectCommand(
+                operation_id=operation_id, actor=Role.APPROVER,
+                reason=reason or "审批人拒绝", decision_version=op.version,
+            ))
         raise ValueError(f"非法审批决定：{decision!r}")
 
     # ---------- 审计水位 ----------

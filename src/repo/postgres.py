@@ -90,7 +90,13 @@ class PostgresAfterSalesRepository(AfterSalesRepository):
 
     @contextmanager
     def with_order_lock(self, tenant_id: str, order_id: str) -> Iterator[Optional[OrderRow]]:
-        """持订单行锁直到上下文退出（供需要“锁内做多步”的编排）。"""
+        """持订单行锁直到业务代码（yield 体）执行完成：事务内 SELECT … FOR UPDATE 持锁，
+        业务代码在未提交事务中运行（其他事务同订单写被阻塞），退出后统一 commit/rollback
+        释放锁（供需要"锁内做多步"的编排，如第三阶段命令级事务）。
+
+        注意：yield 体内请勿调用本仓库中会自开事务/新连接的写方法（会等待本锁而阻塞）；
+        需要锁内多表写时请直接使用同一连接的事务编排（unit_of_work / PG-first 命令服务）。
+        """
         conn = self._engine.connect()
         tx = conn.begin()
         try:
@@ -99,8 +105,8 @@ class PostgresAfterSalesRepository(AfterSalesRepository):
                 "days_since_sign, version FROM orders "
                 "WHERE tenant_id=:t AND order_id=:o FOR UPDATE"
             ), {"t": tenant_id, "o": order_id}).fetchone()
-            tx.commit()
             yield self._order_from(row) if row else None
+            tx.commit()
         except BaseException:
             tx.rollback()
             raise

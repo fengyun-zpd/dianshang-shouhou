@@ -419,7 +419,14 @@ class AfterSalesService:
     def reject(self, cmd: RejectCommand) -> Operation:
         if cmd.actor != Role.APPROVER:
             raise AfterSalesError(AfterSalesErrorCode.PERMISSION_DENIED, "只有授权人员可以审批")
-        op, before = self._apply_op_transition(self.get_operation(cmd.operation_id), OperationStatus.REJECTED)
+        op = self.get_operation(cmd.operation_id)
+        if cmd.decision_version != op.version:
+            raise AfterSalesError(
+                AfterSalesErrorCode.DECISION_VERSION_MISMATCH,
+                f"决定版本 {cmd.decision_version} 与当前版本 {op.version} 不一致（拒绝被并发拦截）",
+            )
+        op, before = self._apply_op_transition(op, OperationStatus.REJECTED)
+        op.version += 1  # 拒绝亦推进版本：同 expected_version 的审批/拒绝竞争恰一成功
         self._record("reject", "operation", op.operation_id, cmd.actor, before, OperationStatus.REJECTED, note=cmd.reason)
         return op
 

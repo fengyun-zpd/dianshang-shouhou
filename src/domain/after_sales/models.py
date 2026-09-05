@@ -247,6 +247,7 @@ class RejectCommand:
     operation_id: str
     actor: Role
     reason: str
+    decision_version: int  # 期望的操作版本（并发控制：版本不符拒绝）
 
 
 @dataclass(frozen=True)

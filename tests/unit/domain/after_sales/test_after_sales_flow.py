@@ -99,7 +99,8 @@ def test_rejected_refund_closes_ticket_as_rejected():
     ticket = open_ticket(svc)
     op = _refund_draft(svc, ticket.ticket_id)
     svc.submit(SubmitCommand(op.operation_id, Role.AGENT))
-    op = svc.reject(RejectCommand(op.operation_id, Role.APPROVER, reason="超出政策范围"))
+    op = svc.reject(RejectCommand(op.operation_id, Role.APPROVER, reason="超出政策范围",
+                                  decision_version=op.version))
     assert op.status == OperationStatus.REJECTED
     assert svc.refunded_amount("ORD-1") == Decimal("0.00")
 
