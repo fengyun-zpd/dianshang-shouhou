@@ -3,13 +3,18 @@
 运行（项目根，D 盘 .venv）：
     .venv\\Scripts\\python.exe scripts\\demo_interview.py
 
-覆盖（与黄金集 golden_v1 同构；全部为固定种子合成数据）：
-  1) 正常破损退款：意图 → 证据 → 确定性退款计划 → 草稿 → 人工审批 interrupt →
+固化五核心场景（与黄金集 golden_v1 同构；全部为固定种子合成数据，每步断言）：
+  1) 正常闭环：破损退款 → 意图 → 证据 → 确定性退款计划 → 草稿 → 人工审批 interrupt →
      approve → resume 重读领域决定 → 执行 → 关单审计；
-  2) 缺订单号：澄清 interrupt（不猜测）；
-  3) 跨租户访问：T2 会话读 T1 订单 → 拒绝转人工，零副作用；
-  4) 重复请求：同线程同请求再次 start → 返回原结果，不重复退款；
-  5) operation_unknown：外部超时 → unknown（金额 0）→ 仅以原 operation_id 对账 success → 落账。
+  2) 信息不足：缺订单号 → 澄清 interrupt（不猜测金额/政策）；
+  3) 无政策证据：诉求无适用政策 → 领域 POLICY_NOT_FOUND → 转人工，不虚构政策/金额；
+  4) 审批拒绝：授权人 reject → resume 后零副作用收尾（不执行、不退款）；
+  5) 外部结果未知：外部超时 → operation_unknown（金额 0）→ 仅以原 operation_id
+     对账 success → 落账。
+
+补充安全演示（同一脚本，面试按需展示）：
+  6) 跨租户访问：T2 会话读 T1 订单 → 拒绝转人工，零副作用；
+  7) 重复请求：同线程同请求再次 start → 返回原结果，不重复退款。
 
 演示结论（每步断言，任意失败即抛 AssertionError）：
   金额/资格/状态/幂等/审批一律由确定性领域服务裁决；Agent 只检索证据与生成草稿。
@@ -54,6 +59,19 @@ def _build_service() -> AfterSalesService:
     return svc
 
 
+def _build_service_no_policy() -> AfterSalesService:
+    """合成固定种子：T1 订单 ORD-1（实付 100.00），但**无任何适用 PolicyRule**。"""
+    svc = AfterSalesService()
+    svc.seed_order(Order(
+        order_id="ORD-1", tenant_id="T1", customer_id="C1",
+        status=OrderStatus.DELIVERED, paid_amount=Decimal("100.00"),
+        items=[OrderItem(sku="SKU-1", name="演示商品", quantity=1,
+                         unit_price=Decimal("100.00"))],
+        days_since_sign=2,
+    ))
+    return svc
+
+
 def _new_runner(svc) -> WorkflowRunner:
     return WorkflowRunner(MemoryAdapter(svc))
 
@@ -77,6 +95,40 @@ def demo1_happy_refund(svc) -> None:
           f"工单={t.status.value}/{t.resolution}，审计 {len(svc.audit_log())} 条")
 
 
+def demo_no_policy_escalates_without_fabrication() -> None:
+    print(f"\n{BAR}\n[演示 3] 无政策证据 → 领域 POLICY_NOT_FOUND → 转人工（不虚构政策/金额）\n{BAR}")
+    svc = _build_service_no_policy()
+    runner = _new_runner(svc)
+    r = runner.start("T1", "订单 ORD-1 商品破损，要求退款", thread_id="i3nopolicy")
+    assert r.finished and r.outcome == "escalated"
+    st = r.state or {}
+    assert r.error_code == "AFTER_SALES_POLICY_NOT_FOUND"
+    assert not st.get("action_draft")                # 无草稿：不虚构政策/金额
+    assert svc.audit_log() == [] and svc.refunded_amount("ORD-1") == Decimal("0.00")
+    print(f"  结果          : outcome={r.outcome}，error={r.error_code}")
+    print(f"  reply         : {r.reply}")
+    print("  零副作用（无草稿、无审计、无退款）：Agent 未猜测政策或金额")
+
+
+def demo_approval_rejected_zero_side_effect() -> None:
+    print(f"\n{BAR}\n[演示 4] 审批拒绝 → resume 后零副作用收尾（不执行、不退款）\n{BAR}")
+    svc = _build_service()
+    runner = _new_runner(svc)
+    r = runner.start("T1", "订单 ORD-1 商品破损，要求退款", thread_id="i4reject")
+    assert r.waiting_approval
+    op_id = r.state["operation_id"]
+    runner.submit_decision(op_id, "rejected", reason="重复申请")
+    final = runner.resume("i4reject")
+    assert final.outcome == "rejected"
+    op = svc.get_operation(op_id)
+    t = svc.get_ticket(r.state["ticket_id"])
+    print(f"  结果          : outcome={final.outcome}；操作状态={op.status.value}（拒绝）")
+    print(f"  工单          : {t.status.value}/{t.resolution}；退款累计={svc.refunded_amount('ORD-1')}（零执行）")
+    assert svc.refunded_amount("ORD-1") == Decimal("0.00")
+    assert len([e for e in svc.audit_log() if e.action == "execute"]) == 0
+    print("  零副作用：无 execute 审计、无退款，审批决定以领域服务为准")
+
+
 def demo2_missing_order_clarify() -> None:
     print(f"\n{BAR}\n[演示 2] 缺订单号 → 澄清 interrupt（不猜测）\n{BAR}")
     svc = _build_service()
@@ -92,7 +144,7 @@ def demo2_missing_order_clarify() -> None:
 
 
 def demo3_cross_tenant_rejected() -> None:
-    print(f"\n{BAR}\n[演示 3] 跨租户访问（T2 会话读 T1 订单）→ 拒绝转人工，零副作用\n{BAR}")
+    print(f"\n{BAR}\n[演示 8] 跨租户访问（T2 会话读 T1 订单）→ 拒绝转人工，零副作用\n{BAR}")
     svc = _build_service()
     runner = _new_runner(svc)
     r = runner.start("T2", "订单 ORD-1 商品破损，要求退款", thread_id="i3")
@@ -104,7 +156,7 @@ def demo3_cross_tenant_rejected() -> None:
 
 
 def demo4_repeat_request_idempotent() -> None:
-    print(f"\n{BAR}\n[演示 4] 重复请求（同线程同请求再次 start）→ 原结果，不重复退款\n{BAR}")
+    print(f"\n{BAR}\n[演示 9] 重复请求（同线程同请求再次 start）→ 原结果，不重复退款\n{BAR}")
     svc = _build_service()
     runner = _new_runner(svc)
     r1 = runner.start("T1", "订单 ORD-1 商品破损，要求退款", thread_id="i4")
@@ -144,13 +196,17 @@ def demo5_unknown_reconcile_original_key() -> None:
 def main() -> None:
     svc = _build_service()
     print("OpsPilot 面试演示：确定性规则单 Agent（合成数据 seed，真实执行）")
-    demo1_happy_refund(svc)
-    demo2_missing_order_clarify()
+    print("\n—— 核心五场景（正常闭环 / 信息不足 / 无政策证据 / 审批拒绝 / 外部结果未知）——")
+    demo1_happy_refund(svc)                        # 1 正常闭环
+    demo2_missing_order_clarify()                  # 2 信息不足（缺订单号澄清）
+    demo_no_policy_escalates_without_fabrication() # 3 无政策证据 → 转人工
+    demo_approval_rejected_zero_side_effect()      # 4 审批拒绝 → 零副作用
+    demo5_unknown_reconcile_original_key()         # 5 外部结果未知 → 原键对账
+    print("\n—— 补充安全演示（跨租户拒绝 / 重复请求幂等）——")
     demo3_cross_tenant_rejected()
     demo4_repeat_request_idempotent()
-    demo5_unknown_reconcile_original_key()
-    print(f"\n{BAR}\n全部 5 个场景通过：金额/资格/状态/幂等/审批均由确定性领域服务裁决；"
-          f"Agent 只检索证据与生成草稿。\n{BAR}")
+    print(f"\n{BAR}\n全部 7 个场景通过（含任务卡五核心场景）：金额/资格/状态/幂等/审批均由确定性"
+          f"领域服务裁决；Agent 只检索证据与生成草稿。\n{BAR}")
 
 
 if __name__ == "__main__":

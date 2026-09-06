@@ -89,10 +89,10 @@ class AfterSalesService:
     def seed_policy(self, policy: PolicyRule) -> None:
         self._policies.append(policy)
 
-    # ---------- 可恢复持久化（原型）：导出/恢复领域状态（只读/恢复，不改变任何规则） ----------
+    # ---------- 领域状态导出/恢复（测试与恢复工具用；不改变任何规则） ----------
 
     def export_state(self) -> dict:
-        """导出领域状态，供快照存储与重启恢复（不影响运行；不含任何模型输出）。"""
+        """导出领域状态，供测试断言、恢复工具与 PG 行装配（不影响运行；不含任何模型输出）。"""
         return {
             "schema_version": 1,
             "seq": self._seq,
@@ -108,8 +108,8 @@ class AfterSalesService:
     def restore_state(self, state: dict) -> None:
         """从导出状态恢复（原子：先构造全部局部容器并预检，通过后一次性替换内部状态）。
 
-        语义校验由持久化层 validate_snapshot_state 完成；此处只做结构预检与原子替换，
-        任何失败都不会部分改变当前业务状态（K3）。
+        此处只做结构预检与原子替换，任何失败都不会部分改变当前业务状态（K3）；
+        更严格的语义校验（引用完整性等）由调用方（如恢复工具）负责。
         """
         expected_keys = {
             "schema_version", "seq", "orders", "policies", "tickets",

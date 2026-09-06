@@ -1,15 +1,17 @@
 """K4：PostgreSQL Repository 集成测试（真实数据库实测）。
 
-前置：本机 PostgreSQL 容器（postgres:16-alpine，端口 5433，user/pw/db=opspilot）
-或环境变量 DATABASE_URL（sqlalchemy url）。不可达时整模块 skip，并明确标注“数据库集成未实测”。
+前置：隔离测试库环境变量 OPSPILOT_TEST_DATABASE_URL（指向 opspilot_test_* 隔离库，
+如 postgresql+psycopg2://opspilot:opspilot@127.0.0.1:5433/opspilot_test_v1）。
+未设置或不可达时整模块 skip（绝不回退到 DATABASE_URL 指向的共享 opspilot 主库；
+guard fail-closed，详见 tests/pg_live.py）。
 """
-import os
 import threading
 from decimal import Decimal
-from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine, text
+
+from tests.pg_live import live_test_db_url, pg_reachable, reset_test_schema
 
 from src.repo import (
     ApprovalRow,
@@ -25,46 +27,24 @@ from src.repo import (
     UniqueViolation,
 )
 
-ROOT = Path(__file__).resolve().parents[2]
-DATABASE_URL = os.environ.get(
-    "DATABASE_URL",
-    "postgresql+psycopg2://opspilot:opspilot@127.0.0.1:5433/opspilot",
-)
-_SCHEMA = (ROOT / "src" / "repo" / "schema.sql").read_text(encoding="utf-8")
-
-
-def _pg_available() -> bool:
-    try:
-        engine = create_engine(DATABASE_URL, connect_args={"connect_timeout": 3})
-        with engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
-        engine.dispose()
-        return True
-    except Exception:  # noqa: BLE001
-        return False
-
+TEST_DB_URL = live_test_db_url()
 
 pytestmark = pytest.mark.skipif(
-    not _pg_available(),
-    reason="PostgreSQL 不可达：数据库集成未实测（仅契约/memory 已验证）",
+    TEST_DB_URL is None or not pg_reachable(TEST_DB_URL),
+    reason="OPSPILOT_TEST_DATABASE_URL 未设置或 PostgreSQL 不可达："
+           "未使用隔离测试库，跳过破坏性集成（PG 集成未实测）",
 )
 
 
 @pytest.fixture(autouse=True)
 def _clean_db():
-    engine = create_engine(DATABASE_URL)
-    with engine.begin() as conn:
-        # 重建全部表（含 CHECK 约束），保证用例确定性
-        for table in ("audit_events", "idempotency_records", "approval_decisions",
-                      "refund_operations", "tickets", "orders", "policies", "order_items", "entity_seq", "workflow_threads"):
-            conn.execute(text(f"DROP TABLE IF EXISTS {table} CASCADE"))
-        conn.execute(text(_SCHEMA))
-    engine.dispose()
+    """guard 通过后重建全部业务表（opspilot_test_* 隔离库）；guard 拒绝 → 抛错失败。"""
+    reset_test_schema(TEST_DB_URL)
 
 
 @pytest.fixture
 def repo() -> PostgresAfterSalesRepository:
-    return PostgresAfterSalesRepository(DATABASE_URL)
+    return PostgresAfterSalesRepository(TEST_DB_URL)
 
 
 def _order(paid="100.00", order_id="ORD-1") -> OrderRow:
@@ -119,7 +99,7 @@ def test_live_concurrent_execute_single_success_by_row_lock(repo):
     def worker(op_id: str):
         try:
             barrier.wait()
-            ok = PostgresAfterSalesRepository(DATABASE_URL).try_execute_refund(
+            ok = PostgresAfterSalesRepository(TEST_DB_URL).try_execute_refund(
                 "tenant-a", "ORD-1", _op(op_id, "60.00"))
         except Exception as e:  # noqa: BLE001
             ok = False
@@ -137,7 +117,7 @@ def test_live_concurrent_execute_single_success_by_row_lock(repo):
 
 def test_live_unknown_only_original_key_semantics():
     """unknown 收口只能原键：幂等记录唯一约束下，原键命中返回原记录（换新键必然冲突或新对象由领域层拒绝）。"""
-    repo = PostgresAfterSalesRepository(DATABASE_URL)
+    repo = PostgresAfterSalesRepository(TEST_DB_URL)
     repo.insert_idem(IdemRow("tenant-a", "orig-key", "h", "OP-UNKNOWN"))
     got = repo.get_idem("tenant-a", "orig-key")
     assert got is not None and got.refund_id == "OP-UNKNOWN"
@@ -146,7 +126,7 @@ def test_live_unknown_only_original_key_semantics():
 def test_live_db_constraint_rejects_invalid_amount():
     """数据库独立拒绝非法金额（amount<=0 或负支付金额）。"""
     from sqlalchemy.exc import IntegrityError
-    repo = PostgresAfterSalesRepository(DATABASE_URL)
+    repo = PostgresAfterSalesRepository(TEST_DB_URL)
     repo.insert_order(_order())
     repo.insert_ticket(TicketRow("tenant-a", "TKT-1", "ORD-1", "C1", "refund", "破损", "open"))
     with pytest.raises(IntegrityError):
@@ -158,7 +138,7 @@ def test_live_db_constraint_rejects_invalid_amount():
 def test_live_db_constraint_rejects_invalid_status():
     """数据库独立拒绝非法状态（CHECK 状态枚举）。"""
     from sqlalchemy.exc import IntegrityError
-    repo = PostgresAfterSalesRepository(DATABASE_URL)
+    repo = PostgresAfterSalesRepository(TEST_DB_URL)
     repo.insert_order(_order())
     repo.insert_ticket(TicketRow("tenant-a", "TKT-1", "ORD-1", "C1", "refund", "破损", "open"))
     bad = _op("OP-BAD-STATUS", "10.00")
@@ -170,7 +150,7 @@ def test_live_db_constraint_rejects_invalid_status():
 
 def test_live_concurrent_same_idem_key_single_winner():
     """数据库幂等唯一约束：并发同 (tenant, key) 插入恰一个成功、另一个 UniqueViolation。"""
-    repo = PostgresAfterSalesRepository(DATABASE_URL)
+    repo = PostgresAfterSalesRepository(TEST_DB_URL)
     barrier = threading.Barrier(2)
     outcomes: list[str] = []
     lock = threading.Lock()
@@ -178,7 +158,7 @@ def test_live_concurrent_same_idem_key_single_winner():
     def worker():
         try:
             barrier.wait()
-            PostgresAfterSalesRepository(DATABASE_URL).insert_idem(
+            PostgresAfterSalesRepository(TEST_DB_URL).insert_idem(
                 IdemRow("tenant-a", "same-key", "h1", "OP-1"))
             with lock:
                 outcomes.append("ok")
@@ -226,7 +206,7 @@ def test_live_unit_of_work_rollback_no_partial_commit(repo):
             repo.insert_audit(AuditRow("tenant-a", "create_ticket", "ticket", "TKT-1",
                                        "agent", None, "open"))
             raise ValueError("模拟命令中途失败")
-    engine = create_engine(DATABASE_URL)
+    engine = create_engine(TEST_DB_URL)
     with engine.connect() as conn:
         orders = conn.execute(text("SELECT COUNT(*) FROM orders")).scalar()
         audits = conn.execute(text("SELECT COUNT(*) FROM audit_events")).scalar()
@@ -281,7 +261,7 @@ def test_live_next_seq_atomic_across_connections():
     def worker():
         try:
             barrier.wait()
-            v = PostgresAfterSalesRepository(DATABASE_URL).next_seq("tenant-a", "ticket")
+            v = PostgresAfterSalesRepository(TEST_DB_URL).next_seq("tenant-a", "ticket")
         except Exception:  # noqa: BLE001
             v = -1
         with lock:
@@ -294,7 +274,7 @@ def test_live_next_seq_atomic_across_connections():
         t.join()
     assert len(outcomes) == 8
     assert sorted(outcomes) == list(range(1, 9))   # 1..8 各一次，无重复
-    assert PostgresAfterSalesRepository(DATABASE_URL).next_seq("tenant-b", "ticket") == 1
+    assert PostgresAfterSalesRepository(TEST_DB_URL).next_seq("tenant-b", "ticket") == 1
 
 
 # ---------- 版本迁移 CAS（真实 PG） ----------

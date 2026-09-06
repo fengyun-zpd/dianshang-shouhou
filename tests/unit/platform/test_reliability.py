@@ -2,6 +2,7 @@
 import pytest
 
 from src.domain.models import Role
+from src.platform import reliability
 from src.platform.reliability import (
     AuditMarkers,
     CircuitBreaker,
@@ -71,8 +72,10 @@ def test_breaker_fail_closed_without_fallback():
         cb.call(fail)  # 无降级 → fail-closed
 
 
-def test_breaker_half_open_recovers_after_reset_window():
-    cb = CircuitBreaker(failure_threshold=1, reset_timeout_seconds=0.02)
+def test_breaker_half_open_recovers_after_reset_window(monkeypatch):
+    now = [100.0]
+    monkeypatch.setattr(reliability.time, "monotonic", lambda: now[0])
+    cb = CircuitBreaker(failure_threshold=1, reset_timeout_seconds=1.0)
     def fail():
         raise TimeoutError("boom")
     def ok():
@@ -80,8 +83,7 @@ def test_breaker_half_open_recovers_after_reset_window():
     with pytest.raises(TimeoutError):
         cb.call(fail)
     assert cb.state == "open"
-    import time as _t
-    _t.sleep(0.03)          # 越过重置窗口 → half_open
+    now[0] += 1.0           # 虚拟时钟越过重置窗口，避免依赖真实调度时间
     assert cb.state == "half_open"
     assert cb.call(ok) == "ok"   # 试探成功 → closed
     assert cb.state == "closed"

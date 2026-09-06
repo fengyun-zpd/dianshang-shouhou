@@ -4,9 +4,8 @@
 - memory profile：仅用于本地演示/测试（内存 AfterSalesService + 合成 seed）；
 - pg profile：必须满足 PostgreSQL 可达 + Alembic 迁移 >= 期望版本 + 健康探测，否则
   **启动失败并报错，绝不静默降级到内存**；
-- 命令层（PgCommandService）为 pg profile 的业务事实源；API/Gateway/Runner 的
-  port 化接入为进行中（见 docs/STATUS_AND_RISKS.md 阶段四进度），本模块先行提供
-  装配与校验，供启动入口使用。
+- 命令层（PgCommandService）为 pg profile 的业务事实源；API、Gateway 和 Runner
+  只依赖 AfterSalesApplicationPort，本模块负责启动装配与校验。
 """
 from __future__ import annotations
 

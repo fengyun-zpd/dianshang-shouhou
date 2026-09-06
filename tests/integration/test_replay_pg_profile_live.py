@@ -1,8 +1,10 @@
 """阶段 C1 冒烟：replay PG profile（evals/replay.py）装配链 + golden_v1 在 PG 真实跑通。
 
-前置：opspilot-pg（127.0.0.1:5433）或 DATABASE_URL；不可达/schema≠0005 整模块 skip。
+前置：隔离测试库 OPSPILOT_TEST_DATABASE_URL（opspilot_test_*，schema=0005）；
+不可达/版本不符整模块 skip（绝不回退 DATABASE_URL 指向的共享 opspilot 主库）。
 覆盖（真实行为，非字符串级）：
-- PgReplayProfile 装配：require_postgres_ready 门禁、每用例 schema.sql 重建、
+- PgReplayProfile 装配：require_postgres_ready 门禁、每用例经 guard 重建 schema
+  （reset_schema 仅允许 opspilot_test_* 隔离库，fail-closed）、
   订单/政策 seed 等价层（orders/order_items/policies 行）、PgCommandAdapter 后端、
   SQLite 持久 checkpoint、WorkflowRunner 强制 workflow_threads DB 租约；
 - run_case(case, profile=...) 真实驱动 g01（正常退款闭环）通过，且
@@ -11,12 +13,13 @@
 说明：不做完整 11 条断言（evals/replay.py --profile pg 本身即验收命令）；
 冒烟只固化装配与至少一条真实路径，防止装配链/seed 等价层被意外破坏。
 """
-import os
 import sys
 from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine, text
+
+from tests.pg_live import live_test_db_url, pg_reachable
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -24,22 +27,24 @@ if str(ROOT) not in sys.path:
 
 from src.api.runtime import require_postgres_ready  # noqa: E402
 
-DATABASE_URL = os.environ.get(
-    "DATABASE_URL",
-    "postgresql+psycopg2://opspilot:opspilot@127.0.0.1:5433/opspilot",
-)
+TEST_DB_URL = live_test_db_url()
 
 
-def _pg_available() -> bool:
+def _ready() -> bool:
+    """隔离测试库就绪：可达且 alembic schema=0005（保留原 require_postgres_ready 门禁语义）。"""
+    if TEST_DB_URL is None or not pg_reachable(TEST_DB_URL):
+        return False
     try:
-        require_postgres_ready(DATABASE_URL)
+        require_postgres_ready(TEST_DB_URL)
         return True
     except Exception:  # noqa: BLE001
         return False
 
 
-pytestmark = pytest.mark.skipif(not _pg_available(),
-                                reason="PostgreSQL 不可达/版本不符：PG profile 回放未实测")
+pytestmark = pytest.mark.skipif(
+    not _ready(),
+    reason="OPSPILOT_TEST_DATABASE_URL 未设置/不可达/schema≠0005："
+           "PG profile 回放未实测（未使用隔离测试库）")
 
 
 def _g01() -> dict:
@@ -51,9 +56,9 @@ def _g01() -> dict:
 
 @pytest.fixture
 def profile(tmp_path):
-    """pg profile 评测环境（构造即门禁 + 重建 schema；每测试独立重建）。"""
+    """pg profile 评测环境（构造即门禁 + guard 重建 schema；每测试独立重建）。"""
     from evals.replay import PgReplayProfile
-    p = PgReplayProfile(DATABASE_URL, checkpoint_path=str(tmp_path / "ck.sqlite"))
+    p = PgReplayProfile(TEST_DB_URL, checkpoint_path=str(tmp_path / "ck.sqlite"))
     yield p
     p.close()
 
@@ -72,7 +77,7 @@ def test_replay_pg_profile_assembles_runner_with_lease_and_seed(profile):
 
     # seed 等价层：orders + order_items 明细 + policies（effective_from/version 固定）
     profile.seed_case(_g01())
-    engine = create_engine(DATABASE_URL)
+    engine = create_engine(TEST_DB_URL)
     with engine.connect() as conn:
         order = conn.execute(text(
             "SELECT tenant_id, order_id, customer_id, status, paid_amount, "
@@ -101,7 +106,7 @@ def test_replay_pg_golden_g01_passes_with_pg_facts(profile):
     assert result["outcome"] == "refunded"
     assert result["refunded"] == "100.00"
 
-    engine = create_engine(DATABASE_URL)
+    engine = create_engine(TEST_DB_URL)
     with engine.connect() as conn:
         op = conn.execute(text(
             "SELECT status, executed, amount FROM refund_operations "

@@ -1,6 +1,6 @@
 """PG-first 命令服务（阶段三第五步，八命令全集已实现）：每个命令 = 单个数据库事务。
 
-模板（docs/PG_FIRST_SERVICE.md §5）：事务内读最新事实（Row）→ rules 纯函数校验
+事务路径：事务内读最新事实（Row）→ rules 纯函数校验
 （权限/租户/版本 CAS/状态机，稳定错误码）→ 写业务行 + 幂等记录 + 追加审计 → 提交后返回
 领域对象；异常 → 整事务回滚（无部分提交）。本模块只编排（repository 原语 + rules），
 不复制领域规则；Repository 可插拔（Postgres=生产语义；Memory=单测/契约后端）。
@@ -39,7 +39,7 @@ from src.domain.after_sales.rules import (
     validate_refund_capacity,
 )
 from src.domain.idempotency import payload_hash as _payload_hash
-from src.persistence.pg_backed import (
+from src.persistence.row_codecs import (
     order_from_row,
     operation_from_row,
     policy_from_row,
@@ -152,7 +152,7 @@ class PgCommandService:
     def compute_refund_plan(self, tenant_id: str, order_id: str,
                             request_type, reason_tags) -> object:
         """确定性退款计划（只读）：以 PostgreSQL 订单与生效政策为事实，不依赖模型输出。"""
-        from src.persistence.pg_backed import order_from_row
+        from src.persistence.row_codecs import order_from_row
         from src.domain.after_sales.models import RefundPlan as _Plan
         row = self._repo.get_order(tenant_id, order_id)
         if row is None:

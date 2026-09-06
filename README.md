@@ -1,228 +1,97 @@
 # OpsPilot
 
-> 企业售后工单处置 Agent 与可靠性评测平台
-> 阶段：V1 已收敛为「单 Agent 默认 + PG 业务事实源」的可靠闭环；生产化路线仍在规划
+> 企业售后工单处置 Agent 与可靠性评测项目。
+> 版本：V1.1 Release Candidate（2026-09-06）。
 
-**一句话主张：OpsPilot 证明 Agent 能在证据不足、越权、重复请求、工具失败和外部结果未知时安全停止、等待或转人工——金额、资格、状态迁移与审批永远由确定性领域服务裁决。**
+## 项目使命
 
-## 1. 项目定位
+构建可面试展示、可复现的**单 Agent 售后退款可靠性工作流**：证明 Agent 能在证据不足、越权、
+重复请求、工具失败和外部结果未知时安全停止、等待或转人工；金额、资格、状态、审批与最终
+事实永远由确定性领域服务 + PostgreSQL 裁决。
 
-**一句话**：OpsPilot 是一个在受控权限内完成售后工单处置的 Agent 工作流——读取客户、订单、物流与政策，规划处置方案，生成动作草稿，高风险动作（退款 / 补发 / 升级）强制人工审批，全程可审计、可恢复、可评测。
+## V1.1 主张
 
-**核心命题**：证明 Agent 能在受控权限内完成多步骤业务任务，并能在 **证据不足、越权、重复请求、工具失败、外部未知状态** 五类情况下安全停止、等待或转人工。
+OpsPilot 证明 Agent 可以在受控权限内组织一条退款工单流程，并在证据不足、越权、重复请求、工具失败和外部结果未知时安全停止、等待或转人工。
 
-## 2. 当前状态（诚实基线，三档口径）
+- 单 Agent 负责意图、澄清、只读证据检索和方案解释。
+- 确定性领域服务负责金额、资格、状态、权限、幂等、并发与审计。
+- 高风险动作先生成草稿，只有授权人员提交审批决定后才可执行。
+- PostgreSQL 是业务事实源；SQLite checkpoint 只保存流程恢复位置。
+- **确定性证据检索基线**（本地 PolicyStore 检索：租户隔离、版本有效、引用定位、注入拒绝、无证据转人工）在 Agent 回放中提供政策 citation；不能裁决金额、资格或状态，也不能替代 PostgreSQL 事实。
 
-| 档位 | 内容 |
-| --- | --- |
-| ✅ 已实现 | 售后确定性领域服务（`src/domain/after_sales/`）、**单 Agent LangGraph 工作流**（interrupt/resume）、最小本地 RAG（政策证据检索，已接入默认证据编排）、审批与审计、幂等/并发/未知状态对账、PostgreSQL Repository + PG profile 本地验证、受控 LLM adapter（离线基线）、Supervisor 对照实验、测试与回归工具链 |
-| 🧪 实验 / 可选 | **Supervisor 多 Agent**（只读子 Agent，A/B 无业务收益，默认维持单 Agent）；真实模型影子运行（需用户提供安全 Key，未配置即安全降级、标注未实测） |
-| 🟡 未实现 / 未实测 | 真实 LLM 指标；LoRA/QLoRA/DPO 微调；真实 MuleSoft/MCP 接入；前端审批控制台；生产部署；长期记忆；pgvector |
+## V1.1 范围
 
-> 全量基线（2026-09-05 实测）：`.venv\Scripts\python.exe -m pytest tests/` → **450 passed, 0 xfailed**（PG 容器运行时集成 37/37）。
+保留单 Agent LangGraph（默认路径）、确定性证据检索基线、PostgreSQL 命令路径、黄金集、回放和演示。Supervisor 只保留 A/B 实验结论：与单 Agent 无量化业务收益，因此默认不用；V1.1 新增**四角色只读多 Agent 可选编排**（Triage/Evidence/Resolution/RiskReview，`SupervisorRunner(orchestration="four-role")`），每角色轨迹（trace_id/输入输出摘要/耗时/工具调用/citation/拒绝原因）经 `scripts/demo_supervisor_trace.py` 可复现查看；`evals/compare_modes.py` 以同 golden_v1 对照 single/three-agent/four-role（11/11 持平 → 维持单 Agent）。运行模式开关见 `src/agents/modes.py`：`single_agent`（**默认**）/`multi_agent`（四角色实验）/`offline_rule`（无 LLM Key 自动离线规则）/`llm`（仅显式配置安全 Key + 白名单 Base URL 才可用，未配置安全回落 offline_rule）。FastAPI 当前验证的是领域服务接口；Agent 启动、澄清和恢复仍由脚本/回放入口驱动（**API 与 Agent 运行器是两个入口**，未合并为 HTTP 主链路）。
 
-约束：
-
-- 下文凡未明确标注「已实现」的能力，均为**设计规划**；
-- 已实测数字以本节与 `docs/STATUS_AND_RISKS.md` 为准；未经实测的指标（真实 LLM 准确率/延迟/成本、微调收益）一律标注"未实测"；
-- 演示数据均为**固定随机种子生成的合成数据**，不代表真实企业收益。
-
-## 3. 为什么选「售后工单处置」而非泛化聊天 / 营销
-
-| 维度 | OpsPilot（售后工单） | 泛化聊天 / 私域营销 Demo |
-| --- | --- | --- |
-| 业务目标 | 工单状态与处置结果可明确定义 | 营销效果难以在个人项目中证明 |
-| Agent 信号 | 多步骤工具调用、状态流转、审批恢复 | 容易停留在文案生成 |
-| 安全边界 | 退款 / 补发 / 升级天然需要权限与审批 | 自动发消息易被追问风险 |
-| 评测方式 | 可验证最终状态，也可评估话术质量 | 常只有主观展示 |
-| 数据可得性 | 可用合成客户、订单、政策构造黄金集 | 真实客户行为难以获得 |
-| 落地深度 | 能回答可靠性、成本、回归与失败恢复 | 容易被归结为 RAG + Prompt |
-
-## 4. 完整架构
-
-### 4.1 分层总览
+不纳入 V1.1：真实 LLM 指标、真实微调效果（仅实验入口/合成样本，无 GPU 未运行）、真实 Mule/MCP、前端工作台、pgvector、长期记忆和生产部署。
 
 ```text
-┌────────────────────────────────────────────────────────────────┐
-│ 接入层   FastAPI + 运营控制台                                      │
-│          工单查询 · 审批页面 · 审计追溯                              │
-└───────────────────────────────┬────────────────────────────────┘
-                                │ HTTP / 事件
-┌───────────────────────────────▼────────────────────────────────┐
-│ 编排层   LangGraph 有状态工作流（可中断 / 可恢复 / 可回放）           │
-│          意图 → 澄清 → 证据检索 → 方案 → 审批挂起 → 恢复执行         │
-│          checkpoint 只存流程恢复状态，不存业务真相                   │
-└───────────────┬───────────────────────────────┬────────────────┘
-                │ 只读工具调用                     │ 写工具（强类型）
-┌───────────────▼────────────────┐ ┌──────────────▼───────────────┐
-│ Agent 决策层（非确定性）          │ │ 领域服务层（确定性）              │
-│  · 意图识别 / 澄清追问             │ │  · 权限校验 · 金额校验            │
-│  · 证据检索（只读工具编排）        │◄┼─►│  · 状态机迁移 · 幂等              │
-│  · 方案解释 / 客户话术             │ │  · 并发控制 · 审计写入            │
-│  · 动作草稿生成（不直接放行）       │ │  · 草稿提交 → 人工审批            │
-└────────────────────────────────┘ └───────────────┬──────────────┘
-                                                    │ 唯一事实源
-                                          ┌─────────▼─────────────┐
-                                          │ 数据层   PostgreSQL      │
-                                          │ 客户/订单/物流/工单/政策  │
-                                          │ 动作/审批决定/审计日志    │
-                                          └─────────────────────────┘
-
-评测层（横切）：黄金集 · 回放脚本 · 安全不变量报告 · 版本对照
+请求 -> 订单/租户核验 -> 政策证据与澄清 -> 规则计算 -> 动作草稿
+     -> 人工审批 interrupt -> 重读事实 resume -> 执行或 operation_unknown
+     -> 原 operation_id 对账 -> 关单与审计
 ```
 
-### 4.2 各层职责
+## 当前验证
 
-| 层 | 职责 | 不做什么 |
-| --- | --- | --- |
-| 接入层 | 暴露 API，提供审批与审计界面 | 不做业务判断 |
-| 编排层 | 维护流程状态、挂起与恢复、可回放 | 不保存业务最终真相 |
-| Agent 决策层 | 意图、澄清、证据检索、方案解释、话术 | 不改金额、不改状态、不放行写操作 |
-| 领域服务层 | 权限 / 金额 / 状态 / 幂等 / 并发 / 审计 | 不做自然语言理解 |
-| 数据层 | 工单、动作、审批决定、审计的唯一事实源 | 不依赖 checkpoint 恢复业务 |
+2026-09-06，在 D 盘运行时环境实测（`.venv` home=D:\Anaconda，Python 3.12.4）：
 
-### 4.3 信任边界（数据流规则）
-
-1. Agent 默认只能调用**只读工具**：客户、订单、物流、历史工单、政策查询。
-2. 所有写操作必须进入**领域服务层**，经强类型参数 + 权限 + 业务规则 + 版本 + 幂等校验。
-3. Agent 只能创建「动作草稿」，**不得**伪造审批、直接放行、修改权限或关闭审计。
-4. 审批由授权用户触发；审批完成后，工作流只读取**已提交且带版本号**的决定，再从中断点恢复。
-
-## 5. 为什么用这套架构（理由 / 优点 / 克服的困难）
-
-### 5.1 设计理由：每个分层对应一个必须解决的可靠性问题
-
-| 架构决策 | 解决的根本问题 |
-| --- | --- |
-| Agent 与领域服务分离 | 模型会幻觉，金额 / 权限 / 状态不能交给 LLM 决定 |
-| 只读默认 + 强类型写校验 | 越权调用写工具造成不可逆副作用 |
-| 动作草稿 + 人工审批 | 退款 / 补发 / 升级等高风险动作需要责任归属 |
-| 幂等键（同键同载荷返回原结果，异载荷拒绝） | 网络重发 / 用户重复点击导致重复退款 |
-| 有状态工作流 + checkpoint 恢复 | 审批是异步等待，流程会长时间中断 |
-| PostgreSQL 唯一事实源 | 业务真相不能存在可能丢失的流程状态里 |
-| 黄金集 + 回放 + 安全不变量 | 「做对了没有」必须有可复现证据 |
-
-### 5.2 优点
-
-1. **可审计**：每一步决策有据可查，审计日志独立于模型输出。
-2. **可恢复**：审批中断后从中断点恢复，不重跑、不产生重复副作用。
-3. **可验证**：确定性计算可精确匹配，黄金集可产出硬指标。
-4. **安全**：LLM 无法越权，领域服务返回的错误码不会被模型改写成成功。
-5. **可演进**：领域服务可从 SQLite 平滑切到 PostgreSQL；模型可替换；评测可做版本对照。
-
-### 5.3 困难 → 对策映射
-
-| 现实困难 | 架构对策 |
-| --- | --- |
-| 模型幻觉（编造金额 / 政策 / 状态） | 确定性领域服务持有金额与状态，LLM 只做意图和话术 |
-| 越权与高危副作用 | 只读默认 + 强类型写校验 + 人工审批 |
-| 重复请求 / 重复退款 | 幂等键；外部结果未知时只查原键，禁止换键重试 |
-| 工具失败 / 外部状态未知 | 安全停止、等待或转人工，禁止硬编码成功掩盖失败 |
-| 证据不足 | 强制澄清、拒答或转人工，禁止猜测政策与订单状态 |
-| 审批中断导致流程丢失 | checkpoint 仅存流程状态，业务事实落 PostgreSQL |
-| 无法证明正确 | 黄金集回放 + 安全不变量单独报告 |
-
-## 6. V1 最小闭环（一次「商品破损退款」）
-
-```text
-用户提交「商品破损，要求退款」
-  → 1. 意图识别（退款意图 + 风险等级）
-  → 2. 证据检索（客户 / 订单 / 物流 / 历史工单 / 适用政策）
-  → 3. 证据不足 → 澄清或转人工（安全停止）
-  → 4. 规则校验（权限 / 金额 / 状态 / 幂等）
-  → 5. 生成「退款动作草稿」+ 客户回复草稿
-  → 6. 高风险 → 挂起，进入人工审批（interrupt）
-  → 7. 审批通过 → 从中断点恢复 → 执行模拟退款 → 更新工单 → 写审计
-  → 8. 评测任务完成情况 + 失败归因
+```powershell
+. .\scripts\init_d_env.ps1
+# 运行模式 A：未配置隔离 PG 库 → PG live 破坏性集成按纪律 skip：
+.venv\Scripts\python.exe -m pytest tests/ -q
+# 394 passed, 44 skipped, 1 warning
+# 运行模式 B：OPSPILOT_TEST_DATABASE_URL 指向 opspilot_test_* 隔离库 → PG live 全实测：
+# 438 passed, 0 skipped
+.venv\Scripts\python.exe scripts\demo_interview.py
+# 七个演示场景全部通过（五核心 + 跨租户/重复请求）
+.venv\Scripts\python.exe scripts\demo_rag_policy.py
+# 确定性证据检索基线展示全部通过
+.venv\Scripts\python.exe scripts\demo_supervisor_trace.py --mode multi_agent
+# Supervisor 四角色轨迹演示（8 场景，含每角色耗时/输入输出摘要/工具调用/citation）
+.venv\Scripts\python.exe evals\compare_modes.py
+# 单 Agent / three-agent / four-role 同 golden_v1 对照（11/11 持平 → 默认单 Agent）
 ```
 
-必须同时覆盖的失败路径（宪法第十二条）：
+44 个跳过项均为未配置或不可达隔离 PostgreSQL 的 live 测试，**不代表 PG 已验证**（配置隔离
+库后 438 全绿才是 PG live 实测）。数据为固定种子合成数据，不代表真实企业收益；真实模型、
+微调效果、生产连接和性能均未实测。破坏性 PG 集成只允许 `opspilot_test_*`@localhost
+（`OPSPILOT_TEST_DATABASE_URL`），共享主库永不被 DROP（见 `src/platform/pg_test_guard.py`）。
 
-- 证据不足 → 转人工，不猜测；
-- 审批拒绝 → 状态迁移为「已拒绝」，不执行；
-- 工具失败 / 外部未知 → 安全停止，只查询原幂等键。
+## D 盘约束
 
-## 7. 确定性边界（红线）
+`.venv` 和基础解释器位于 D 盘。运行前执行 `scripts/init_d_env.ps1`，它只为当前 PowerShell 设置 `TEMP`、`TMP`、pytest 临时目录、pip 缓存和 Python 字节码缓存，统一写入项目 `.runtime/` 与 `.cache/`。禁止向 C 盘安装、下载、缓存或写项目运行时文件。
 
-| 谁 | 能做什么 | 不能做什么 |
-| --- | --- | --- |
-| Agent（LLM） | 意图、澄清、检索、方案解释、话术 | 决定金额、迁移状态、放行写操作 |
-| 领域服务 | 权限、金额、状态、幂等、并发、审计 | 理解自然语言 |
-| 授权人员 | 触发退款 / 补发 / 升级的最终批准 | — |
+## 七场景演示与可复现命令
 
-## 8. 评测与可靠性方案
+```powershell
+. .\scripts\init_d_env.ps1
+.venv\Scripts\python.exe scripts\demo_interview.py    # 七场景（五核心 + 跨租户/重复请求）
+.venv\Scripts\python.exe scripts\demo_rag_policy.py   # 确定性证据检索基线展示
+.venv\Scripts\python.exe scripts\demo_modes.py        # 运行模式开关冒烟
+```
 
-1. **黄金集**：固定种子合成数据构造的工单用例，含输入、预期最终状态、预期审批标记。
-2. **回放脚本**：逐条执行并对比实际状态 / 金额 / 权限 / 引用版本 / 重复副作用 / 状态迁移。
-3. **确定性优先**：最终业务状态、金额、权限、版本、重复副作用、状态迁移走确定性检查。
-4. **LLM Judge 边界**：只评估相关性、完整性、语气等模糊质量，不替代业务规则校验。
-5. **报告必填**：模型版本、Prompt 版本、数据集版本、运行模式、合成数据边界。
-6. **安全不变量单独报告**：越权成功、重复副作用、未知状态盲目重试、非法状态迁移均为**阻断问题**。
+七场景（真实断言）：① 正常破损退款闭环；② 缺订单号 → 澄清；③ 无政策证据 → 转人工不猜测；
+④ 审批拒绝 → 零副作用；⑤ 外部 unknown → 仅原键对账；⑥ 跨租户拒绝；⑦ 重复请求幂等返回原结果。
+黄金集：`.venv\Scripts\python.exe evals\replay.py --dataset golden_v1`（11/11）；
+对照：`.venv\Scripts\python.exe evals\compare_agents.py`（单 Agent vs Supervisor，无收益维持单 Agent）；
+评测：`.venv\Scripts\python.exe evals\rag_metrics.py`、`evals\run_model_shadow_eval.py --mode offline`。
 
-## 9. 技术路线（收敛版）
+## 面试版项目介绍（90 秒）
 
-| 组件 | 用途 | V1 是否必须 |
-| --- | --- | --- |
-| FastAPI | API 与权限边界 | 必须 |
-| LangGraph | 有状态、可中断、可恢复的工作流 | 必须 |
-| PostgreSQL | 业务唯一事实源与审计记录 | 必须 |
-| pgvector | 政策与知识检索（RAG） | 规划中，非前置 |
-| React/Vite | 运营控制台（审批页面、审计查询） | 后期 |
-| QLoRA/LoRA | 本地对照实验，验证格式 / 话术固化 | 可验证实验，非卖点 |
+> "OpsPilot 是企业售后的确定性可靠性 Agent：单 Agent 只做意图、澄清与只读证据检索；
+> 金额、资格、状态、审批、幂等与审计由确定性领域服务处理，业务事实落在 PostgreSQL。
+> 退款先生成草稿、授权人带版本审批后才恢复执行，checkpoint 只存流程状态；幂等防重复、
+> 外部 unknown 只按原操作对账。检索基线只给可追溯政策 citation、不裁决金额。V1.1 提供
+> 四角色只读多 Agent 与运行模式开关，但同黄金集 A/B 无收益，故默认单 Agent；真实 LLM 可
+> 经安全 Key 接入但当前未接入——离线规则保证任何时刻可运行。"
 
-模型调用先走 API，随后用 QLoRA/LoRA 做对照。微调是可验证的实验模块，不是项目的中心卖点。
+## 文档
 
-## 10. 明确不做
-
-- 不接真实企业微信、ERP、WMS 或支付系统；
-- 不做完全无人值守的退款或批量触达；
-- 不做「多 Agent 互相聊天」的表演式架构；
-- 不把动态价格、库存、订单状态写进模型参数；
-- 不在没有基线和指标的情况下宣称微调有效。
-
-## 11. 下一步 TODO（按优先级）
-
-按宪法第十条「业务闭环 > 确定性边界 > 安全与恢复 > 评测与观测」收敛：
-
-1. ✅ 确定性领域服务（退款金额 / 权限校验 + 状态机 + 幂等 + 审计）+ 14 项单元测试（`python -m pytest tests/ -v`，14/14 通过）；
-2. 搭最小 LangGraph 闭环（查询 → 规则校验 → 审批 interrupt/resume → 记录结果）；
-3. 建 20 条固定种子黄金集 + 回放脚本，跑出真实精确匹配率；
-4. 把实测数字回填本文档的指标区（在此之前不填任何数字）。
-
-RAG、控制台、微调、观测：均标记「规划中」，V1 不前置实现。
-
-## 12. 文档导航
-
-- 工程宪法（自动代理工作规则）：[`AGENTS.md`](./AGENTS.md)
-- 面试交付物（时序图 / 架构取舍 / 安全不变量报告 / 5 分钟演示）：[`docs/INTERVIEW_OVERVIEW.md`](./docs/INTERVIEW_OVERVIEW.md) · [`scripts/demo_interview.py`](./scripts/demo_interview.py)
-- 官方资料：[LangGraph overview](https://docs.langchain.com/oss/python/langgraph/overview) · [Hugging Face TRL quickstart](https://huggingface.co/docs/trl/quickstart) · [QLoRA 论文](https://arxiv.org/abs/2305.14314) · [DPO 论文](https://arxiv.org/abs/2305.18290)
-
-## 13. 实施进度（2026-09-04 追加，历史基线保留）
-
-> 本节在 README 历史基线之上追加（用户决策 D2 批准）。早期章节为设计基线历史，保留不改；实时状态以 [`docs/STATUS_AND_RISKS.md`](./docs/STATUS_AND_RISKS.md) 为准。
-
-### 13.1 已实现（有代码 + 测试证据）
-
-- 退款最小闭环（确定性领域服务）`src/domain/`，14 项单测；
-- **售后领域插件（阶段 1）** `src/domain/after_sales/`：订单核验、售后资格（结构化政策规则）、退款上限、工单/操作状态机、幂等命令、`operation_unknown` 对账收口、审计；并追加只读查询与确定性退款计划（`compute_refund_plan`，金额唯一来源）；40 项单测；
-- **阶段 2 单 Agent 闭环** `src/agents/`（LangGraph 1.2.11）：状态 Schema、意图识别与缺参澄清（interrupt）、只读证据编排、草稿落库后人工审批 interrupt、恢复时重读领域事实源、拒绝零副作用、重复 resume / 重复请求幂等、`operation_unknown` 仅原操作编号查询与对账；33 项单测 + 演示脚本 `scripts/demo_interrupt_resume.py`；
-- **阶段 3 工具契约 + TenantContext + RAG**：`src/platform/tooling.py`（严格 JSON Schema 工具注册表 + 超时/审计/输出校验）、`src/rag/`（政策文档分块、关键词 + 可插拔向量混合检索、引用校验、提示注入双向防护）、`src/agents/toolkit.py` 只读工具集；35 项单测；
-- **阶段 4 可靠性与评测**：`src/platform/reliability.py`（重试/熔断/只读降级/接管标记）＋ 黄金集评测（`evals/golden/golden_v1.json` 11 条 + `evals/replay.py` → 11/11 通过（K2 收敛后）；引用探针准确率 0.6667，能识别错误版本/适用范围，非恒一；报告 `evals/reports/golden_v1_report.md`）；13 项单测；
-- **阶段 5A 受控 LLM 运行时** `src/models/`：可替换/可降级的 OpenAI-compatible 适配层（统一 Client 协议、结构化输出 Schema、能力矩阵——tool_calling/high_risk_draft 默认禁用、内容安全守卫、发送前 PII 脱敏与证据注入拒绝、Base URL 白名单）；影子评测 `evals/run_model_shadow_eval.py`（offline 实测意图准确率 1.0；candidate 需显式安全 Key，未配置即安全降级不联网并标注"未实测"）；32 项单测 + `docs/MODEL_EVALUATION.md`；
-- **阶段 5B Supervisor 多 Agent 实验** `src/agents/{subagents,supervisor}.py`：只读子 Agent（order/history/policy，工具白名单 + TenantContext，无写路径）+ `SupervisorRunner`；A/B 对照 `evals/compare_agents.py` → 两模式黄金集均 11/11、outcome/退款 100% 一致 → **按 ADR-002 默认维持单 Agent**，Supervisor 保留可选运行时；11 项单测 + `docs/MULTI_AGENT_EXPERIMENT.md`；
-- **阶段 6 Mule Agent Bridge** `src/bridge/`：外部 Agent 网络适配器（身份映射/角色矩阵/租户注入/入出站 Schema/超时/审计/熔断 fail-closed/注入拒绝）；动作白名单仅只读查询 + `submit_after_sales_request`（无审批/执行，`FORBIDDEN_ACTIONS` 不可达）；14 项单测 + `docs/MULE_BRIDGE.md`；
-- **可恢复持久化原型（SQLite）** `src/persistence/`：`service.export_state/restore_state` + `idempotency.export/import_records`（不改规则）、JSON 安全编解码、SQLite append-only journal（checksum 校验、损坏 fail-closed）、`RecoverableSession` 重启恢复可续跑；6 项单测 + 演示 `scripts/demo_persistence.py` + `docs/PERSISTENCE.md`；
-- **平台层最小落地** `src/platform/`：PII 脱敏（手机/邮箱/身份证）与整行脱敏日志 formatter；8 项单测；
-- **测试工具链**：`scripts/run_tests.py` 分层回归、`tests/conftest.py`（固定种子 42）、pytest markers、`.github/workflows/ci.yml` 模板；
-- 回归（2026-09-05 实测）：`.venv` 下 `python -m pytest tests/` → **450 passed, 0 xfailed**（PG 容器运行时集成 37/37 实测；无 PostgreSQL 时集成自动跳过）；`python scripts/run_tests.py` → `REGRESSION PASS`；黄金集 `.venv\Scripts\python.exe evals\replay.py` → 11/11（引用探针准确率 0.6667；`--profile pg` 亦 11/11）；影子 `.venv\Scripts\python.exe evals\run_model_shadow_eval.py --mode offline` → 意图准确率 1.0；A/B `.venv\Scripts\python.exe evals\compare_agents.py` → 单 Agent 与 Supervisor 均 11/11（默认单 Agent；报告为确定性产物零 diff）。缺陷台账 D1–D12 已全部修复（`docs/DEFECTS_LOG.md`）。
-- **阶段四（PG-first 运行时收口）**：`AfterSalesApplicationPort` 为 API/Gateway/Runner 唯一依赖（memory 演示与 pg profile 双 Adapter，不 isinstance）；PG profile API e2e 真实 HTTP 走 `PgCommandService`（审批 `decided_by=认证 principal`、expected_version 客户端必填）；`WorkflowRunner` 强制 `workflow_threads` 数据库租约（两 Runner 竞争同线程仅持约者推进，失约 `ThreadLeaseError` 零副作用，崩溃过期可接管）；`scripts/run_api.py --backend pg` 真实装配（PostgresRepository+PgCommandService+PgCommandAdapter+持久 SQLite checkpoint+`WorkflowRunner(lease_repo, owner_id)`，失败不回退 memory、启动不 seed）。启动命令：`scripts/run_api.py --backend memory`（本地演示）/ `scripts/run_api.py --backend pg --pg-url postgresql+psycopg2://opspilot:opspilot@127.0.0.1:5433/opspilot`（PG profile）。
-- **收敛（单 Agent 作品化）**：最小政策 RAG 检索已接入**默认单 Agent** `gather_evidence`（`WorkflowRunner(policy_store=...)`；命中 → `policy:<citation>` 进 `evidence_refs`/`order_summary.policy_citations`，查询注入 → 安全拒绝转人工，无证据不阻断——金额/资格仍由领域服务裁决）；旧 `src/domain/refund_service.py` 标注 LEGACY 历史回归基线，`after_sales/` 为主业务实现。
-
-### 13.2 规划中（未实现，不写成已实现）
-
-- 生产化工程（规划，不写成已实现）：领域状态机整体 SQL 化 + 生产部署、真实网络端点部署、MuleSoft/MCP server 实接、真实 LLM Key 实测回填指标、LoRA/QLoRA/DPO 微调对照（无对照数据禁止）、CrewAI（需可量化协作收益）、Graphiti/Neo4j 长期记忆、前端控制台、物流查询接入。
-
-### 13.3 本地仓库与环境约定
-
-- `git init -b main` + remote `origin`（`dianshang-shouhou`，经 ghfast.top 代理前缀）；项目以本地提交演进（最新提交见 `git log --oneline -1`）；**尚未推送**（决策项 D1/D4）。
-- **运行方式（D 盘依赖约定）**：解释器 `.venv\Scripts\python.exe`（依赖 langgraph==1.2.11 / pytest==9.1.1，见 `requirements.txt`；PyPI 走清华镜像）。安装任何程序一律到 D 盘，路径与最显眼文件以 `docs/STATUS_AND_RISKS.md` §2 为准。
+- [工程宪法](./AGENTS.md)
+- [架构](./docs/ARCHITECTURE.md)
+- [PostgreSQL 事实源](./docs/POSTGRES.md)
+- [测试基线](./docs/TESTING_BASELINE.md)
+- [面试讲解](./docs/INTERVIEW_OVERVIEW.md)
+- [V1 执行方案与 Agent 提示词](./docs/V1_EXECUTION_PLAN.md)
+- [Supervisor 实验](./docs/MULTI_AGENT_EXPERIMENT.md)
+- [模型与微调门禁](./docs/MODEL_EVALUATION.md)

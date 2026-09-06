@@ -332,9 +332,10 @@ class PostgresAfterSalesRepository(AfterSalesRepository):
             return [IdemRow(r[0], r[1], r[2], r[3], r[4], r[5]) for r in rows]
 
     def clear_all(self) -> None:
-        """按 FK 依赖序清空全部镜像业务行（子表先于父表：refund_operations/tickets/order_items
-        引用 orders，须先删；policy/entity_seq 无 FK 依赖随后）。entity_seq 虽由命令 id 分配使用，
-        镜像模式下由内存导出重建，清空无一致性影响。"""
+        """按 FK 依赖序清空全部业务行（重建/装载工具用：子表先于父表：refund_operations/
+        tickets/order_items 引用 orders，须先删；policy/entity_seq 无 FK 依赖随后）。
+        entity_seq 虽由命令 id 分配使用，重建模式由表内现有行续号，清空无一致性影响。
+        生产命令路径（PgCommandService）不调用本方法。"""
         with self._tx() as conn:
             for table in ("audit_events", "idempotency_records", "approval_decisions",
                           "refund_operations", "tickets", "order_items", "orders",

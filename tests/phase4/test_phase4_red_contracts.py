@@ -3,13 +3,13 @@
 每项 = 正常/失败/权限/幂等/审计/恢复语义的验收用例；现状不满足 → xfail(strict=True)，
 **严禁意外通过**（若实现未修而测试转绿即为契约破坏）。最终验收要求 0 xfail。
 """
-import os
 import threading
 from decimal import Decimal
-from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine, text
+
+from tests.pg_live import live_test_db_url, pg_reachable, reset_test_schema
 
 from src.domain.after_sales import (
     AfterSalesError,
@@ -26,42 +26,21 @@ from src.domain.after_sales import (
 from src.domain.after_sales.pg_commands import PgCommandService
 from src.repo import OrderRow, PolicyRow, PostgresAfterSalesRepository
 
-ROOT = Path(__file__).resolve().parents[2]
-DATABASE_URL = os.environ.get(
-    "DATABASE_URL",
-    "postgresql+psycopg2://opspilot:opspilot@127.0.0.1:5433/opspilot",
-)
-_SCHEMA = (ROOT / "src" / "repo" / "schema.sql").read_text(encoding="utf-8")
+TEST_DB_URL = live_test_db_url()
 _CN = "RED-P4"
 
 
-def _pg_available() -> bool:
-    try:
-        engine = create_engine(DATABASE_URL, connect_args={"connect_timeout": 3})
-        with engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
-        engine.dispose()
-        return True
-    except Exception:  # noqa: BLE001
-        return False
-
-
-pg_live = pytest.mark.skipif(not _pg_available(),
-                             reason="PostgreSQL 不可达：数据库集成未实测")
+pg_live = pytest.mark.skipif(
+    TEST_DB_URL is None or not pg_reachable(TEST_DB_URL),
+    reason="OPSPILOT_TEST_DATABASE_URL 未设置或 PostgreSQL 不可达："
+           "未使用隔离测试库，跳过破坏性集成（PG 集成未实测）")
 red = pytest.mark.xfail(strict=True, reason=f"{_CN}: 阶段四契约尚未实现（见各用例 docstring）")
 
 
 def _new_db():
-    """每用例独立重建（阶段四早期；测试隔离策略（第 5 节）将改为每 worker schema）。"""
-    engine = create_engine(DATABASE_URL)
-    with engine.begin() as conn:
-        for table in ("audit_events", "idempotency_records", "approval_decisions",
-                      "refund_operations", "tickets", "orders", "policies",
-                      "order_items", "entity_seq", "workflow_threads"):
-            conn.execute(text(f"DROP TABLE IF EXISTS {table} CASCADE"))
-        conn.execute(text(_SCHEMA))
-    engine.dispose()
-    repo = PostgresAfterSalesRepository(DATABASE_URL)
+    """每用例 guard 重建隔离库（opspilot_test_*）后 seed 订单/政策。"""
+    reset_test_schema(TEST_DB_URL)
+    repo = PostgresAfterSalesRepository(TEST_DB_URL)
     repo.insert_order(OrderRow("T1", "ORD-1", "C1", "delivered", Decimal("100.00"), 2))
     repo.insert_policy(PolicyRow("T1", "P-1", "refund", '["damaged"]', 30,
                                  Decimal("1.0000"), "1970-01-01", 1))
@@ -69,7 +48,7 @@ def _new_db():
 
 
 def _sql_one(stmt, params=None):
-    engine = create_engine(DATABASE_URL)
+    engine = create_engine(TEST_DB_URL)
     with engine.connect() as conn:
         v = conn.execute(text(stmt), params or {}).scalar()
     engine.dispose()
@@ -77,7 +56,7 @@ def _sql_one(stmt, params=None):
 
 
 def _sql_row(stmt, params=None):
-    engine = create_engine(DATABASE_URL)
+    engine = create_engine(TEST_DB_URL)
     with engine.connect() as conn:
         v = conn.execute(text(stmt), params or {}).fetchone()
     engine.dispose()
@@ -206,7 +185,7 @@ def test_p4_concurrent_same_command_same_key_single_result():
     def worker():
         try:
             barrier.wait()
-            s = PgCommandService(PostgresAfterSalesRepository(DATABASE_URL))
+            s = PgCommandService(PostgresAfterSalesRepository(TEST_DB_URL))
             t = s.create_ticket(_ticket_cmd(key="conc"))
             with lock:
                 results.append(("ok", t.ticket_id))

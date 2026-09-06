@@ -210,7 +210,7 @@ class AfterSalesRepository(ABC):
     @abstractmethod
     def get_idem(self, tenant_id: str, idem_key: str) -> Optional[IdemRow]: ...
 
-    # ---------- 恢复装载（PG-backed 会话 load() 用：全表列举，只读） ----------
+    # ---------- 恢复装载（全表列举，只读；供重建/装载工具与审计导出使用） ----------
     @abstractmethod
     def list_orders(self) -> list[OrderRow]: ...
 
@@ -228,7 +228,8 @@ class AfterSalesRepository(ABC):
 
     @abstractmethod
     def clear_all(self) -> None:
-        """清空全部业务行（PG-backed 会话整库镜像写用；实现按 FK 依赖序删除）。"""
+        """清空全部业务行（重建/装载工具用；实现按 FK 依赖序删除）。
+        生产命令路径（PgCommandService）不调用本方法。"""
 
     # ---------- 0004 命令数据面：政策/明细装载与租户自增序列 ----------
     @abstractmethod

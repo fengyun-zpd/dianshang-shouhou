@@ -1,7 +1,7 @@
 # OpsPilot 面试交付物（单 Agent 可靠性工作流）
 
 > 面向面试的讲解材料：请求时序图、架构取舍、安全不变量报告与 5 分钟演示。
-> 所有数字均为本机真实运行输出（2026-09-05）；未实测内容如实标注"未实测/未实现"。
+> 当前测试基线以 `TESTING_BASELINE.md` 为准；未实测内容如实标注"未实测/未实现"。
 > 演示脚本：`scripts/demo_interview.py`（真实执行，任意失败抛 AssertionError）。
 
 ## 0. 一句话主张
@@ -35,14 +35,14 @@
 关键语义：
 - **checkpoint（SQLite）只存流程恢复状态**；业务事实（工单/操作/审批/执行/审计）一律重读领域服务/PG。
 - **审批决定是已提交且带版本号的领域事实**，Agent 不携带"通过/拒绝"语义，resume 只触发重读。
-- **RAG 只提供政策证据与解释（policy_id+version+citation）**；资格/金额由领域 `compute_refund_plan` 裁决。
+- **确定性证据检索基线（本地 RAG）只提供政策证据与解释（policy_id+version+citation）**；资格/金额由领域 `compute_refund_plan` 裁决。
 - 外部结果未知 → `operation_unknown`：**只能以原 operation_id 对账**，禁止换键重试。
 
 ## 2. 架构取舍说明
 
 | 决策 | 为什么（取舍） |
 | --- | --- |
-| **默认单 Agent** | A/B 对照（`evals/compare_agents.py`，黄金集 11 条）Supervisor 与单 Agent 通过率/outcome/金额 100% 一致、耗时相当 → 无量化业务收益（ADR-002 回退条款）。多 Agent 只增加协调复杂度与故障面，不解决"确定性裁决"这一核心可靠性问题。 |
+| **默认单 Agent** | A/B 对照（`evals/compare_agents.py`，黄金集 11 条）Supervisor 与单 Agent 的通过率、outcome 与退款金额均 100% 一致；对照不以耗时作结论，因此没有可证明的业务收益（ADR-002 回退条款）。多 Agent 只增加协调复杂度与故障面，不解决"确定性裁决"这一核心可靠性问题。 |
 | **金额/资格不交给 LLM** | 模型会幻觉：金额、政策资格、库存、状态是业务事实，幻觉不可接受。确定性领域服务用规则+数据库裁决，LLM 只做意图/澄清/话术等低风险语言任务（能力矩阵默认禁用 tool_calling/high_risk_draft）。 |
 | **RAG 不负责最终裁决** | 政策文档是"证据与解释"，可能过期/版本错/被注入；真实资格来自**版本化、启用、tenant 内、生效期正确的 PolicyRule/PG 政策行**。检索结果只进 `evidence_refs`/`order_summary.policy_citations`，金额永远来自 `compute_refund_plan`。 |
 | **暂不微调（LoRA/QLoRA/DPO）** | 微调需要高质量数据集与可量化基线；当前真实 LLM 未接入（无安全 Key），离线规则基线的可改进空间与失败样本集尚未系统建立。无 chosen/rejected 数据不做 DPO；动态价格/政策/库存不能写进模型参数（宪法第八条）。 |
@@ -51,8 +51,8 @@
 
 ## 3. 安全不变量报告（实测 0 违例）
 
-> 依据：全量 `pytest tests/`（**450 passed, 0 xfailed**）中 security/property/regression/phase4
-> 层与黄金集回放报告 `evals/reports/golden_v1_report.md`（PG profile 下 11/11，安全不变量全 0）。
+> 当前依据：D 盘环境中的全量 `pytest tests/` 基线见 `TESTING_BASELINE.md`。历史 PG 黄金集报告
+> `evals/reports/golden_v1_report.md` 只作为已有证据；面试前必须按当前提交重新运行，不能用旧报告替代本次实测。
 
 | 不变量 | 要求 | 实测 | 验证位置 |
 | --- | --- | --- | --- |
@@ -69,15 +69,20 @@
 .venv\Scripts\python.exe scripts\demo_interview.py
 ```
 
-演示五场景（真实执行、逐步断言）：① 正常破损退款（approve→resume→refunded 100.00/closed/7 审计）；
-② 缺订单号 → 澄清 interrupt；③ 跨租户 T2 读 T1 → escalated 零副作用；④ 重复请求 → 原结果不重复退款；
-⑤ 外部超时 → unknown（金额 0）→ 原 operation_id 对账 success → executed/100.00。
+固化五核心场景（真实执行、逐步断言，任意失败抛 AssertionError）：
+① 正常闭环：破损退款 → 审批 approve → resume → refunded 100.00 / closed / 7 审计；
+② 信息不足：缺订单号 → 澄清 interrupt（不猜测金额/政策）；
+③ 无政策证据：无适用 PolicyRule → 领域 `AFTER_SALES_POLICY_NOT_FOUND` → 转人工，
+   不虚构政策/金额、零副作用（无草稿/审计/退款）；
+④ 审批拒绝：授权人 reject → resume → outcome=rejected、操作 rejected、退款 0.00、无 execute 审计；
+⑤ 外部结果未知：外部超时 → operation_unknown（金额 0）→ 仅原 operation_id 对账 success → executed/100.00。
+补充安全演示：⑥ 跨租户 T2 读 T1 → escalated 零副作用；⑦ 重复请求 → 原结果、execute 审计仅 1 条。
 运行一次约数秒，输出含每步状态断言，适合面试现场演示或录屏讲解。
 
 ## 5. 当前主架构（一张图）
 
 ```text
-FastAPI(memory/pg profile)  +  WorkflowRunner(单 Agent, policy_store 可选)
+FastAPI(memory/pg profile：领域服务接口)  +  WorkflowRunner(脚本/回放入口，单 Agent, policy_store 可选)
    │                              │
    └── AfterSalesApplicationPort ←┴── MemoryAdapter(测试/演示) | PgCommandAdapter(pg profile)
              │                            │
@@ -86,9 +91,24 @@ FastAPI(memory/pg profile)  +  WorkflowRunner(单 Agent, policy_store 可选)
         PostgreSQL 业务事实源 ←───────────┘        SQLite = LangGraph checkpoint(仅流程状态)
 ```
 
+### V1.1 新增（实验性/可选，不改变默认单 Agent 主链路）
+
+- **四角色只读多 Agent**（`src/agents/multiagent.py`）：`SupervisorRunner(orchestration="four-role")`
+  = Triage → Evidence → Resolution → RiskReview，各角色独立 Pydantic io schema/role/工具白名单/
+  trace_id，全部只读；Resolution 无金额字段（金额唯一来自领域 `compute_refund_plan`）；
+  RiskReviewer 阻断跨租户引用/无效 citation/金额非领域来源；证据不足/角色失败/注入 → 转人工。
+  与单 Agent 同黄金集子集 A/B 一致（无收益 → 默认仍单 Agent）。
+- **确定性证据检索基线展示**：`scripts/demo_rag_policy.py`（导入/分块/启停/版本切换/注入拒绝/
+  引用校验，真实执行）。
+- **真实 LLM 可选适配器**（`src/models`，仅环境变量配置）：无 Key 自动离线规则模式；内容守卫
+  拦截金额/审批/状态/执行指令；**真实模型未接入、未实测**（需用户提供安全 Key + 白名单
+  Base URL）。
+- **微调实验入口**（`scripts/gen_sft_samples.py`）：固定种子合成样本生成；无 GPU/Key 未训练，
+  不声称任何效果（门禁见 `docs/MODEL_EVALUATION.md`）。
+
 ## 6. 是否建议继续增加功能
 
-**不建议**在现有主线继续堆叠（RAG 增强、多 Agent、微调、长期记忆均不带来已证实的可靠性收益）。
+**不建议**在现有主线继续堆叠（RAG 增强、多 Agent、微调、长期记忆均不带来已证实的可靠性收益）。当前 API 与 Agent 运行器尚未合并为一条 HTTP 主链路，面试时必须按两个入口准确表述；除非先补齐 HTTP e2e，否则不要声称 API 已覆盖 Agent 恢复。
 若继续，建议按价值排序：① 审批工作台前端（把已齐备的 API 面用起来，需浏览器 e2e）；
 ② 真实 LLM 影子评测（需用户提供安全 Key/允许 Base URL）以建立失败样本集；
 ③ 审计检索/限流/CORS/OpenAPI 示例等运营观测（低风险增量）。任何新增都须先有 RED 测试与真实评测，不引入未经证实的"技术名词"。

@@ -26,7 +26,7 @@
 
 `evals/compare_agents.py`：同一黄金集（golden-v1，11 条）逐条分别驱动
 单 Agent（`WorkflowRunner`）与 Supervisor（`SupervisorRunner` + 政策文档存储），
-自动提交用例审批决定并 resume；比较 outcome / 退款金额 / 通过率 / 耗时。
+自动提交用例审批决定并 resume；比较 outcome、退款金额和通过率。
 
 ```powershell
 .venv\Scripts\python.exe evals\compare_agents.py
@@ -44,7 +44,7 @@
 
 ## 5. 结论（ADR-002 回退条款）
 
-确定性规则下，Supervisor 与单 Agent **正确率持平、耗时相当**，未带来可量化的
+确定性规则下，Supervisor 与单 Agent **正确率持平**，未带来可量化的
 业务收益（完成率/正确性/金额均一致）。按 ADR-002："拆分失败时回退到 supervisor
 的单 Agent 路径"：
 
@@ -57,5 +57,6 @@
 ## 6. 诚实边界与修订
 
 - 两种模式均为确定性规则实现（无 LLM）；"收益"仅指本对照可量化的业务指标；
-- 并行化在本地同步执行中未转化为显著 wall-time 收益（P95 相当）；
+- 对照报告不将运行耗时作为结论指标，不能声明性能持平或改善；
 - v1.0（2026-09-04）—— 首版：架构差异、安全边界、对照方法、结果与回退结论。
+- v1.1（2026-09-05）—— 删除未被确定性对照报告支持的耗时结论。

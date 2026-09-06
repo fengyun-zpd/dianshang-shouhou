@@ -1,11 +1,11 @@
-"""R7/PA3 轻量冒烟：run_api --backend pg 装配链真实可构建（PostgreSQL 可达时）。
+"""R7/PA3 轻量冒烟：run_api --backend pg 装配链真实可构建
+（隔离测试库 OPSPILOT_TEST_DATABASE_URL 可达时；绝不回退 DATABASE_URL 主库）。
 
 - build_pg_backend(url, ...) 产出：PgCommandAdapter（完整 Port）＋ SQLite 持久
   checkpointer ＋ WorkflowRunner(lease_repo=repo, owner_id=稳定)；
 - create_app 后 TestClient /health/live 200、/health/ready 200（PG 就绪）；
 - 装配不 seed 任何 PG 业务数据（orders/tickets 均空——防污染未知库）。
 """
-import os
 import sys
 from pathlib import Path
 
@@ -13,43 +13,24 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
 
+from tests.pg_live import live_test_db_url, pg_reachable, reset_test_schema
+
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-DATABASE_URL = os.environ.get(
-    "DATABASE_URL",
-    "postgresql+psycopg2://opspilot:opspilot@127.0.0.1:5433/opspilot",
-)
-_SCHEMA = (ROOT / "src" / "repo" / "schema.sql").read_text(encoding="utf-8")
+TEST_DB_URL = live_test_db_url()
 
-
-def _pg_available() -> bool:
-    try:
-        engine = create_engine(DATABASE_URL, connect_args={"connect_timeout": 3})
-        with engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
-        engine.dispose()
-        return True
-    except Exception:  # noqa: BLE001
-        return False
-
-
-pytestmark = pytest.mark.skipif(not _pg_available(),
-                                reason="PostgreSQL 不可达：数据库集成未实测")
+pytestmark = pytest.mark.skipif(
+    TEST_DB_URL is None or not pg_reachable(TEST_DB_URL),
+    reason="OPSPILOT_TEST_DATABASE_URL 未设置或 PostgreSQL 不可达："
+           "未使用隔离测试库，跳过破坏性集成（PG 集成未实测）")
 
 
 @pytest.fixture
 def fresh_db():
-    """每用例重建 schema（隔离；不影响其它模块使用的表）。"""
-    engine = create_engine(DATABASE_URL)
-    with engine.begin() as conn:
-        for table in ("workflow_threads", "audit_events", "idempotency_records",
-                      "approval_decisions", "refund_operations", "tickets", "orders",
-                      "policies", "order_items", "entity_seq"):
-            conn.execute(text(f"DROP TABLE IF EXISTS {table} CASCADE"))
-        conn.execute(text(_SCHEMA))
-    engine.dispose()
+    """guard 通过后重建全部业务表（opspilot_test_* 隔离库）。"""
+    reset_test_schema(TEST_DB_URL)
 
 
 def _close_cp(built) -> None:
@@ -61,7 +42,7 @@ def test_build_pg_backend_assembly_and_health(fresh_db, tmp_path):
     """装配链真实构建：Port adapter + 持久 checkpoint + WorkflowRunner(lease)。"""
     from scripts.run_api import build_pg_backend
     built = build_pg_backend(
-        DATABASE_URL,
+        TEST_DB_URL,
         checkpoint_path=str(tmp_path / "ck.sqlite"),
         owner_id="live-test-owner",
     )
@@ -86,12 +67,12 @@ def test_build_pg_backend_never_seeds_business_data(fresh_db, tmp_path):
     """pg 装配不自动 seed 业务数据（订单/工单表为空）。"""
     from scripts.run_api import build_pg_backend
     built = build_pg_backend(
-        DATABASE_URL,
+        TEST_DB_URL,
         checkpoint_path=str(tmp_path / "ck2.sqlite"),
         owner_id="live-test-owner-2",
     )
     try:
-        engine = create_engine(DATABASE_URL)
+        engine = create_engine(TEST_DB_URL)
         with engine.connect() as conn:
             orders = conn.execute(text("SELECT COUNT(*) FROM orders")).scalar()
             tickets = conn.execute(text("SELECT COUNT(*) FROM tickets")).scalar()

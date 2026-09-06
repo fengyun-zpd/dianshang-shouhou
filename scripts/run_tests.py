@@ -19,9 +19,9 @@ import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# 分层：unit 覆盖根 tests 现有用例 + tests/unit；其余按目录存在性探测。
+# 分层：unit 覆盖 tests/unit；其余按目录存在性探测。
 LAYER_PATHS = {
-    "unit": ["tests/unit", "tests/test_refund_service.py"],
+    "unit": ["tests/unit"],
     "integration": ["tests/integration"],
     "e2e": ["tests/e2e"],
     "property": ["tests/property"],
@@ -45,7 +45,7 @@ def main() -> int:
 
     overall = 0
     if args.quick:
-        overall, _ = run_pytest(["tests/test_refund_service.py", "tests/unit", "-q"])
+        overall, _ = run_pytest(["tests/unit", "-q"])
     else:
         for layer in ("unit", "integration", "e2e", "property", "security",
                       "regression", "phase4"):

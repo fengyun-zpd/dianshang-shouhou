@@ -1,55 +1,33 @@
 """Alembic 0004 数据模型 live 测试（PG-first 命令数据面）。
 
-前置：PostgreSQL 容器（opspilot-pg，5433）或 DATABASE_URL；不可达整模块 skip。
+前置：隔离测试库 OPSPILOT_TEST_DATABASE_URL（opspilot_test_*）；未设置/不可达整模块 skip
+（绝不回退 DATABASE_URL 指向的共享 opspilot 主库）。
 覆盖：policies（版本唯一/ratio·window CHECK）、order_items（FK/quantity·price CHECK）、
 entity_seq（kind CHECK/递增）；policy 多版本共存；显式租户复合主键。
 """
-import os
-from datetime import date
-from pathlib import Path
-
 import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import IntegrityError
 
-ROOT = Path(__file__).resolve().parents[2]
-DATABASE_URL = os.environ.get(
-    "DATABASE_URL",
-    "postgresql+psycopg2://opspilot:opspilot@127.0.0.1:5433/opspilot",
-)
-_SCHEMA = (ROOT / "src" / "repo" / "schema.sql").read_text(encoding="utf-8")
+from tests.pg_live import live_test_db_url, pg_reachable, reset_test_schema
 
-
-def _pg_available() -> bool:
-    try:
-        engine = create_engine(DATABASE_URL, connect_args={"connect_timeout": 3})
-        with engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
-        engine.dispose()
-        return True
-    except Exception:  # noqa: BLE001
-        return False
-
+TEST_DB_URL = live_test_db_url()
 
 pytestmark = pytest.mark.skipif(
-    not _pg_available(), reason="PostgreSQL 不可达：数据库集成未实测")
+    TEST_DB_URL is None or not pg_reachable(TEST_DB_URL),
+    reason="OPSPILOT_TEST_DATABASE_URL 未设置或 PostgreSQL 不可达："
+           "未使用隔离测试库，跳过破坏性集成（PG 集成未实测）")
 
 
 @pytest.fixture(autouse=True)
 def _clean_db():
-    engine = create_engine(DATABASE_URL)
-    with engine.begin() as conn:
-        for table in ("audit_events", "idempotency_records", "approval_decisions",
-                      "refund_operations", "tickets", "orders", "policies",
-                      "order_items", "entity_seq", "workflow_threads"):
-            conn.execute(text(f"DROP TABLE IF EXISTS {table} CASCADE"))
-        conn.execute(text(_SCHEMA))
-    engine.dispose()
+    """guard 通过后重建全部业务表（opspilot_test_* 隔离库）；guard 拒绝 → 抛错失败。"""
+    reset_test_schema(TEST_DB_URL)
 
 
 @pytest.fixture
 def engine():
-    e = create_engine(DATABASE_URL)
+    e = create_engine(TEST_DB_URL)
     yield e
     e.dispose()
 

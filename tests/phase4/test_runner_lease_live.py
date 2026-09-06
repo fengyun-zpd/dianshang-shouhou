@@ -5,54 +5,33 @@ resume —— 仅持约方可推进，失约方抛 ThreadLeaseError 且零业务
 租约过期后新 owner 同 fingerprint 可接管；旧 owner 在他人持约期间再 resume 稳定拒绝；
 完成后仅 owner 释放。
 """
-import os
-import tempfile
+import threading
 from decimal import Decimal
-from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine, text
 
+from tests.pg_live import live_test_db_url, pg_reachable, reset_test_schema
+
 from src.repo import PostgresAfterSalesRepository
 
-ROOT = Path(__file__).resolve().parents[2]
-DATABASE_URL = os.environ.get(
-    "DATABASE_URL",
-    "postgresql+psycopg2://opspilot:opspilot@127.0.0.1:5433/opspilot",
-)
-_SCHEMA = (ROOT / "src" / "repo" / "schema.sql").read_text(encoding="utf-8")
+TEST_DB_URL = live_test_db_url()
 
-
-def _pg_available() -> bool:
-    try:
-        engine = create_engine(DATABASE_URL, connect_args={"connect_timeout": 3})
-        with engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
-        engine.dispose()
-        return True
-    except Exception:  # noqa: BLE001
-        return False
-
-
-pytestmark = pytest.mark.skipif(not _pg_available(),
-                                reason="PostgreSQL 不可达：数据库集成未实测")
+pytestmark = pytest.mark.skipif(
+    TEST_DB_URL is None or not pg_reachable(TEST_DB_URL),
+    reason="OPSPILOT_TEST_DATABASE_URL 未设置或 PostgreSQL 不可达："
+           "未使用隔离测试库，跳过破坏性集成（PG 集成未实测）")
 
 
 @pytest.fixture
 def repo():
-    engine = create_engine(DATABASE_URL)
-    with engine.begin() as conn:
-        for table in ("workflow_threads", "audit_events", "idempotency_records",
-                      "approval_decisions", "refund_operations", "tickets", "orders",
-                      "policies", "order_items", "entity_seq"):
-            conn.execute(text(f"DROP TABLE IF EXISTS {table} CASCADE"))
-        conn.execute(text(_SCHEMA))
-    engine.dispose()
-    return PostgresAfterSalesRepository(DATABASE_URL)
+    """guard 通过后重建全部业务表（opspilot_test_* 隔离库），返回 PG Repository。"""
+    reset_test_schema(TEST_DB_URL)
+    return PostgresAfterSalesRepository(TEST_DB_URL)
 
 
 def _expire(thread):
-    engine = create_engine(DATABASE_URL)
+    engine = create_engine(TEST_DB_URL)
     with engine.begin() as conn:
         conn.execute(text(
             "UPDATE workflow_threads SET lease_until=now()-interval '1 second'"
@@ -61,7 +40,7 @@ def _expire(thread):
 
 
 def _owner_of(thread):
-    engine = create_engine(DATABASE_URL)
+    engine = create_engine(TEST_DB_URL)
     with engine.connect() as conn:
         v = conn.execute(text(
             "SELECT lease_owner FROM workflow_threads WHERE thread_id=:t"),

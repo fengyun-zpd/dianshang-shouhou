@@ -14,7 +14,7 @@
     2. require_postgres_ready(url)：PostgreSQL 不可达或 Alembic schema ≠ 0005 → RuntimeError
        退出码非 0，**绝不静默回退 memory**；
     3. PostgresAfterSalesRepository(url) → PgCommandService(repo) → PgCommandAdapter（完整 Port）；
-    4. 持久 checkpoint：open_sqlite_checkpointer(--checkpoint 或系统临时目录唯一文件)
+    4. 持久 checkpoint：open_sqlite_checkpointer(--checkpoint 或项目 `.runtime/tmp` 唯一文件)
        ——checkpoint 只存 LangGraph 流程恢复状态，不存业务最终真相（宪法第五条）；
     5. WorkflowRunner(backend, checkpointer=cp, lease_repo=repo, owner_id=--owner-id
        或 "run_api-{hostname}-{pid}"（稳定唯一）, lease_duration_s=60)——pg profile

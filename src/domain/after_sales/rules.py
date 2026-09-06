@@ -1,7 +1,7 @@
 """确定性业务规则（纯函数，无副作用、可单测、不依赖 LLM/存储）。
 
 抽取自 AfterSalesService 命令路径（src/domain/after_sales/service.py），作为内存服务与
-PG-first 命令服务共用的单一规则事实源（docs/PG_FIRST_SERVICE.md §2）：
+PG-first 命令服务共用的单一规则事实源：
 - 工单/订单租户匹配、订单资格；
 - 客户与订单匹配（客户只能为其本人订单发起售后）；
 - 角色权限（写命令）；

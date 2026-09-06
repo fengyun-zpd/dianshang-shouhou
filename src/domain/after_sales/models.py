@@ -3,7 +3,7 @@
 确定性约束（对齐 AGENTS.md 宪法第三、四、六条）：
 - 本模块不含任何 LLM / 自然语言逻辑；金额用 Decimal，禁止 float。
 - 角色语义复用 `src/domain/models.py` 的 Role；金额规约复用其 parse_money。
-- 错误码独立命名（AFTER_SALES 语义），与现有退款最小闭环的 ErrorCode 不混用。
+- 错误码独立命名（AFTER_SALES 语义），不与共享规约之外的任何历史错误码混用。
 """
 from __future__ import annotations
 

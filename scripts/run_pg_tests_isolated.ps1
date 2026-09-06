@@ -1,10 +1,11 @@
 # OpsPilot     PostgreSQL            worker    database
 #    .\scripts\run_pg_tests_isolated.ps1
-#           database opspilot_p4a / opspilot_p4b    PostgreSQL
+#           database opspilot_test_a_<run> / opspilot_test_b_<run>    PostgreSQL
 # Alembic upgrade head          PG
 # DROP/CREATE          worker
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
+. (Join-Path $root "scripts\init_d_env.ps1")
 $py = Join-Path $root ".venv\Scripts\python.exe"
 $base = $env:PGP4_URL
 if (-not $base) { $base = "postgresql+psycopg2://opspilot:opspilot@127.0.0.1:5433/" }
@@ -20,8 +21,7 @@ function New-IsolatedDb([string]$name) {
     $mk = "import os`nfrom sqlalchemy import create_engine,text`n" +
         "e=create_engine(os.environ['DATABASE_URL'],isolation_level='AUTOCOMMIT')`n" +
         "with e.connect() as c:`n" +
-        "    try: c.execute(text('CREATE DATABASE $name'))`n" +
-        "    except Exception: pass`n" +
+        "    c.execute(text('CREATE DATABASE $name'))`n" +
         "e.dispose()"
     Invoke-Py $mk $admin
     $db = $base + $name
@@ -38,9 +38,12 @@ $tests = @(
     "tests/integration/test_pg_commands_live.py"
 )
 $code = 0
-foreach ($name in @("opspilot_p4a", "opspilot_p4b")) {
+$runToken = [guid]::NewGuid().ToString("N").Substring(0, 8)
+foreach ($name in @("opspilot_test_a_$runToken", "opspilot_test_b_$runToken")) {
     New-IsolatedDb $name
-    $env:DATABASE_URL = $base + $name
+    $db = $base + $name
+    $env:DATABASE_URL = $db                    # alembic / 连接工具
+    $env:OPSPILOT_TEST_DATABASE_URL = $db      # 破坏性 live 测试的唯一隔离目标（guard）
     $env:PYTHONIOENCODING = "utf-8"
     Write-Output "=====         $name ====="
     & $py -m pytest $tests -q -p no:cacheprovider

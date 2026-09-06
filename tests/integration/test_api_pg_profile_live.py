@@ -1,17 +1,18 @@
 """PG profile API 端到端（阶段四第 3 节验收）：真实 HTTP 路径使用 PgCommandAdapter
 （完整 AfterSalesApplicationPort：PgCommandService 命令 + Repository 行事实）。
 
-前置：opspilot-pg（5433）或 DATABASE_URL；不可达整模块 skip。
+前置：隔离测试库 OPSPILOT_TEST_DATABASE_URL（opspilot_test_*，schema=0005）；
+不可达/版本不符整模块 skip（绝不回退 DATABASE_URL 指向的共享 opspilot 主库）。
 覆盖端点：POST /api/tickets → refund-drafts → submit → approve → execute；
 SQL 断言 refund_operations 状态/版本、approval_decisions 事实行、审计。
 """
-import os
 from decimal import Decimal
-from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
+
+from tests.pg_live import live_test_db_url, pg_reachable, reset_test_schema
 
 from src.api import ApiIdentity, ApiTokenRegistry, create_app
 from src.api.runtime import require_postgres_ready
@@ -20,37 +21,30 @@ from src.domain.after_sales.adapters import PgCommandAdapter
 from src.domain.after_sales.pg_commands import PgCommandService
 from src.repo import OrderRow, PolicyRow, PostgresAfterSalesRepository
 
-ROOT = Path(__file__).resolve().parents[2]
-DATABASE_URL = os.environ.get(
-    "DATABASE_URL",
-    "postgresql+psycopg2://opspilot:opspilot@127.0.0.1:5433/opspilot",
-)
-_SCHEMA = (ROOT / "src" / "repo" / "schema.sql").read_text(encoding="utf-8")
+TEST_DB_URL = live_test_db_url()
 
 
-def _pg_available() -> bool:
+def _ready() -> bool:
+    """隔离测试库就绪：可达且 alembic schema=0005（保留原 require_postgres_ready 门禁语义）。"""
+    if TEST_DB_URL is None or not pg_reachable(TEST_DB_URL):
+        return False
     try:
-        require_postgres_ready(DATABASE_URL)
+        require_postgres_ready(TEST_DB_URL)
         return True
     except Exception:  # noqa: BLE001
         return False
 
 
-pytestmark = pytest.mark.skipif(not _pg_available(),
-                                reason="PostgreSQL 不可达/版本不符：数据库集成未实测")
+pytestmark = pytest.mark.skipif(
+    not _ready(),
+    reason="OPSPILOT_TEST_DATABASE_URL 未设置/不可达/schema≠0005："
+           "未使用隔离测试库，跳过破坏性集成（PG 集成未实测）")
 
 
 @pytest.fixture
 def client():
-    engine = create_engine(DATABASE_URL)
-    with engine.begin() as conn:
-        for table in ("workflow_threads", "audit_events", "idempotency_records",
-                      "approval_decisions", "refund_operations", "tickets", "orders",
-                      "policies", "order_items", "entity_seq"):
-            conn.execute(text(f"DROP TABLE IF EXISTS {table} CASCADE"))
-        conn.execute(text(_SCHEMA))
-    engine.dispose()
-    repo = PostgresAfterSalesRepository(DATABASE_URL)
+    reset_test_schema(TEST_DB_URL)
+    repo = PostgresAfterSalesRepository(TEST_DB_URL)
     repo.insert_order(OrderRow("T1", "ORD-1", "C1", "delivered", Decimal("100.00"), 2))
     repo.insert_policy(PolicyRow("T1", "P-1", "refund", '["damaged"]', 30,
                                  Decimal("1.0000"), "2020-01-01", 1))
@@ -92,7 +86,7 @@ def test_pg_profile_http_full_flow_uses_pg_commands(client):
     assert ex.status_code == 200, ex.text
     assert ex.json()["status"] == "executed"
 
-    engine = create_engine(DATABASE_URL)
+    engine = create_engine(TEST_DB_URL)
     with engine.connect() as conn:
         status = conn.execute(text(
             "SELECT status FROM refund_operations WHERE operation_id=:o"),
@@ -132,7 +126,7 @@ def test_pg_profile_repeat_approve_http_409_no_extra_fact(client):
     again = client.post(f"/api/operations/{op_id}/approve", json={},
                         headers=_h("tok-approver"))
     assert again.status_code == 409
-    engine = create_engine(DATABASE_URL)
+    engine = create_engine(TEST_DB_URL)
     with engine.connect() as conn:
         n = conn.execute(text(
             "SELECT COUNT(*) FROM approval_decisions WHERE operation_id=:o"),

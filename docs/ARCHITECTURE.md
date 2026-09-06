@@ -1,83 +1,33 @@
-# 目标架构、启动方式与第一版验收清单
-
-> 归属：电商售后多智能体工单系统（目标远程 `fengyun-zpd/dianshang-shouhou`，本地工作区 `D:\workplace\PyCharmMiscProject\私域`）
-> 版本：v0.3。本文档整合本地工作区已确认事实与当前 V1 实现的"架构图 / 启动方式 / 验收清单"。规划能力不写成已实现。
-
-## 1. 业务闭环（目标）
-
-```
-订单与租户核验 → 政策证据检索 → 售后意图识别 → 缺参澄清
-→ 售后方案草稿 → 人工审批 → 受控工具执行 → 外部结果确认 → 工单关闭与审计
-```
-
-红线（宪法第三、四、六条）：
-
-- Agent 只负责理解 / 澄清 / 检索 / 编排；订单资格、退款金额、状态迁移、权限、幂等由**确定性领域服务**完成。
-- LLM 不得直接执行退款、改址、关闭工单等高危副作用。
-- 写操作必须过：权限 → 人工审批 → 幂等键 → 审计 → 状态机。
-- 外部调用超时或结果不明 → `operation_unknown`，只能以**原幂等键**查询，禁止换键重试。
-- 用户输入、RAG 文档、工具返回均为不可信数据，须防提示注入。
-
-## 2. 分层架构（目标）
+# OpsPilot V1 架构
 
 ```text
-接入层    FastAPI（✅ 已实现：认证/角色/审计路由）+ 审批工作台界面（规划，未实现）
-编排层    LangGraph 状态机（interrupt/resume）（✅ 阶段 2：src/agents）
-决策层    Agent：意图/澄清/检索/草稿/话术      （✅ 规则化 V1 + 受控 LLM 适配层 src/models；离线基线实测，真实模型未实测）
-领域层    确定性服务：权限/金额/状态/幂等/审计  （✅ 阶段 1：src/domain/after_sales，主业务实现）
-数据层    业务事实源 = PostgreSQL（✅ PG profile 命令路径已实现：PgCommandService 八命令单事务 + PgCommandAdapter + run_api --backend pg + workflow_threads DB 租约，本地 PG 集成实测 37/37）；memory 仅测试/演示；PgBackedSession 为整库镜像迁移原型
-横切     日志脱敏 · 评测黄金集 · 安全不变量
+FastAPI（当前已验证：领域服务接口与审批/审计边界）
+  -> AfterSalesApplicationPort
+       |-- MemoryAdapter（测试/演示）
+       `-- PgCommandAdapter（PG profile）
+             -> PgCommandService（权限/金额/状态/幂等/审批/审计/租约）
+             -> PostgreSQL（业务事实源）
+WorkflowRunner（脚本/回放驱动的单 Agent 流程）
+  -> 只读证据、确定性证据检索基线（本地 RAG，可选接入）、澄清、审批 interrupt/resume
+SQLite checkpoint（仅流程状态）
 ```
 
-当前已实现：领域层售后插件（`after_sales/` 主实现；旧 `refund_service` 为 LEGACY 回归基线）、
-LangGraph 单 Agent 工作流（含最小政策 RAG 证据检索）、审批 interrupt/resume、可靠性评测、
-受控 LLM 适配、Supervisor 对照实验（实验性可选运行时）、Mule Bridge 本地契约、FastAPI、
-PG profile 命令运行时；checkpoint（SQLite）仅存流程状态，业务事实一律重读领域服务/PG。
-真实外部网络端点（MuleSoft/MCP server 实接）、生产部署、前端审批工作台仍为规划。
+`src/domain/after_sales/` 是唯一业务主实现。早期退款服务、Mule Bridge 和整库镜像持久化原型已删除，不参与默认运行时。
 
-## 3. 本地目录职责（现状与目标）
+| 组件 | 负责 | 不负责 |
+| --- | --- | --- |
+| 单 Agent | 意图、缺参澄清、只读证据、解释 | 金额、资格、状态、审批、执行放行 |
+| 确定性证据检索基线（本地 RAG） | 合成政策 citation 与注入信号；租户/版本/引用约束、无证据转人工 | 金额、资格、状态或事实源版本裁决 |
+| 领域服务 | 权限、金额、状态、幂等、并发、审计 | 自然语言理解 |
+| 授权人员 | 带版本 approve/reject 决定 | 直接改写业务事实 |
+| checkpoint | 流程挂起与恢复 | 订单、金额、审批、执行结果 |
 
-见 `docs/TASK_SPLIT.md` §2。要点：`src/domain/` 现有退款最小闭环保留不动；阶段 1 新建 `src/domain/after_sales/`；`仓储` 为外部只读基线。
-
-## 4. 启动方式
-
-V1 当前验证（依赖装在 D 盘 `.venv`）：
+默认验收路径是确定性领域 API 加单 Agent 回放/演示。当前 FastAPI 工厂没有接入 WorkflowRunner，不能宣称 HTTP 已覆盖 Agent 启动、澄清和恢复；若不补这层，面试叙述应明确二者是两个入口。Supervisor 只作 A/B 实验；同一黄金集下没有收益，因此不进入默认路径。真实 LLM 与微调均未实测/未实现。
 
 ```powershell
 cd D:\workplace\PyCharmMiscProject\私域
-.venv\Scripts\python.exe -m pytest tests/ -v                 # 全量回归（当前 450 passed, 0 xfailed，2026-09-05 实测；PG 容器运行时集成 37/37）
-.venv\Scripts\python.exe -m pytest tests/unit/agents -v     # 单 Agent 工作流
-.venv\Scripts\python.exe -m pytest tests/unit/domain/after_sales -v   # 售后插件（任务卡 A）
-.venv\Scripts\python.exe scripts\run_tests.py                # 分层回归脚本
-.venv\Scripts\python.exe scripts\demo_interrupt_resume.py    # interrupt/resume 演示
-.venv\Scripts\python.exe scripts\run_api.py --backend pg --pg-url postgresql+psycopg2://opspilot:opspilot@127.0.0.1:5433/opspilot  # PG profile API
+. .\scripts\init_d_env.ps1
+.venv\Scripts\python.exe -m pytest tests/ -q
+.venv\Scripts\python.exe scripts\demo_interview.py
+.venv\Scripts\python.exe scripts\run_api.py --backend memory
 ```
-
-依赖：`langgraph==1.2.11` + `pytest==9.1.1`（`requirements.txt`；PyPI 走清华镜像）。
-
-数据层（如实，2026-09-05）：PG profile 命令路径**已实现**——`PgCommandService` 八命令各自单事务落
-PostgreSQL（`AfterSalesApplicationPort` 双 Adapter：memory 演示/测试、pg 命令生产语义），
-`run_api --backend pg` 真实装配 + `WorkflowRunner` DB 租约（`workflow_threads`）；
-checkpoint（SQLite）仅存流程状态。边界：`PgBackedSession` 为"整库镜像写"迁移原型（非生产命令路径）；
-生产部署仍为规划。
-
-## 5. 第一版验收清单（阶段 0 + 阶段 1）
-
-- [ ] 目录与模块拆分文档（本文档与 `docs/TASK_SPLIT.md`）就位
-- [ ] 状态与风险报告（`docs/STATUS_AND_RISKS.md`）就位，已实现/实验中/规划中严格区分
-- [ ] 原退款最小闭环 14 项测试持续全绿
-- [ ] 售后领域插件：订单核验、资格、退款上限、工单状态机、幂等命令实现并有测试
-- [ ] 插件测试覆盖：正常 / 缺参 / 冲突政策 / 越权 / 重复请求 / 非法状态迁移 / 未知操作只查原键
-- [ ] 测试基线脚本与回归模板可运行（任务卡 C）
-- [ ] README / 架构图 / 启动方式 / 验收清单回填（依赖决策项 D2）
-- [ ] Git 本地化与远程关联（依赖决策项 D1/D4）
-
-## 6. 决策项索引
-
-D1 git init 与 remote；D2 README 更新；D3 单 Agent 闭环启动时机；D4 GitHub 网络方式。详见 `docs/STATUS_AND_RISKS.md` §5。
-
-## 7. 修订记录
-
-- v0.1（本会话）—— 建立目标架构、启动方式与第一版验收清单。
-- v0.2（2026-09-04）—— 分层图与数据层状态同步实现：接入层 FastAPI 已实现（界面规划）、决策层受控 LLM 适配已实现（真实模型未实测）、数据层 PostgreSQL Repository 已实现并本地实测（集成 9/9）、领域状态机整体 SQL 化与真实网络端点/控制台仍为规划；全量基线 310 passed。
-- v0.3（2026-09-05）—— 收敛为单 Agent 作品：数据层如实更新为"PG profile 命令路径已实现（PgCommandService 八命令单事务/PgCommandAdapter/run_api --backend pg/workflow_threads DB 租约，集成 37/37），memory 仅测试/演示，PgBackedSession 为整库镜像迁移原型"；领域层明确 `after_sales/` 主实现与旧 `refund_service` LEGACY 基线；编排层注明默认单 Agent 含最小政策 RAG 证据检索、Supervisor 为实验性可选运行时；启动命令补 PG profile；全量基线 450 passed。

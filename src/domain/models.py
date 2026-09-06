@@ -1,14 +1,20 @@
-"""确定性领域服务的强类型模型与错误定义。
+"""确定性领域服务的共享规约与金额校验（被 after_sales 主实现只读复用）。
 
-本模块只包含纯数据、枚举与校验，不含任何 LLM 逻辑。
-金额统一使用 Decimal，避免浮点误差导致的多退 / 少退。
+本模块只包含纯数据与校验，不含任何 LLM 逻辑。金额统一使用 Decimal，避免浮点误差
+导致的多退 / 少退。
+
+- `Role`：参与者角色枚举（单一来源）。`src/domain/after_sales/models.py`、
+  `src/api/deps.py`、`src/agents/`、`src/platform/`（tooling/reliability）等只读复用；
+- `parse_money` / `CENT`：金额规约（分精度、禁止 float），被 after_sales 的 Order
+  与领域服务复用。
+
+历史：早期退款最小闭环（RefundService 及 RefundStatus/ErrorCode/DomainError/旧命令等
+模型）已随 V1 收口删除，本模块不再保留其类型；主业务实现见 `src/domain/after_sales/`。
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
 from enum import Enum
-from typing import Optional
 
 CENT = Decimal("0.01")
 
@@ -34,100 +40,3 @@ class Role(str, Enum):
     AGENT = "agent"         # Agent：只能创建草稿并提交审批，不能放行
     APPROVER = "approver"   # 授权人员：触发退款 / 补发 / 升级的最终批准
     SYSTEM = "system"       # 领域服务自身：执行已批准动作
-
-
-class RefundStatus(str, Enum):
-    """退款动作状态机。"""
-    DRAFT = "draft"                        # 草稿：Agent 已创建，尚未提交
-    PENDING_APPROVAL = "pending_approval"  # 待审批：已提交，等待授权人员
-    APPROVED = "approved"                  # 已批准：可执行
-    REJECTED = "rejected"                  # 已拒绝：终态
-    EXECUTED = "executed"                  # 已执行：终态
-
-
-class ErrorCode(str, Enum):
-    """领域错误码。领域服务抛出的错误不得被上层改写成成功（宪法第六条）。"""
-    PERMISSION_DENIED = "PERMISSION_DENIED"
-    AMOUNT_NOT_POSITIVE = "AMOUNT_NOT_POSITIVE"
-    AMOUNT_EXCEEDS_PAID = "AMOUNT_EXCEEDS_PAID"
-    AMOUNT_EXCEEDS_REMAINING = "AMOUNT_EXCEEDS_REMAINING"
-    INVALID_STATE_TRANSITION = "INVALID_STATE_TRANSITION"
-    IDEMPOTENCY_CONFLICT = "IDEMPOTENCY_CONFLICT"
-    REFUND_NOT_FOUND = "REFUND_NOT_FOUND"
-    DECISION_VERSION_MISMATCH = "DECISION_VERSION_MISMATCH"
-
-
-class DomainError(Exception):
-    """领域服务统一异常，携带结构化错误码。"""
-    def __init__(self, code: ErrorCode, message: str):
-        self.code = code
-        self.message = message
-        super().__init__(f"[{code.value}] {message}")
-
-
-# ---------- 命令（强类型参数，对齐宪法第四条） ----------
-
-@dataclass(frozen=True)
-class CreateRefundCommand:
-    ticket_id: str
-    order_id: str
-    amount: Decimal
-    reason: str
-    actor: Role
-    idempotency_key: str
-
-
-@dataclass(frozen=True)
-class SubmitCommand:
-    refund_id: str
-    actor: Role
-
-
-@dataclass(frozen=True)
-class ApproveCommand:
-    refund_id: str
-    actor: Role
-    decision_version: int
-
-
-@dataclass(frozen=True)
-class RejectCommand:
-    refund_id: str
-    actor: Role
-    reason: str
-
-
-@dataclass(frozen=True)
-class ExecuteCommand:
-    refund_id: str
-    actor: Role
-
-
-# ---------- 实体 ----------
-
-@dataclass
-class RefundAction:
-    """退款动作实体，承载权限 / 金额 / 状态 / 版本所需最小字段。"""
-    refund_id: str
-    ticket_id: str
-    order_id: str
-    amount: Decimal
-    reason: str
-    status: RefundStatus
-    created_by: Role
-    version: int = 1
-    decision_version: Optional[int] = None
-    executed: bool = False
-
-
-# ---------- 审计 ----------
-
-@dataclass(frozen=True)
-class AuditEvent:
-    """不可变审计事件，追加式记录，独立于模型输出。"""
-    action: str
-    refund_id: str
-    actor: Role
-    before: Optional[RefundStatus]
-    after: RefundStatus
-    idempotency_key: Optional[str] = None

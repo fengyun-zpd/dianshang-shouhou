@@ -1,7 +1,8 @@
 """K4 唯一事实源 Repository 层（接口 + 内存 + PostgreSQL 实现）。
 
 领域状态机仍由 src.domain.after_sales 裁决；本层提供“持久化端口”与
-跨进程并发下的唯一约束/行锁/乐观版本语义。SQLite 仅为恢复原型，不是生产事实源。
+跨进程并发下的唯一约束/行锁/乐观版本语义。SQLite 仅作 LangGraph checkpoint
+（流程恢复状态），不存业务真相；业务事实源为 PostgreSQL（PG profile 命令路径）。
 """
 from .interfaces import (
     AfterSalesRepository,

@@ -4,7 +4,6 @@ workflow_threads 事实表已建（0005）。覆盖：原子获租/续租/过期
 两连接并发 claim 恰一成功；两个 Runner 竞争同 thread_id 时仅持约者可 resume 推进、
 失约者不写（resume 前置守卫语义）。
 """
-import os
 import threading
 from decimal import Decimal
 from pathlib import Path
@@ -12,46 +11,27 @@ from pathlib import Path
 import pytest
 from sqlalchemy import create_engine, text
 
+from tests.pg_live import live_test_db_url, pg_reachable, reset_test_schema
+
 from src.repo import PostgresAfterSalesRepository
 
-ROOT = Path(__file__).resolve().parents[2]
-DATABASE_URL = os.environ.get(
-    "DATABASE_URL",
-    "postgresql+psycopg2://opspilot:opspilot@127.0.0.1:5433/opspilot",
-)
-_SCHEMA = (ROOT / "src" / "repo" / "schema.sql").read_text(encoding="utf-8")
+TEST_DB_URL = live_test_db_url()
 
-
-def _pg_available() -> bool:
-    try:
-        engine = create_engine(DATABASE_URL, connect_args={"connect_timeout": 3})
-        with engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
-        engine.dispose()
-        return True
-    except Exception:  # noqa: BLE001
-        return False
-
-
-pytestmark = pytest.mark.skipif(not _pg_available(),
-                                reason="PostgreSQL 不可达：数据库集成未实测")
+pytestmark = pytest.mark.skipif(
+    TEST_DB_URL is None or not pg_reachable(TEST_DB_URL),
+    reason="OPSPILOT_TEST_DATABASE_URL 未设置或 PostgreSQL 不可达："
+           "未使用隔离测试库，跳过破坏性集成（PG 集成未实测）")
 
 
 @pytest.fixture
 def repo():
-    engine = create_engine(DATABASE_URL)
-    with engine.begin() as conn:
-        for table in ("workflow_threads", "audit_events", "idempotency_records",
-                      "approval_decisions", "refund_operations", "tickets", "orders",
-                      "policies", "order_items", "entity_seq"):
-            conn.execute(text(f"DROP TABLE IF EXISTS {table} CASCADE"))
-        conn.execute(text(_SCHEMA))
-    engine.dispose()
-    return PostgresAfterSalesRepository(DATABASE_URL)
+    """guard 通过后重建全部业务表（opspilot_test_* 隔离库），返回 PG Repository。"""
+    reset_test_schema(TEST_DB_URL)
+    return PostgresAfterSalesRepository(TEST_DB_URL)
 
 
 def _expire(thread_id):
-    engine = create_engine(DATABASE_URL)
+    engine = create_engine(TEST_DB_URL)
     with engine.begin() as conn:
         conn.execute(text(
             "UPDATE workflow_threads SET lease_until=now()-interval '1 second'"
@@ -60,7 +40,7 @@ def _expire(thread_id):
 
 
 def _gen(thread_id):
-    engine = create_engine(DATABASE_URL)
+    engine = create_engine(TEST_DB_URL)
     with engine.connect() as conn:
         v = conn.execute(text(
             "SELECT generation, lease_owner FROM workflow_threads WHERE thread_id=:th"),
@@ -70,7 +50,7 @@ def _gen(thread_id):
 
 
 def _fp(thread_id):
-    engine = create_engine(DATABASE_URL)
+    engine = create_engine(TEST_DB_URL)
     with engine.connect() as conn:
         v = conn.execute(text(
             "SELECT request_fingerprint FROM workflow_threads WHERE thread_id=:th"),
@@ -113,7 +93,7 @@ def test_concurrent_claim_single_winner(repo):
     def worker(owner):
         try:
             barrier.wait()
-            ok = PostgresAfterSalesRepository(DATABASE_URL).claim_thread(
+            ok = PostgresAfterSalesRepository(TEST_DB_URL).claim_thread(
                 "T1", "th-conc", owner, 60, "fp")
         except Exception:  # noqa: BLE001
             ok = False

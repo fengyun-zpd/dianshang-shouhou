@@ -25,7 +25,7 @@ from src.domain.after_sales.models import (
     SubmitCommand,
 )
 from src.domain.after_sales.pg_commands import PgCommandService
-from src.persistence.pg_backed import operation_from_row, ticket_from_row
+from src.persistence.row_codecs import audit_from_row, operation_from_row, order_from_row, ticket_from_row
 from src.repo import AfterSalesRepository
 
 from .ports import AfterSalesApplicationPort
@@ -156,7 +156,6 @@ class PgCommandAdapter:
         row = self._repo.get_order(tenant_id, order_id)
         if row is None:
             raise AfterSalesError(AfterSalesErrorCode.ORDER_NOT_FOUND, "订单不存在")
-        from src.persistence.pg_backed import order_from_row
         return order_from_row(row)
 
     def list_customer_tickets(self, tenant_id: str, customer_id: str) -> list:
@@ -167,7 +166,6 @@ class PgCommandAdapter:
         return self._cmd.compute_refund_plan(tenant_id, order_id, request_type, reason_tags)
 
     def audit_log(self, tenant_id: str):
-        from src.persistence.pg_backed import audit_from_row
         return [audit_from_row(r) for r in self._repo.list_audit()
                 if r.tenant_id == tenant_id]
 
