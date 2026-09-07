@@ -10,6 +10,8 @@ FastAPI（当前已验证：领域服务接口与审批/审计边界）
 WorkflowRunner（脚本/回放驱动的单 Agent 流程）
   -> 只读证据、确定性证据检索基线（本地 RAG，可选接入）、澄清、审批 interrupt/resume
 SQLite checkpoint（仅流程状态）
+
+本地演示工作台（`src/api/ui/`）通过受保护 API 展示上述领域接口、隔离 Agent Lab 和评测边界；它使用合成数据，不能视为生产运营后台。
 ```
 
 `src/domain/after_sales/` 是唯一业务主实现。早期退款服务、Mule Bridge 和整库镜像持久化原型已删除，不参与默认运行时。

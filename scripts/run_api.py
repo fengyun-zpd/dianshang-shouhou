@@ -183,7 +183,11 @@ def main() -> int:
         svc, reg = build_memory_backend()
         probe = make_pg_probe(args.pg_url) if args.pg_url else None
         # memory 后端经 MemoryAdapter 注入（API 只依赖 AfterSalesApplicationPort）
-        app = create_app(MemoryAdapter(svc), reg, pg_probe=probe)
+        def reset_memory_demo() -> None:
+            fresh_service, _ = build_memory_backend()
+            app.state.service = MemoryAdapter(fresh_service)
+        app = create_app(MemoryAdapter(svc), reg, pg_probe=probe,
+                         demo_reset=reset_memory_demo)
 
     _smoke(app)
 

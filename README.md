@@ -1,7 +1,7 @@
 # OpsPilot
 
 > 企业售后工单处置 Agent 与可靠性评测项目。
-> 版本：V1.1 Release Candidate（2026-09-06）。
+> 版本：V1.1 Release Candidate（2026-09-07）。
 
 ## 项目使命
 
@@ -21,9 +21,11 @@ OpsPilot 证明 Agent 可以在受控权限内组织一条退款工单流程，�
 
 ## V1.1 范围
 
-保留单 Agent LangGraph（默认路径）、确定性证据检索基线、PostgreSQL 命令路径、黄金集、回放和演示。Supervisor 只保留 A/B 实验结论：与单 Agent 无量化业务收益，因此默认不用；V1.1 新增**四角色只读多 Agent 可选编排**（Triage/Evidence/Resolution/RiskReview，`SupervisorRunner(orchestration="four-role")`），每角色轨迹（trace_id/输入输出摘要/耗时/工具调用/citation/拒绝原因）经 `scripts/demo_supervisor_trace.py` 可复现查看；`evals/compare_modes.py` 以同 golden_v1 对照 single/three-agent/four-role（11/11 持平 → 维持单 Agent）。运行模式开关见 `src/agents/modes.py`：`single_agent`（**默认**）/`multi_agent`（四角色实验）/`offline_rule`（无 LLM Key 自动离线规则）/`llm`（仅显式配置安全 Key + 白名单 Base URL 才可用，未配置安全回落 offline_rule）。FastAPI 当前验证的是领域服务接口；Agent 启动、澄清和恢复仍由脚本/回放入口驱动（**API 与 Agent 运行器是两个入口**，未合并为 HTTP 主链路）。
+保留单 Agent LangGraph（默认路径）、确定性证据检索基线、PostgreSQL 命令路径、黄金集、回放和演示。Supervisor 只保留 A/B 实验结论：与单 Agent 无量化业务收益，因此默认不用；V1.1 提供**四角色只读多 Agent 可选编排**（Triage/Evidence/Resolution/RiskReview，`SupervisorRunner(orchestration="four-role")`），每角色轨迹（trace_id/输入输出摘要/耗时/工具调用/citation/拒绝原因）经 `scripts/demo_supervisor_trace.py` 可复现查看；`evals/compare_modes.py` 的当前结论看 single/four-role，报告保留历史 three-agent 兼容列（11/11 持平 → 维持单 Agent）。运行模式开关见 `src/agents/modes.py`：`single_agent`（**默认**）/`multi_agent`（四角色实验）/`offline_rule`（无 LLM Key 自动离线规则）/`llm`（仅显式配置安全 Key + 白名单 Base URL 才可用，未配置安全回落 offline_rule）。FastAPI 当前验证的是领域服务接口；Agent 启动、澄清和恢复仍由脚本/回放入口驱动（**API 与 Agent 运行器是两个入口**，未合并为 HTTP 主链路）。
 
-不纳入 V1.1：真实 LLM 指标、真实微调效果（仅实验入口/合成样本，无 GPU 未运行）、真实 Mule/MCP、前端工作台、pgvector、长期记忆和生产部署。
+项目内的 `src/api/ui/` 是本地合成数据演示工作台，用于展示领域闭环、Agent Lab 轨迹和评测边界；它不是生产运营后台，也没有接入真实身份系统或真实外部副作用。Agent Lab 的边界剧本每次新建固定种子内存工作流，实际展示缺参澄清、无适用政策转人工、跨租户拒绝和 PII 脱敏；它们不读取或修改当前案件。
+
+不纳入 V1.1：真实 LLM 指标、真实微调效果（仅实验入口/合成样本，无 GPU 未运行）、真实 Mule/MCP、生产级前端身份与部署、pgvector、长期记忆和生产部署。
 
 ```text
 请求 -> 订单/租户核验 -> 政策证据与澄清 -> 规则计算 -> 动作草稿
@@ -33,15 +35,15 @@ OpsPilot 证明 Agent 可以在受控权限内组织一条退款工单流程，�
 
 ## 当前验证
 
-2026-09-06，在 D 盘运行时环境实测（`.venv` home=D:\Anaconda，Python 3.12.4）：
+2026-09-07，在 D 盘运行时环境实测（`.venv` home=D:\Anaconda，Python 3.12.4）：
 
 ```powershell
 . .\scripts\init_d_env.ps1
 # 运行模式 A：未配置隔离 PG 库 → PG live 破坏性集成按纪律 skip：
 .venv\Scripts\python.exe -m pytest tests/ -q
-# 394 passed, 44 skipped, 1 warning
+# 399 passed, 44 skipped, 1 warning（含 Agent Lab 接口测试；本次实测）
 # 运行模式 B：OPSPILOT_TEST_DATABASE_URL 指向 opspilot_test_* 隔离库 → PG live 全实测：
-# 438 passed, 0 skipped
+# 443 passed, 0 skipped, 1 warning（本次实测）
 .venv\Scripts\python.exe scripts\demo_interview.py
 # 七个演示场景全部通过（五核心 + 跨租户/重复请求）
 .venv\Scripts\python.exe scripts\demo_rag_policy.py
@@ -49,11 +51,12 @@ OpsPilot 证明 Agent 可以在受控权限内组织一条退款工单流程，�
 .venv\Scripts\python.exe scripts\demo_supervisor_trace.py --mode multi_agent
 # Supervisor 四角色轨迹演示（8 场景，含每角色耗时/输入输出摘要/工具调用/citation）
 .venv\Scripts\python.exe evals\compare_modes.py
-# 单 Agent / three-agent / four-role 同 golden_v1 对照（11/11 持平 → 默认单 Agent）
+# 单 Agent / four-role 同 golden_v1 对照（11/11 持平 → 默认单 Agent）
 ```
 
-44 个跳过项均为未配置或不可达隔离 PostgreSQL 的 live 测试，**不代表 PG 已验证**（配置隔离
-库后 438 全绿才是 PG live 实测）。数据为固定种子合成数据，不代表真实企业收益；真实模型、
+隔离 PostgreSQL 已在两套唯一命名的测试库完成双跑（各 25 passed，迁移至 `0005`），并在其中一套完成
+全量 `443 passed, 0 skipped`。未设置隔离库时的 44 个跳过项只表示该运行模式未启用 PG live 测试，不能取代
+上述 PG 验证。唯一警告来自 Starlette/AnyIO 的第三方弃用提示，不影响通过结论。数据为固定种子合成数据，不代表真实企业收益；真实模型、
 微调效果、生产连接和性能均未实测。破坏性 PG 集成只允许 `opspilot_test_*`@localhost
 （`OPSPILOT_TEST_DATABASE_URL`），共享主库永不被 DROP（见 `src/platform/pg_test_guard.py`）。
 
@@ -69,6 +72,21 @@ OpsPilot 证明 Agent 可以在受控权限内组织一条退款工单流程，�
 .venv\Scripts\python.exe scripts\demo_rag_policy.py   # 确定性证据检索基线展示
 .venv\Scripts\python.exe scripts\demo_modes.py        # 运行模式开关冒烟
 ```
+
+启动本地中文工作台：
+
+```powershell
+.venv\Scripts\python.exe scripts\run_api.py --host 127.0.0.1 --port 8080
+# 浏览器打开 http://127.0.0.1:8080/
+```
+
+案件处置页的“安全剧本”会调用真实受保护 API，提供四个可重复的面试演示：审批拒绝、外部
+结果未知后按原操作对账、同幂等键重复请求、Agent 越权审批拒绝。每次剧本开始前仅对 memory
+合成后端重置演示数据；该 reset 路由不会在 PostgreSQL profile 注册，也不触碰真实业务数据。
+
+切换到 Agent Lab 后，“Agent 何时必须安全停止”提供四个隔离边界剧本：信息不足时澄清、政策
+不匹配时转人工、跨租户订单拒绝、手机号/邮箱/身份证脱敏。结果保留真实工作流 outcome 或领域
+错误码，并明确显示零退款副作用；页面的检索区还可演示引用校验与提示注入拒绝。
 
 七场景（真实断言）：① 正常破损退款闭环；② 缺订单号 → 澄清；③ 无政策证据 → 转人工不猜测；
 ④ 审批拒绝 → 零副作用；⑤ 外部 unknown → 仅原键对账；⑥ 跨租户拒绝；⑦ 重复请求幂等返回原结果。

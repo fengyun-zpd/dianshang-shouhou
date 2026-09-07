@@ -12,12 +12,11 @@
 A/B 实验保留；模型模块只提供离线规则基线和受控影子入口；没有实际微调。这些边界与面试目标一致。
 PG destructive-operation guard 已实现并有拒绝路径回归测试（`src/platform/pg_test_guard.py`
 fail-closed：仅 `opspilot_test_*`@localhost 可被 DROP/重建，非法 URL 在连接探测前失败）。
-当前 D 盘全量（2026-09-06 实测）：未配置隔离 PG → 394 passed、44 skipped、1 条第三方弃用警告；
-配置 `OPSPILOT_TEST_DATABASE_URL`（opspilot_test_* 隔离库）→ 438 passed、0 skipped，且
-`scripts/run_pg_tests_isolated.ps1`（每次唯一库名 opspilot_test_{a,b}_{guid}）实测
-ISOLATED DOUBLE-RUN PASS——PG live 已用隔离库实测，44 skip 仅是"未配置隔离库"运行模式。
+当前 D 盘全量（2026-09-07 Agent Lab 边界剧本变更后实测）：未配置隔离 PG → 399 passed、44 skipped、1 条第三方弃用警告；
+配置 `OPSPILOT_TEST_DATABASE_URL`（opspilot_test_* 隔离库）→ 443 passed、0 skipped、1 条第三方弃用警告。`scripts/run_pg_tests_isolated.ps1`
+已在两套独立数据库各完成 25 passed，均执行迁移至 `0005`；未配置隔离库时的 44 个 skip 仅是该运行模式的纪律性跳过，不能替代 PG 验证。
 
-继续增加 RAG 层级、多 Agent、向量库、微调、前端或外部集成只会增加解释成本，不能提高当前
+继续增加 RAG 层级、多 Agent、向量库、微调、生产前端或外部集成只会增加解释成本，不能提高当前
 主张的可信度。下一阶段应进入 **V1 发布候选验收**，把现有能力变成可复现、可讲解的证据。
 
 ## 后续顺序
@@ -35,7 +34,7 @@ ISOLATED DOUBLE-RUN PASS——PG live 已用隔离库实测，44 skip 仅是"未
 - 不把 Supervisor 变成默认运行时；
 - 没有版本化 chosen/rejected 数据和同一评测集，不做 LoRA/QLoRA/SFT/DPO；
 - 不接真实支付、CRM、企业微信、MuleSoft、MCP；
-- 不向 C 盘安装、下载、缓存或写运行时文件。
+- 不把本地演示工作台包装成生产前端；不向 C 盘安装、下载、缓存或写运行时文件。
 
 ## 给下一位 Agent 的提示词
 
@@ -50,7 +49,7 @@ ISOLATED DOUBLE-RUN PASS——PG live 已用隔离库实测，44 skip 仅是"未
 4. 复核 RAG 指标：正向 citation 命中、旧版本/不适用证据的安全拒绝、注入拒绝分别报告；不能把“正确拒绝旧版本”写成引用正确率下降。同步黄金集报告生成器和针对性测试。
 5. 运行 `.venv\Scripts\python.exe -m pytest tests/ -q`、memory profile 的 `evals\replay.py`、`evals\compare_agents.py`、`evals\run_model_shadow_eval.py --mode offline`、`scripts\demo_interview.py` 和 `git diff --check`。同时执行 API e2e 测试；它必须通过 HTTP 接口验证审批和权限边界，不能直接调用领域服务替代。
 6. PG guard 通过后，才执行 `.\scripts\run_pg_tests_isolated.ps1` 和 PG profile 回放；不可用时明确列出未验证项，不伪造通过。运行前确认脚本已加载 D 盘环境。
-7. 只有失败时才修复最小根因并补针对性回归。不要新增多 Agent、微调、向量库、长期记忆、前端、真实 LLM、真实支付/CRM/MCP/Mule 集成。
+7. 只有失败时才修复最小根因并补针对性回归。不要新增多 Agent、微调、向量库、长期记忆、生产前端、真实 LLM、真实支付/CRM/MCP/Mule 集成；现有本地演示工作台只做口径和回归维护。
 8. 模型模块只能作为“未接入 V1 的离线安全基线”保留；若没有人会演示它，就连同对应测试和文档引用一起删除，不能留下孤立实验代码。RAG 只保留可追溯安全测试，不扩展为向量平台。
 9. 只在实际结果变化时同步 README、ARCHITECTURE、POSTGRES、TESTING_BASELINE、STATUS_AND_RISKS 和 INTERVIEW_OVERVIEW；旧的 439/450 项数字不能作为当前基线，也不声称多 Agent 的性能收益。
 10. 最终报告列出保留/删除范围、D 盘路径、实际命令与结果、隔离 PG 目标（脱敏）、未验证项，以及 90 秒和 5 分钟面试讲解。除非用户另行要求，不提交 Git、不接外部系统、不安装到 C 盘。

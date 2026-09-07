@@ -22,7 +22,7 @@ from src.platform.pg_test_guard import (
     require_isolated_test_db,
     reset_test_schema,
     schema_sql_text,
-    test_database_url_from_env,
+    test_database_url_from_env as read_test_database_url_from_env,
 )
 from tests.pg_live import pg_reachable
 
@@ -194,12 +194,12 @@ def test_test_db_url_only_from_ops_environment(monkeypatch):
     monkeypatch.delenv("OPSPILOT_TEST_DATABASE_URL", raising=False)
     monkeypatch.setenv("DATABASE_URL",
                        "postgresql+psycopg2://opspilot:opspilot@127.0.0.1:5433/opspilot")
-    assert test_database_url_from_env() is None       # 仅 DATABASE_URL → 无破坏性目标
+    assert read_test_database_url_from_env() is None  # 仅 DATABASE_URL → 无破坏性目标
     monkeypatch.setenv(
         "OPSPILOT_TEST_DATABASE_URL",
         "postgresql+psycopg2://opspilot:opspilot@127.0.0.1:5433/opspilot_test_v1")
-    assert test_database_url_from_env() is not None
-    assert test_database_url_from_env().endswith("opspilot_test_v1")
+    assert read_test_database_url_from_env() is not None
+    assert read_test_database_url_from_env().endswith("opspilot_test_v1")
 
 
 def test_pg_reachable_rejects_invalid_explicit_url_before_connect(monkeypatch):

@@ -1,15 +1,14 @@
-"""V1.1 运行模式 A/B 对照：单 Agent（默认） vs three-agent Supervisor vs four-role 四角色。
+"""V1.1 运行模式 A/B 对照：单 Agent（默认） vs four-role 四角色。
 
 方法：同一 golden_v1 黄金集逐条分别驱动三种确定性运行时（同一 PolicyStore 数据面，
 同一安全约束/审批/幂等语义）：
 - single  ：WorkflowRunner（单 Agent，policy_store 注入使检索面与 Supervisor 一致；
             仅证据展示差异，金额/资格仍由领域服务裁决）；
-- three   ：SupervisorRunner(orchestration="three-agent")（V1 对照语义）；
 - four    ：SupervisorRunner(orchestration="four-role")（V1.1 Triage→Evidence→
             Resolution→RiskReview，输出四角色轨迹 order_summary.supervisor.traces）。
 
-结论规则（ADR-002）：确定性规则下三模式正确路径一致（同一领域裁决），四角色相对单
-Agent 无量化业务收益且增加角色串行耗时 → 默认路径维持单 Agent；Supervisor/four-role
+结论规则（ADR-002）：确定性规则下两模式正确路径一致（同一领域裁决），四角色相对单
+Agent 无量化业务收益 → 默认路径维持单 Agent；four-role
 保留为可选实验运行时。报告为确定性产物（不含逐 run 耗时；耗时仅 stdout）。
 
 用法：.venv\\Scripts\\python.exe evals\\compare_modes.py [--limit N]
@@ -55,6 +54,7 @@ def _single_factory(backend):
 
 
 def _three_factory(backend):
+    """历史三只读角色兼容对照；不属于当前面试主线。"""
     return SupervisorRunner(backend, policy_store=_policy_store())
 
 
@@ -73,7 +73,7 @@ MODES: dict[str, Optional[Callable]] = {
 # ---------- 引用一致性探针（确定性：同 store 同查询 → 逐条相等） ----------
 #
 # replay.run_case 返回结构化 outcome/金额但不回传引用明细；此处对代表用例做轻量驱动，
-# 读取 approval/escalate state 的 policy_citations 与 evidence_refs 做三模式逐条比较。
+# 读取 approval/escalate state 的 policy_citations 与 evidence_refs 做三种兼容对照。
 # g01：正常到达 approval（引用产生）；g05：领域无政策 → 均不产生引用（不虚构）。
 
 def _probe_citations() -> dict:
@@ -135,7 +135,7 @@ def _probe_citations() -> dict:
                 if same and refs_same else
                 f"{cid}：引用不一致（{collected}）")
         else:
-            # 转人工用例（领域无政策）：三模式同样不产草稿、同样错误码（引用不进入该比较）
+            # 转人工用例（领域无政策）：三模式同样不产草稿、同样错误码
             codes = {k: v["error_code"] for k, v in collected.items()}
             drafts = {k: v["draft"] for k, v in collected.items()}
             total_asserts += 1
@@ -186,14 +186,14 @@ def _run(limit: Optional[int] = None) -> dict:
     outcome_same = sum(1 for a, b, c in zip(single_o, three_o, four_o) if a == b == c)
     refund_same = sum(1 for r in rows
                       if r["single_refunded"] == r["three_refunded"] == r["four_refunded"])
-    # 意图一致：黄金集声明期望 intent 的用例中，三模式 intent 均命中期望且互相一致
+    # 意图一致：黄金集声明期望 intent 的用例中，两模式均命中期望且互相一致
     intent_cases = [r for r in rows if r["expected"].get("intent")]
     intent_consistent = sum(
         1 for r in intent_cases
         if r["single_intent"] == r["expected"]["intent"]
         and r["three_intent"] == r["expected"]["intent"]
         and r["four_intent"] == r["expected"]["intent"])
-    # 澄清一致：等待澄清（零副作用）的用例三模式 outcome 均为 clarify
+    # 澄清一致：等待澄清（零副作用）的用例两模式 outcome 均为 clarify
     clarify_consistent = sum(1 for r in rows
                              if r["single_outcome"] == r["three_outcome"]
                              == r["four_outcome"] == "clarify")
@@ -252,7 +252,7 @@ def _conclude(r: dict) -> str:
         return ("Supervisor/four-role 通过率高于单 Agent——具备拆分收益，可将默认切换为 "
                 "多 Agent（需人工复核后提交 ADR；且必须通过确定性边界与安全不变量）。")
     return ("无量化业务收益（三模式确定性通过率持平，同一领域裁决）：按 ADR-002 失败回退"
-            "条款默认路径维持单 Agent；three-agent/four-role 保留为可选实验运行时"
+                "条款默认路径维持单 Agent；three-agent/four-role 保留为可选实验运行时"
             "（并行只读证据与四角色轨迹观测；多 Agent 增加角色串行耗时与复杂度）。")
 
 
@@ -270,17 +270,14 @@ def _render(r: dict) -> str:
         "",
         "## 结果",
         "",
-        "| 指标 | single（默认） | three-agent | four-role |",
+        "| 指标 | single（默认） | three-agent（历史兼容） | four-role（当前实验） |",
         "| --- | --- | --- | --- |",
-        f"| 任务完成率 | {r['pass_rate']['single']}（{r['pass']['single']}/{r['total']}） | "
-        f"{r['pass_rate']['three']}（{r['pass']['three']}/{r['total']}） | "
-        f"{r['pass_rate']['four']}（{r['pass']['four']}/{r['total']}） |",
+        f"| 任务完成率 | {r['pass_rate']['single']}（{r['pass']['single']}/{r['total']}） | {r['pass_rate']['three']}（{r['pass']['three']}/{r['total']}） | {r['pass_rate']['four']}（{r['pass']['four']}/{r['total']}） |",
         f"| 平均耗时 / P50 / P95 | 仅 stdout（见运行输出） | 仅 stdout（见运行输出） | 仅 stdout（见运行输出） |",
         f"| Token / 成本 | {r['token_cost']} | {r['token_cost']} | {r['token_cost']} |",
         f"| 越权成功 | {r['blocks']['越权成功']} | {r['blocks']['越权成功']} | {r['blocks']['越权成功']} |",
         f"| 重复副作用 | {r['blocks']['重复副作用']} | {r['blocks']['重复副作用']} | {r['blocks']['重复副作用']} |",
-        f"| unknown 换键重试 | {r['blocks']['unknown 换键重试']} | "
-        f"{r['blocks']['unknown 换键重试']} | {r['blocks']['unknown 换键重试']} |",
+        f"| unknown 换键重试 | {r['blocks']['unknown 换键重试']} | {r['blocks']['unknown 换键重试']} | {r['blocks']['unknown 换键重试']} |",
         f"| 模型错误数 | {r['blocks']['模型错误数']} | {r['blocks']['模型错误数']} | {r['blocks']['模型错误数']} |",
         f"| 工具错误数 | {r['blocks']['工具错误数']} | {r['blocks']['工具错误数']} | {r['blocks']['工具错误数']} |",
         "",
@@ -289,8 +286,7 @@ def _render(r: dict) -> str:
         f"- 退款金额三模式一致：{r['refund_consistent']}/{r['total']}",
         f"- 意图一致（命中期望且互相同）：{r['intent_consistent']}/{r['intent_total']}",
         f"- 澄清一致（等待澄清零副作用）：{r['clarify_consistent']}/{r['total']}",
-        f"- 转人工（escalated）计数：single={r['escalate_count']['single']}，"
-        f"three={r['escalate_count']['three']}，four={r['escalate_count']['four']}",
+        f"- 转人工（escalated）计数：single={r['escalate_count']['single']}，three={r['escalate_count']['three']}，four={r['escalate_count']['four']}",
         f"- 安全拒绝率：{r['safe_reject']}",
         f"- 注入拦截：{r['injection']}",
         "",
@@ -310,8 +306,7 @@ def _render(r: dict) -> str:
     lines.append("| --- | --- | --- | --- | --- | --- | --- |")
     for row in r["rows"]:
         same = (row["single_outcome"] == row["three_outcome"]
-                == row["four_outcome"] == "escalated"
-                or row["single_outcome"] == row["three_outcome"] == row["four_outcome"])
+                == row["four_outcome"])
         lines.append(
             f"| {row['case_id']} | {row['single_outcome']} | {row['three_outcome']} | "
             f"{row['four_outcome']} | {row['single_refunded']} | {row['four_refunded']} | "
@@ -346,8 +341,7 @@ def main() -> int:
     print(f"outcome 三模式一致 {result['outcome_consistent']}/{total}；退款一致 "
           f"{result['refund_consistent']}/{total}；意图一致 {result['intent_consistent']}/"
           f"{result['intent_total']}；澄清一致 {result['clarify_consistent']}/{total}")
-    print(f"转人工 escalated：single={result['escalate_count']['single']} "
-          f"three={result['escalate_count']['three']} four={result['escalate_count']['four']}")
+    print(f"转人工 escalated：single={result['escalate_count']['single']} three={result['escalate_count']['three']} four={result['escalate_count']['four']}")
     print("耗时(stdout, 不进报告以保确定性): "
           + " | ".join(f"{k} avg={result['avg_ms'][k]}ms p50={result['p50_ms'][k]}ms "
                        f"p95={result['p95_ms'][k]}ms" for k in ("single", "three", "four")))

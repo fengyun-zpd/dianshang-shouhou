@@ -56,6 +56,18 @@ class ExecuteIn(BaseModel):
     external_result: str = Field(..., pattern="^(success|timeout)$")
 
 
+class AgentLabTraceIn(BaseModel):
+    mode: str = Field("single_agent", pattern="^(single_agent|multi_agent)$")
+
+
+class AgentLabRetrieveIn(BaseModel):
+    query: str = Field(..., min_length=1, max_length=300)
+
+
+class AgentLabBoundaryScenarioIn(BaseModel):
+    name: str = Field(..., pattern="^(clarify|no_evidence|cross_tenant|pii)$")
+
+
 class ReconcileIn(BaseModel):
     result: str = Field(..., pattern="^(success|failed)$")
 

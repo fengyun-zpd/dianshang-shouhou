@@ -60,6 +60,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
         # 探活和 API 元数据不含业务数据，可供本地演示、监控和客户端发现使用。
         # 所有 /api 业务路由仍必须经过凭据解析。
         if (request.url.path.startswith("/health") or
+                request.url.path == "/" or
+                request.url.path.startswith("/assets/") or
                 request.url.path in {"/docs", "/redoc", "/openapi.json"}):
             return await call_next(request)
         token = request.headers.get("X-Api-Key")

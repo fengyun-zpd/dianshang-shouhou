@@ -57,3 +57,14 @@ def test_api_documentation_public_but_business_routes_stay_protected():
     assert client.get("/docs").status_code == 200
     assert client.get("/openapi.json").status_code == 200
     assert client.get("/api/tickets/TKT-1").status_code == 401
+
+
+def test_chinese_workspace_is_public_but_business_routes_stay_protected():
+    """演示工作台和静态资源可直接打开；不能借此绕过业务认证。"""
+    client = TestClient(_app())
+    page = client.get("/")
+    assert page.status_code == 200
+    assert "让每一次售后处理" in page.text
+    assert client.get("/assets/workspace.css").status_code == 200
+    assert client.get("/assets/workspace.js").status_code == 200
+    assert client.post("/api/tickets", json={}).status_code == 401

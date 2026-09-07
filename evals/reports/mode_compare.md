@@ -9,7 +9,7 @@
 
 ## 结果
 
-| 指标 | single（默认） | three-agent | four-role |
+| 指标 | single（默认） | three-agent（历史兼容） | four-role（当前实验） |
 | --- | --- | --- | --- |
 | 任务完成率 | 1.0（11/11） | 1.0（11/11） | 1.0（11/11） |
 | 平均耗时 / P50 / P95 | 仅 stdout（见运行输出） | 仅 stdout（见运行输出） | 仅 stdout（见运行输出） |

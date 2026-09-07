@@ -9,11 +9,14 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from pathlib import Path
 from typing import Optional
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, FastAPI, Request
+from fastapi.responses import FileResponse
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.staticfiles import StaticFiles
 
 from src.domain.after_sales import (
     AfterSalesError,
@@ -33,6 +36,9 @@ from src.domain.after_sales.ports import AfterSalesApplicationPort
 from .deps import ApiIdentity, AuthMiddleware, TokenResolver, get_identity
 from .errors import register_error_handlers
 from .schemas import (
+    AgentLabBoundaryScenarioIn,
+    AgentLabRetrieveIn,
+    AgentLabTraceIn,
     AuditItemOut,
     DecisionIn,
     ExecuteIn,
@@ -42,8 +48,10 @@ from .schemas import (
     TicketCreateIn,
     TicketOut,
 )
+from .agent_lab import retrieve_policy, run_boundary_scenario, run_trace
 
 router = APIRouter(prefix="/api", tags=["after-sales"])
+UI_DIR = Path(__file__).resolve().parent / "ui"
 
 
 class RequestIdMiddleware(BaseHTTPMiddleware):
@@ -251,10 +259,34 @@ def audit(request: Request,
     return items
 
 
+# ---------- Agent Lab（隔离合成沙箱，只读演示） ----------
+
+@router.post("/agent-lab/trace")
+def agent_lab_trace(body: AgentLabTraceIn,
+                    identity: ApiIdentity = Depends(get_identity)):
+    _require_role(identity, (Role.AGENT,))
+    return run_trace(body.mode)
+
+
+@router.post("/agent-lab/retrieve")
+def agent_lab_retrieve(body: AgentLabRetrieveIn,
+                       identity: ApiIdentity = Depends(get_identity)):
+    _require_role(identity, (Role.AGENT,))
+    return retrieve_policy(body.query)
+
+
+@router.post("/agent-lab/boundary-scenario")
+def agent_lab_boundary_scenario(body: AgentLabBoundaryScenarioIn,
+                                identity: ApiIdentity = Depends(get_identity)):
+    _require_role(identity, (Role.AGENT,))
+    return run_boundary_scenario(body.name)
+
+
 # ---------- 工厂 ----------
 
 def create_app(service: AfterSalesApplicationPort, registry: TokenResolver,
-               pg_probe=None, require_expected_version: bool = False) -> FastAPI:
+               pg_probe=None, require_expected_version: bool = False,
+               demo_reset=None) -> FastAPI:
     """FastAPI 工厂。service 为实现 AfterSalesApplicationPort 的后端（Memory/PgCommand
     Adapter 均可，调用方不 isinstance）。require_expected_version=True（pg profile）：
     审批/拒绝必须由客户端提交 expected_version，服务端不代填（422）。
@@ -264,8 +296,16 @@ def create_app(service: AfterSalesApplicationPort, registry: TokenResolver,
     app.state.registry = registry
     app.state.pg_probe = pg_probe
     app.state.require_expected_version = require_expected_version
+    app.state.demo_reset = demo_reset
     app.add_middleware(AuthMiddleware, registry=registry)
     app.add_middleware(RequestIdMiddleware)
+
+    # 中文工作台是本地演示入口；业务写操作仍全部走下方受认证保护的 /api 路由。
+    app.mount("/assets", StaticFiles(directory=str(UI_DIR)), name="assets")
+
+    @app.get("/", include_in_schema=False)
+    def workspace():
+        return FileResponse(UI_DIR / "index.html")
 
     @app.get("/health/live", tags=["ops"])
     def liveness():
@@ -289,5 +329,17 @@ def create_app(service: AfterSalesApplicationPort, registry: TokenResolver,
         return {"status": "ok", "deps": {"postgresql": "ok" if probe is not None else "not-configured"}}
 
     app.include_router(router)
+
+    @app.post("/api/demo/reset", tags=["demo"])
+    def reset_demo(identity: ApiIdentity = Depends(get_identity)):
+        """重置固定合成演示数据；仅 memory demo 注册，生产/PG profile 不暴露。"""
+        _require_role(identity, (Role.AGENT,))
+        reset = app.state.demo_reset
+        if reset is None:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=404, detail="演示重置仅适用于 memory 合成后端")
+        reset()
+        return {"status": "reset", "mode": "memory_demo", "side_effect": False}
+
     register_error_handlers(app)
     return app

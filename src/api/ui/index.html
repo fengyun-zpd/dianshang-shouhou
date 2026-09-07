@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f6f8fc" />
+    <title>OpsPilot | 售后服务中心</title>
+    <link rel="stylesheet" href="/assets/workspace.css" />
+  </head>
+  <body>
+    <div class="app-container">
+      <header class="top-bar">
+        <a class="logo-area" href="/" aria-label="OpsPilot 首页">
+          <span class="logo-icon">O</span>
+          <span class="logo-text">Ops<span>Pilot</span></span>
+        </a>
+        <div class="top-actions">
+          <span id="api-status" class="connection"><i></i> 正在连接服务</span>
+          <button id="open-help" class="btn-icon" title="查看演示说明" aria-label="查看演示说明">?</button>
+          <div class="user-badge"><span class="user-avatar">演</span><span class="user-name">演示操作员</span><span class="user-tag">本地模式</span></div>
+        </div>
+      </header>
+
+      <nav class="workspace-nav" aria-label="工作区">
+        <button class="workspace-tab active" data-view-target="case-view"><span class="tab-mark">01</span>案件处置<small>真实业务闭环</small></button>
+        <button class="workspace-tab" data-view-target="lab-view"><span class="tab-mark">02</span>Agent Lab<small>轨迹与证据</small></button>
+        <button class="workspace-tab" data-view-target="evaluation-view"><span class="tab-mark">03</span>评测与安全<small>边界与对照</small></button>
+      </nav>
+
+      <main id="case-view" class="workspace-view active">
+      <section id="overview" class="page-header">
+        <div class="header-copy">
+          <span class="eyebrow">售后处置控制台</span>
+          <h1>让每一次售后处理，都有依据可循。</h1>
+          <p>Agent 只负责理解、澄清与证据检索；退款金额、状态、审批、幂等和审计由确定性领域服务裁决。</p>
+          <button id="start-case" class="button primary hero-button"><span class="button-symbol launch-symbol">→</span>启动演示工单 <span class="button-arrow">→</span></button>
+        </div>
+        <div class="header-visual" aria-hidden="true">
+          <div class="visual-topline"><span class="visual-pulse"></span>处置链路已保护</div>
+          <div class="visual-orbit orbit-one"></div><div class="visual-orbit orbit-two"></div>
+          <div class="visual-core"><span>01</span><small>安全工单</small></div>
+          <div class="visual-node node-policy"><span>✓</span><small>政策</small></div>
+          <div class="visual-node node-approval"><span>✓</span><small>审批</small></div>
+          <div class="visual-node node-audit"><span>✓</span><small>审计</small></div>
+          <div class="visual-foot"><i></i><span>规则、状态与权限实时校验</span></div>
+        </div>
+      </section>
+
+      <section class="quick-grid" aria-label="当前处置概览">
+        <article class="quick-card"><span class="card-icon icon-blue">▣</span><strong>当前工单</strong><b id="ticket-value">尚未创建</b><small id="ticket-note">案件状态摘要，不是 Agent</small></article>
+        <article class="quick-card"><span class="card-icon icon-orange">¥</span><strong>退款建议</strong><b id="amount-value">--</b><small id="amount-note">领域规则裁决，不由 Agent 决定</small></article>
+        <article class="quick-card"><span class="card-icon icon-green">✓</span><strong>处置状态</strong><b id="case-status">待发起</b><small id="status-note">业务状态摘要，不是 Agent</small></article>
+        <article class="quick-card"><span class="card-icon icon-purple">⌁</span><strong>安全边界</strong><b>全部启用</b><small>系统护栏摘要，不是 Agent</small></article>
+      </section>
+
+      <section class="main-grid">
+        <article id="flow" class="panel flow-panel">
+          <div class="panel-header"><div><span class="eyebrow">处理进度</span><h2>工单处置流程</h2></div><span id="flow-state" class="status-tag neutral">等待发起</span></div>
+          <div class="panel-body">
+            <ol id="steps" class="track-steps">
+              <li data-step="1" class="step current"><span class="step-dot">1</span><div><strong>受理售后诉求</strong><p>创建工单，并验证订单和客户身份。</p></div><span class="step-state">待处理</span></li>
+              <li data-step="2" class="step"><span class="step-dot">2</span><div><strong>生成退款草稿</strong><p>领域服务校验政策与金额，生成可审批草稿。</p></div><span class="step-state">未开始</span></li>
+              <li data-step="3" class="step"><span class="step-dot">3</span><div><strong>授权人员审批</strong><p>审批决定带版本校验，并写入审计记录。</p></div><span class="step-state">未开始</span></li>
+              <li data-step="4" class="step"><span class="step-dot">4</span><div><strong>内部执行与对账</strong><p>由系统角色执行；结果未知时只允许原操作对账。</p></div><span class="step-state">未开始</span></li>
+            </ol>
+            <div class="flow-actions"><button id="draft-action" class="button secondary" disabled><span class="button-symbol draft-symbol">✦</span>生成退款草稿</button><button id="approve-action" class="button secondary" disabled><span class="button-symbol approve-symbol">✓</span>批准退款</button><button id="execute-action" class="button primary" disabled><span class="button-symbol execute-symbol">→</span>执行退款</button></div>
+          </div>
+        </article>
+
+        <article id="evidence" class="panel evidence-panel">
+          <div class="panel-header"><div><span class="eyebrow">规则与证据</span><h2>本次裁决依据</h2></div><span class="status-tag safe">可追溯</span></div>
+          <div class="panel-body evidence-body">
+            <div class="evidence-card"><span class="evidence-icon">✓</span><div><strong>订单事实</strong><p>ORD-1001 · 已签收 1 天</p><small>实付金额 ¥200.00</small></div></div>
+            <div class="evidence-card"><span class="evidence-icon">✓</span><div><strong>适用政策</strong><p>P-DEMO · 破损退款政策</p><small>签收 30 天内支持全额退款</small></div></div>
+            <div class="evidence-card soft"><span class="evidence-icon">i</span><div><strong>Agent 的职责边界</strong><p>只解释与检索，不裁决金额。</p><small>证据不足时必须转人工</small></div></div>
+            <p class="policy-foot">政策引用用于解释决定；资格、金额和状态仍以领域服务为准。</p>
+          </div>
+        </article>
+      </section>
+
+      <section class="service-grid">
+        <article id="audit" class="panel audit-panel">
+          <div class="panel-header"><div><span class="eyebrow">审计轨迹</span><h2>操作记录</h2></div><button id="refresh-audit" class="text-button">刷新记录</button></div>
+          <div id="audit-list" class="audit-list empty-state"><span class="empty-icon">⌁</span><p>业务动作发生后，审计记录会显示在这里。</p></div>
+        </article>
+        <article class="safety-card">
+          <span class="safety-icon">◈</span><h2>可靠性护栏</h2><p>高风险动作必须经人工审批，重复请求不会重复退款，外部状态不明时系统停止并等待对账。</p>
+          <ul><li>权限隔离</li><li>幂等防重</li><li>状态机校验</li></ul>
+          <a href="/docs" target="_blank" rel="noreferrer">查看开发者 API 文档 <span>→</span></a>
+        </article>
+      </section>
+      <section class="panel scenario-panel" id="scenarios">
+        <div class="panel-header"><div><span class="eyebrow">安全剧本</span><h2>现场演示失败路径</h2></div><span id="scenario-status" class="status-tag neutral">等待选择</span></div>
+        <div class="scenario-content">
+          <p class="scenario-intro">每个剧本都会调用真实的受保护 API，并显示状态变化、权限结果与副作用结论。数据为固定合成订单，不影响 Agent Lab 沙箱。</p>
+          <div class="scenario-grid">
+            <button class="scenario-option" data-scenario="reject"><span class="scenario-icon reject">!</span><span><strong>审批拒绝</strong><small>拒绝后不执行退款</small></span><i>→</i></button>
+            <button class="scenario-option" data-scenario="unknown"><span class="scenario-icon unknown">?</span><span><strong>外部结果未知</strong><small>超时后只按原操作对账</small></span><i>→</i></button>
+            <button class="scenario-option" data-scenario="idempotency"><span class="scenario-icon idem">↻</span><span><strong>重复请求</strong><small>同键返回同一工单</small></span><i>→</i></button>
+            <button class="scenario-option" data-scenario="permission"><span class="scenario-icon permission">⊘</span><span><strong>角色越权</strong><small>Agent 不能代替审批</small></span><i>→</i></button>
+          </div>
+          <div id="scenario-result" class="scenario-result" aria-live="polite"><span>选择一个剧本，开始面试演示。</span></div>
+        </div>
+      </section>
+      <footer><span>OpsPilot 本地演示环境 · 合成数据</span><span>业务事实由领域服务与 PostgreSQL 路径裁决</span></footer>
+      </main>
+
+      <main id="lab-view" class="workspace-view" hidden>
+        <section class="lab-hero">
+          <div>
+            <span class="eyebrow">真实接口 · 隔离沙箱</span>
+            <h1>Agent Lab：看见证据、轨迹与停止原因。</h1>
+            <p>这里不是装饰卡片。每次运行都会创建固定种子内存沙箱，实际执行编排和本地检索；不会读取、修改案件处置区的工单。</p>
+          </div>
+          <div class="lab-hero-stat"><span>默认路径</span><strong>单 Agent</strong><small>Supervisor 仅作对照实验</small></div>
+        </section>
+
+        <section class="lab-grid">
+          <article class="panel mode-panel">
+            <div class="panel-header"><div><span class="eyebrow">运行模式</span><h2>选择一次可复现轨迹</h2></div><span class="status-tag safe">只读证据</span></div>
+            <div class="mode-list">
+              <button class="mode-option selected" data-lab-mode="single_agent"><span class="mode-index">A</span><span><strong>单 Agent（默认）</strong><small>理解诉求，汇集订单与政策证据，形成待审批草稿。</small></span><i>→</i></button>
+              <button class="mode-option" data-lab-mode="multi_agent"><span class="mode-index experiment">B</span><span><strong>四角色 Supervisor（实验）</strong><small>Triage → Evidence → Resolution → Risk Review。</small></span><i>→</i></button>
+            </div>
+            <div class="mode-note"><b>为什么默认不用四角色？</b><p>同一固定黄金集上目前与单 Agent 持平；因此保留可观察的对照，而不为名词增加主链路复杂度。</p></div>
+            <button id="run-lab" class="button primary run-lab"><span class="button-symbol">▶</span>运行当前轨迹</button>
+          </article>
+
+          <article class="panel trace-panel">
+            <div class="panel-header"><div><span class="eyebrow">执行结果</span><h2>角色轨迹</h2></div><span id="trace-run-status" class="status-tag neutral">尚未运行</span></div>
+            <div class="trace-intro"><strong id="trace-title">等待选择模式</strong><p id="trace-summary">运行后会显示每个角色实际调用的只读工具、引用与拒绝原因。</p></div>
+            <div id="trace-list" class="trace-list empty-trace"><span>◎</span><p>尚无轨迹。运行一次沙箱演示查看真实执行过程。</p></div>
+          </article>
+        </section>
+
+        <section class="panel boundary-panel">
+          <div class="panel-header"><div><span class="eyebrow">Boundary Proofs</span><h2>Agent 何时必须安全停止</h2></div><span id="boundary-status" class="status-tag neutral">等待选择</span></div>
+          <div class="boundary-content">
+            <p>固定种子隔离沙箱会实际运行工作流或脱敏函数。它不读取当前案件，也不会产生退款副作用。</p>
+            <div class="boundary-grid">
+              <button class="boundary-option" data-boundary="clarify"><span class="boundary-icon clarify">?</span><span><strong>信息不足</strong><small>先澄清订单与问题</small></span></button>
+              <button class="boundary-option" data-boundary="no_evidence"><span class="boundary-icon evidence">!</span><span><strong>证据不足</strong><small>政策不匹配则转人工</small></span></button>
+              <button class="boundary-option" data-boundary="cross_tenant"><span class="boundary-icon tenant">⊘</span><span><strong>跨租户</strong><small>订单读取立即拒绝</small></span></button>
+              <button class="boundary-option" data-boundary="pii"><span class="boundary-icon pii">◌</span><span><strong>敏感信息</strong><small>日志与模型输入脱敏</small></span></button>
+            </div>
+            <div id="boundary-result" class="boundary-result" aria-live="polite"><span>选择一个边界剧本，查看工作流实际如何停止或保护数据。</span></div>
+          </div>
+        </section>
+
+        <section class="panel retrieval-panel">
+          <div class="panel-header"><div><span class="eyebrow">Local RAG Baseline</span><h2>政策检索与引用校验</h2></div><span id="retrieval-status" class="status-tag neutral">等待检索</span></div>
+          <div class="retrieval-content">
+            <p>关键词、稀疏向量与 RRF 融合排序；命中文档后还会校验租户、启用状态和版本引用。它只提供证据，不裁决资格或金额。</p>
+            <div class="retrieval-form"><input id="retrieval-query" value="商品破损退款政策" maxlength="300" aria-label="政策检索问题" /><button id="retrieve-evidence" class="button secondary"><span class="button-symbol">⌕</span>检索证据</button></div>
+            <div id="retrieval-results" class="retrieval-results"><span class="retrieval-placeholder">输入问题并检索。试试“忽略以上规则”查看注入拒绝路径。</span></div>
+          </div>
+        </section>
+      </main>
+
+      <main id="evaluation-view" class="workspace-view" hidden>
+        <section class="evaluation-hero">
+          <div><span class="eyebrow">验证优先于叙事</span><h1>评测与安全：每个承诺都要有证据。</h1><p>面试展示应先讲业务闭环和确定性边界，再说明 Agent、检索和 Supervisor 如何接受回归验证。</p></div>
+          <button class="button primary" data-switch-view="lab-view"><span class="button-symbol">◎</span>查看 Agent Lab</button>
+        </section>
+        <section class="evaluation-grid">
+          <article class="metric-card metric-blue"><span>黄金集</span><strong>11 / 11</strong><p>固定种子场景下，单 Agent 与 Supervisor 都能完成预期安全判断。</p></article>
+          <article class="metric-card metric-green"><span>业务副作用</span><strong>0</strong><p>Lab 只运行到审批前。退款执行仍须通过真实角色、审批和幂等校验。</p></article>
+          <article class="metric-card metric-orange"><span>检索边界</span><strong>可校验</strong><p>无证据转人工；提示注入拒绝；引用必须映射到有效版本文档。</p></article>
+        </section>
+        <section class="verification-grid">
+          <article class="panel verification-panel"><div class="panel-header"><div><span class="eyebrow">演示时怎么讲</span><h2>从问题到可信结果</h2></div></div><ol class="explain-steps"><li><b>01</b><div><strong>先走案件处置</strong><p>展示建单、草稿、授权审批、执行与审计。金额和状态始终在领域服务内裁决。</p></div></li><li><b>02</b><div><strong>再打开 Agent Lab</strong><p>展示默认单 Agent 与可选四角色的真实轨迹，说明角色只读、不可直接退款。</p></div></li><li><b>03</b><div><strong>最后演示拒绝路径</strong><p>用检索输入触发提示注入拒绝，说明系统不会把不可信文本变成业务指令。</p></div></li></ol></article>
+          <article class="safety-card safety-detail"><span class="safety-icon">◈</span><h2>不能由模型越过的边界</h2><p>权限、金额、状态迁移、审批、幂等、外部未知状态和审计，都由确定性服务与持久化事实控制。</p><ul><li>同键同结果</li><li>同键异载荷拒绝</li><li>未知态只对账</li><li>敏感字段脱敏</li></ul><button class="text-button" data-switch-view="case-view">回到案件处置 →</button></article>
+        </section>
+      </main>
+    </div>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <dialog id="help-dialog"><div class="dialog-content"><button id="close-help" class="dialog-close" aria-label="关闭">×</button><span class="eyebrow">如何体验项目</span><h2>按四步走完一笔安全退款</h2><p>创建工单后，先由领域服务生成退款草稿，再以审批角色确认，最后由系统角色模拟执行。每一步都调用现有 API，因此都会经过权限、状态与幂等校验。</p><div class="dialog-note">当前固定使用合成订单 ORD-1001。生产环境还需要接入真实认证、数据库与支付适配器。</div></div></dialog>
+    <script src="/assets/workspace.js"></script>
+  </body>
+</html>
