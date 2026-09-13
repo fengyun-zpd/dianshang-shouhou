@@ -198,6 +198,33 @@ def test_state_returns_thread_view():
     assert "checkpoint" in body["checkpoint_note"]
 
 
+def test_public_agent_views_and_validation_errors_redact_pii():
+    client, _, _ = _client()
+    phone = "13812345678"
+    email = "alice@example.com"
+    id_card = "11010519491231002X"
+    message = f"订单 ORD-1 商品破损，联系人 {phone}，邮箱 {email}，证件 {id_card}"
+    started = _start(client, message=message, thread_id="t-pii")
+    assert started.status_code == 200, started.text
+    for raw in (phone, email, id_card):
+        assert raw not in started.text
+
+    state = client.get("/api/v1/agent/t-pii/state", headers=_h("tok-approver"))
+    assert state.status_code == 200
+    for raw in (phone, email, id_card):
+        assert raw not in state.text
+
+    invalid = client.post(
+        "/api/v1/agent/start",
+        json={"message": REQUEST, "thread_id": "t-pii-invalid", "order_id_hint": "ORD-1",
+              "unexpected": f"contact={phone}, email={email}, id={id_card}"},
+        headers=_h("tok-agent"),
+    )
+    assert invalid.status_code == 422
+    for raw in (phone, email, id_card):
+        assert raw not in invalid.text
+
+
 def test_cross_tenant_state_read_is_generic_404():
     """错误租户返回通用 404：不区分「不存在」与「属于其他租户」，也不暴露所属租户。"""
     client, _, _ = _client()

@@ -24,7 +24,7 @@
   进程内字典只是便利缓存，因此重启后新实例仍能恢复绑定；
 - 内存 profile：进程内绑定 + checkpoint 事实，仅用于合成演示，**不声称跨进程持久恢复**；
 - 不存在的线程与错误租户返回同一个 UnknownThreadError（对外统一 404），不泄露所属租户；
-- 同名线程在不同租户下互不冲突（checkpoint 键空间为 `tenant:thread`）。
+- 同名线程在不同租户下互不冲突（checkpoint 键空间为 v2 长度编码，避免标识符中的冒号碰撞）。
 """
 from __future__ import annotations
 
@@ -37,12 +37,30 @@ from uuid import uuid4
 from langgraph.errors import GraphRecursionError
 from langgraph.types import Command
 
+from src.domain.after_sales.models import OperationStatus
+
 from .graph import AgentLoopDetected, DEFAULT_MAX_STEPS, LOOP_ERROR_CODE
 from .ports import AfterSalesGateway
 from .state import APPROVAL_INTERRUPT_TYPE, CLARIFY_INTERRUPT_TYPE, AgentState, new_state
 from .tool_ledger import ToolCallLedger
 
 _ALLOWED_EXTERNAL = {"success", "timeout"}
+_CHECKPOINT_KEY_VERSION = "v2"
+
+
+def _checkpoint_thread_key(tenant_id: str, thread_id: str) -> str:
+    """Encode the tenant/thread pair without delimiter ambiguity.
+
+    Length prefixes keep identifiers containing ':' (or the separator itself)
+    unambiguous while retaining a readable key for local checkpoint inspection.
+    """
+    return (f"{_CHECKPOINT_KEY_VERSION}|{len(tenant_id)}|{tenant_id}|"
+            f"{len(thread_id)}|{thread_id}")
+
+
+def _legacy_checkpoint_thread_key(tenant_id: str, thread_id: str) -> str:
+    """The pre-V1.2 key, used only after exact state metadata validation."""
+    return f"{tenant_id}:{thread_id}"
 logger = logging.getLogger("opspilot.agent")
 
 
@@ -263,7 +281,7 @@ class WorkflowRunner:
                         f"线程 {tid} 已被其他请求占用（指纹不一致）：同一 thread 只能继续原请求")
                 # 同请求重复提交 → 返回原/当前结果（不重放、无新副作用）
                 result = self._build_result(tenant_id, tid, values, interrupts)
-                return result
+                return self._recover_terminal_state(tenant_id, tid, result, cfg)
 
             inputs: dict = {
                 **new_state(),
@@ -276,7 +294,7 @@ class WorkflowRunner:
             }
             raw = self.graph.invoke(inputs, cfg)
             result = self._finalize(tenant_id, tid, raw)
-            return result
+            return self._recover_terminal_state(tenant_id, tid, result, cfg)
         except AgentLoopDetected as exc:
             result = self._loop_stop(tenant_id, tid, exc, cfg)
             return result
@@ -318,13 +336,20 @@ class WorkflowRunner:
             self._acquire_lease(tenant, thread_id, fp)
             acquired = True
         try:
+            existing = self._peek_thread(cfg)
+            if existing is not None:
+                values, interrupts = existing
+                if not interrupts and values.get("next_action") in {"reconcile_required", "finished"}:
+                    result = self._recover_terminal_state(
+                        tenant, thread_id, self._build_result(tenant, thread_id, values, interrupts), cfg)
+                    return result
             if simulate_external is not None:
                 if simulate_external not in _ALLOWED_EXTERNAL:
                     raise ValueError(f"simulate_external 仅允许 {_ALLOWED_EXTERNAL}")
                 self.graph.update_state(cfg, {"simulate_external": simulate_external})
             raw = self.graph.invoke(Command(resume=payload), cfg)
             result = self._finalize(tenant, thread_id, raw)
-            return result
+            return self._recover_terminal_state(tenant, thread_id, result, cfg)
         except AgentLoopDetected as exc:
             result = self._loop_stop(tenant, thread_id, exc, cfg)
             return result
@@ -383,6 +408,71 @@ class WorkflowRunner:
         return self.gateway.reconcile(tenant, operation_id, result)
 
     # ---------- 内部 ----------
+
+    def _recover_terminal_state(self, tenant_id: str, thread_id: str,
+                                result: RunResult, cfg: dict) -> RunResult:
+        """Re-read settled domain facts and finish an old workflow snapshot.
+
+        A graph can already be at END when an external executor or a
+        reconciliation call changes the operation. Recovery therefore updates
+        only the workflow view and invokes the existing domain close command;
+        it never executes or creates a new operation.
+        """
+        state = dict(result.state or {})
+        if state.get("error_code") == LOOP_ERROR_CODE:
+            return result
+        operation_id = state.get("operation_id")
+        ticket_id = state.get("ticket_id")
+        if not operation_id or not ticket_id:
+            return result
+        try:
+            operation = self.gateway.get_operation(tenant_id, operation_id)
+        except Exception:  # noqa: BLE001 - preserve the original workflow view
+            return result
+        if operation.status not in {
+            OperationStatus.EXECUTED, OperationStatus.REJECTED, OperationStatus.FAILED,
+        }:
+            return result
+        try:
+            ticket = self.gateway.get_ticket_for(tenant_id, ticket_id)
+            # Executed/rejected are safe terminal dispositions. A failed
+            # reconciliation remains open for manual handling and must not be
+            # represented as a successful close.
+            if (operation.status in {OperationStatus.EXECUTED, OperationStatus.REJECTED}
+                    and ticket.status.value != "closed"):
+                self.gateway.close_ticket(tenant_id, ticket_id)
+            ids = self.gateway.collect_audit_events(
+                tenant_id, thread_id, (ticket_id, operation_id), state.get("audit_event_ids"))
+        except Exception as exc:  # noqa: BLE001 - retain structured failure, never fake success
+            code = getattr(getattr(exc, "code", None), "value", "AGENT_TERMINAL_RECOVERY_FAILED")
+            failed_state = {
+                **state,
+                "error_code": code,
+                "outcome": "escalated",
+                "next_action": "escalated",
+                "reply": f"业务结果已写入但工单收尾失败，需人工处理（{code}）",
+            }
+            self.graph.update_state(cfg, failed_state, as_node="escalate")
+            return self._build_result(tenant_id, thread_id, failed_state, ())
+        if operation.status == OperationStatus.EXECUTED:
+            outcome = "refunded"
+            reply = "退款已执行，工单已按已退款关闭"
+        elif operation.status == OperationStatus.REJECTED:
+            outcome = "rejected"
+            reply = "审批拒绝：未执行退款，工单已按拒绝关闭"
+        else:
+            outcome = "failed"
+            reply = "外部执行已确认失败，工单保持开放并转人工处理"
+        settled_state = {
+            **state,
+            "outcome": outcome,
+            "next_action": "finished",
+            "error_code": None,
+            "reply": reply,
+            "audit_event_ids": list(state.get("audit_event_ids") or []) + ids,
+        }
+        self.graph.update_state(cfg, settled_state, as_node="apply_decision")
+        return self._build_result(tenant_id, thread_id, settled_state, ())
 
     def _loop_stop(self, tenant_id: str, thread_id: str, exc: Exception,
                    cfg: dict) -> RunResult:
@@ -451,12 +541,31 @@ class WorkflowRunner:
         return self._cfg_for(tenant, thread_id)
 
     def _cfg_for(self, tenant_id: str, thread_id: str) -> dict:
-        """LangGraph 默认以 thread_id 做 checkpoint 主键，必须把租户纳入键空间
-        （`tenant:thread`），同名线程在不同租户下互不冲突。
-        recursion_limit 为第二道防线（只兜单次 invoke 内的超级步循环）。
+        """Build the versioned checkpoint key for ``(tenant_id, thread_id)``.
+
+        Existing pre-V1.2 checkpoints are accepted only when their stored
+        ``tenant_id`` and ``thread_id`` exactly match the requested pair. This
+        prevents the old delimiter collision from becoming a fallback leak.
         """
-        return {"configurable": {"thread_id": f"{tenant_id}:{thread_id}"},
-                "recursion_limit": self._recursion_limit}
+        key = _checkpoint_thread_key(tenant_id, thread_id)
+        cfg = {"configurable": {"thread_id": key},
+               "recursion_limit": self._recursion_limit}
+        try:
+            current = self.graph.get_state(cfg)
+            if current.values:
+                return cfg
+            legacy_cfg = {
+                "configurable": {"thread_id": _legacy_checkpoint_thread_key(tenant_id, thread_id)},
+                "recursion_limit": self._recursion_limit,
+            }
+            legacy = self.graph.get_state(legacy_cfg)
+            values = dict(legacy.values or {})
+            if (values.get("tenant_id") == tenant_id
+                    and values.get("thread_id") == thread_id):
+                return legacy_cfg
+        except Exception:  # noqa: BLE001 - checkpoint probe is fail-closed
+            return cfg
+        return cfg
 
     def _finalize(self, tenant_id: str, thread_id: str, raw: dict) -> RunResult:
         interrupts = raw.get("__interrupt__") or ()

@@ -45,6 +45,8 @@ PG profile 下 `/api/v1/agent/*`（Agent 生命周期 HTTP，仅内部坐席）�
 checkpoint**，进程内字典只是便利缓存。因此实例 A 中断后进程退出（不释放租约）、租约过期，实例 B
 用同一 PG 与同一 checkpoint 即可接管并继续执行；同名线程在不同租户下互不冲突；错误租户读取与
 "线程不存在"返回**同一个** 404，消息不含所属租户。租约语义不变：他人持约未过期时推进被拒绝。
+checkpoint 键使用带版本的长度编码 `v2|租户长度|租户|线程长度|线程`，不受标识符中冒号影响；
+旧键只有在 checkpoint 内嵌租户/线程与请求精确一致时才兼容，歧义旧键直接拒绝。
 
 实测（隔离库 live）：
 
@@ -52,8 +54,11 @@ checkpoint**，进程内字典只是便利缓存。因此实例 A 中断后进�
 .venv\Scripts\python.exe -m pytest tests/integration/test_run_api_pg_backend_live.py -q
 # → 4 passed（start→审批事实→decision→state 全链路，以 refund_operations 行金额验收；伪造 decision body 422）
 .venv\Scripts\python.exe -m pytest tests/integration/test_agent_restart_recovery_live.py -q
-# → 3 passed（实例 A 中断 → 关闭 → 实例 B 恢复；错误租户 404；同名线程；租约仍生效）
+# → 3 passed（独立进程 A/B；实例 A 中断 → 按 PostgreSQL 时间等待租约到期 → 实例 B 恢复；错误租户 404；同名线程；租约仍生效）
 ```
+
+2026-09-13 整改验收全量结果：离线 `494 passed / 49 skipped`；隔离 PG `543 passed / 0 skipped`。
+这两个数字来自固定种子合成数据和本机单次运行，不代表生产吞吐或真实企业收益。
 
 已删除 `PgBackedSession` 整库清空重插和快照恢复原型。生产部署、生产备份、支付或 CRM 接入未实现。
 固定 checkpoint 默认面向单实例；多实例部署应各自指定 `--checkpoint` 或改用服务端 checkpointer

@@ -74,7 +74,8 @@ def test_sqlite_checkpointer_is_persistent_on_disk(tmp_path):
     cp1 = open_sqlite_checkpointer(str(db))
     WorkflowRunner(MemoryAdapter(svc), checkpointer=cp1).start("T1", REQUEST_DAMAGED, thread_id="persist")
     cp2 = open_sqlite_checkpointer(str(db))
-    snap = cp2.get_tuple({"configurable": {"thread_id": "T1:persist"}})
+    runner = WorkflowRunner(MemoryAdapter(svc), checkpointer=cp2)
+    snap = cp2.get_tuple(runner._cfg("persist", "T1"))
     assert snap is not None
     assert snap.checkpoint["channel_values"].get("tenant_id") == "T1"
 

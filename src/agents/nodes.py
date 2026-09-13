@@ -201,7 +201,8 @@ def build_nodes(gateway: AfterSalesGateway,
                 "next_action": "finished",
                 "outcome": outcome,
                 "reply": f"该请求已处理（操作 {op_id} 状态 {op.status.value}），不重复执行",
-                "audit_event_ids": state.get("audit_event_ids", []) + gateway.collect_audit_events(tenant),
+                "audit_event_ids": state.get("audit_event_ids", []) + gateway.collect_audit_events(
+                    tenant, state.get("thread_id"), (ticket_id, op_id), state.get("audit_event_ids")),
             }
         return {
             "ticket_id": ticket_id,
@@ -213,7 +214,8 @@ def build_nodes(gateway: AfterSalesGateway,
                 f"退款申请：订单 {order_id}，金额 {state.get('action_draft', {}).get('amount', '?')} 元"
                 f"（金额由领域政策计算），操作 {op_id}，审批编号 {approval_id}"
             ),
-            "audit_event_ids": state.get("audit_event_ids", []) + gateway.collect_audit_events(tenant),
+            "audit_event_ids": state.get("audit_event_ids", []) + gateway.collect_audit_events(
+                tenant, state.get("thread_id"), (ticket_id, op_id), state.get("audit_event_ids")),
         }
 
     def request_approval(state: AgentState) -> dict:
@@ -312,7 +314,9 @@ def build_nodes(gateway: AfterSalesGateway,
                     "next_action": "escalate", "reply": f"退款已执行但关单失败（{e.message}），需人工介入"}
         return {"outcome": "refunded", "next_action": "finished",
                 "reply": "退款已执行（模拟），工单已按已退款关闭",
-                "audit_event_ids": state.get("audit_event_ids", []) + gateway.collect_audit_events(tenant)}
+                "audit_event_ids": state.get("audit_event_ids", []) + gateway.collect_audit_events(
+                    tenant, state.get("thread_id"),
+                    (state.get("ticket_id"), state.get("operation_id")), state.get("audit_event_ids"))}
 
     def settle_rejected(state: AgentState) -> dict:
         tenant = state.get("tenant_id")
@@ -323,7 +327,9 @@ def build_nodes(gateway: AfterSalesGateway,
                     "next_action": "escalate", "reply": f"关单失败（{e.message}）"}
         return {"outcome": "rejected", "next_action": "finished",
                 "reply": "审批拒绝：未执行任何退款/副作用，工单已按拒绝关闭",
-                "audit_event_ids": state.get("audit_event_ids", []) + gateway.collect_audit_events(tenant)}
+                "audit_event_ids": state.get("audit_event_ids", []) + gateway.collect_audit_events(
+                    tenant, state.get("thread_id"),
+                    (state.get("ticket_id"), state.get("operation_id")), state.get("audit_event_ids"))}
 
     def escalate(state: AgentState) -> dict:
         code = state.get("error_code") or "NO_APPLICABLE_HANDLER"

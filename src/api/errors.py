@@ -18,6 +18,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from src.agents.runner import ThreadConflictError, ThreadLeaseError, UnknownThreadError
 from src.domain.after_sales import AfterSalesError
 from src.domain.after_sales.models import AfterSalesErrorCode
+from .sanitize import redact_text
 
 _NOT_FOUND = {
     AfterSalesErrorCode.TICKET_NOT_FOUND,
@@ -66,41 +67,41 @@ def register_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(AfterSalesError)
     async def domain_error_handler(request: Request, exc: AfterSalesError):
         return JSONResponse(status_code=_http_status(exc.code),
-                            content=_body(request, exc.code.value, exc.message))
+                            content=_body(request, exc.code.value, redact_text(exc.message)))
 
     @app.exception_handler(RequestValidationError)
     async def validation_handler(request: Request, exc: RequestValidationError):
         return JSONResponse(status_code=422,
                             content=_body(request, "VALIDATION_ERROR",
-                                          str(exc.errors()[:3])))
+                                          redact_text(str(exc.errors()[:3]))))
 
     # ---------- Agent 线程生命周期（稳定错误码，不落 500） ----------
 
     @app.exception_handler(ThreadConflictError)
     async def agent_thread_conflict_handler(request: Request, exc: ThreadConflictError):
         return JSONResponse(status_code=409,
-                            content=_body(request, "AGENT_THREAD_CONFLICT", str(exc)))
+                            content=_body(request, "AGENT_THREAD_CONFLICT", redact_text(str(exc))))
 
     @app.exception_handler(UnknownThreadError)
     async def agent_unknown_thread_handler(request: Request, exc: UnknownThreadError):
         return JSONResponse(status_code=404,
-                            content=_body(request, "AGENT_THREAD_NOT_FOUND", str(exc)))
+                            content=_body(request, "AGENT_THREAD_NOT_FOUND", redact_text(str(exc))))
 
     @app.exception_handler(ThreadLeaseError)
     async def agent_thread_lease_handler(request: Request, exc: ThreadLeaseError):
         return JSONResponse(status_code=409,
-                            content=_body(request, "AGENT_THREAD_LEASE_HELD", str(exc)))
+                            content=_body(request, "AGENT_THREAD_LEASE_HELD", redact_text(str(exc))))
 
     @app.exception_handler(AgentStateError)
     async def agent_state_error_handler(request: Request, exc: AgentStateError):
         return JSONResponse(status_code=exc.status_code,
-                            content=_body(request, exc.code, exc.message))
+                            content=_body(request, exc.code, redact_text(exc.message)))
 
     @app.exception_handler(StarletteHTTPException)
     async def http_handler(request: Request, exc: StarletteHTTPException):
         detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
         return JSONResponse(status_code=exc.status_code,
-                            content=_body(request, f"HTTP_{exc.status_code}", detail))
+                            content=_body(request, f"HTTP_{exc.status_code}", redact_text(detail)))
 
     @app.exception_handler(Exception)
     async def unhandled_handler(request: Request, exc: Exception):

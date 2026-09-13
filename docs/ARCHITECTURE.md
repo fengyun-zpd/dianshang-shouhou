@@ -64,11 +64,11 @@ runner 内部的 `simulate_external` 参数仅用于测试与合成演示（HTTP
 
 - 实例 A 中断 → 进程退出（不释放租约）→ 租约过期后实例 B 用同一 PG + 同一 fixed checkpoint
   接管，可按 `(tenant_id, thread_id)` 读 `state`、恢复 `decision` 并继续执行；
-- 同名线程在不同租户下互不冲突（checkpoint 键空间 `tenant:thread`）；
+- 同名线程在不同租户下互不冲突（checkpoint 键空间为带版本的长度编码 `v2|租户长度|租户|线程长度|线程`）；
 - 错误租户读取与"线程不存在"返回**同一个** 404 与同样结构的消息（不可区分、不含所属租户）；
 - 内存 profile 不声称持久恢复（进程内演示）。
 
-实测：`tests/integration/test_agent_restart_recovery_live.py`（3 项 PG live，含租约仍生效）。
+实测：`tests/integration/test_agent_restart_recovery_live.py`（3 项 PG live，含独立进程重启和租约仍生效）。
 
 ## 确定性保护边界（V1.2 新增）
 

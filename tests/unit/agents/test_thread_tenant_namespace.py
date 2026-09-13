@@ -1,7 +1,7 @@
 """工作流 checkpoint 的租户命名空间与线程作用域回归测试。
 
 线程唯一键 = (tenant_id, thread_id)：
-- 同名线程在不同租户下互不冲突（checkpoint 键空间 `tenant:thread`）；
+- 同名线程在不同租户下互不冲突（checkpoint 键空间为版本化长度编码）；
 - 错误租户与不存在的线程返回同一个 UnknownThreadError（通用 404，不泄露归属）。
 """
 import pytest
@@ -17,16 +17,55 @@ def test_same_thread_name_uses_distinct_tenant_checkpoint_namespace():
     checkpointer = MemorySaver()
     runner = WorkflowRunner(MemoryAdapter(svc), checkpointer=checkpointer)
     runner.start("T1", REQUEST_DAMAGED, thread_id="shared-thread")
-    assert runner._cfg("shared-thread", "T1")["configurable"]["thread_id"] == "T1:shared-thread"
+    t1_key = runner._cfg("shared-thread", "T1")["configurable"]["thread_id"]
+    assert t1_key.startswith("v2|")
 
     # 同名线程在 T2 下是**另一个线程**，不冲突（各自命名空间）
     t2 = runner.start("T2", "你好", thread_id="shared-thread")
     assert t2.state["tenant_id"] == "T2"
-    assert runner._cfg("shared-thread", "T2")["configurable"]["thread_id"] == "T2:shared-thread"
+    t2_key = runner._cfg("shared-thread", "T2")["configurable"]["thread_id"]
+    assert t2_key.startswith("v2|") and t1_key != t2_key
 
     other = WorkflowRunner(MemoryAdapter(svc), checkpointer=checkpointer)
     other.start("T2", "你好", thread_id="shared-thread")
-    assert other._cfg("shared-thread", "T2")["configurable"]["thread_id"] == "T2:shared-thread"
+    assert other._cfg("shared-thread", "T2")["configurable"]["thread_id"] == t2_key
+
+
+def test_colon_containing_pairs_cannot_collide_in_checkpoint_namespace():
+    svc, _ = make_runner()
+    checkpointer = MemorySaver()
+    runner = WorkflowRunner(MemoryAdapter(svc), checkpointer=checkpointer)
+    first = runner.start("T1:dept", "你好", thread_id="victim")
+    second = runner.start("T1", "你好", thread_id="dept:victim")
+
+    assert first.state["tenant_id"] == "T1:dept"
+    assert second.state["tenant_id"] == "T1"
+    assert runner._cfg("victim", "T1:dept") != runner._cfg("dept:victim", "T1")
+    assert runner.get_state("victim", tenant_id="T1:dept").state["tenant_id"] == "T1:dept"
+    assert runner.get_state("dept:victim", tenant_id="T1").state["tenant_id"] == "T1"
+
+
+def test_legacy_checkpoint_fallback_requires_exact_embedded_scope():
+    svc, _ = make_runner()
+    checkpointer = MemorySaver()
+    runner = WorkflowRunner(MemoryAdapter(svc), checkpointer=checkpointer)
+
+    # A valid old checkpoint remains readable only for its exact pair.
+    runner.graph.update_state(
+        {"configurable": {"thread_id": "T1:legacy-thread"}},
+        {"tenant_id": "T1", "thread_id": "legacy-thread", "next_action": "wait_approval"},
+        as_node="parse",
+    )
+    assert runner.get_state("legacy-thread", tenant_id="T1").state["tenant_id"] == "T1"
+
+    # A delimiter collision in the old namespace does not become a fallback leak.
+    runner.graph.update_state(
+        {"configurable": {"thread_id": "T1:dept:victim"}},
+        {"tenant_id": "T1:dept", "thread_id": "victim", "next_action": "wait_approval"},
+        as_node="parse",
+    )
+    with pytest.raises(UnknownThreadError):
+        runner.get_state("dept:victim", tenant_id="T1")
 
 
 def test_wrong_tenant_lookup_is_generic_unknown_thread():

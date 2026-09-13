@@ -1,7 +1,15 @@
 # OpsPilot
 
 > 企业售后工单处置 Agent 与可靠性评测项目。
-> 版本：V1.2 Release Candidate（2026-09-13）。
+> 版本：V1.2 整改验收基线（2026-09-13）。
+
+> **2026-09-13 整改验收：已完成。** 针对补充审查的 R1–R5 已完成实现、回归和文档同步：
+> checkpoint 使用无歧义版本化键，旧键仅在内嵌租户/线程精确匹配时兼容；HTTP 公共视图与错误响应
+> 做字段白名单和 PII 脱敏；审计按租户、线程和工单/操作实体隔离；外部已执行、对账成功/失败均按
+> 领域事实收口；重启验收由两个独立 Python 进程执行并按数据库时间等待租约到期。
+> 离线全量 **494 passed / 49 skipped**，隔离 PG 全量 **543 passed / 0 skipped**，边界脚本 R1–R4 全部 PASS。
+> 历史失败证据仍保留在[补充审查与复现](./docs/V1_2_REVIEW_2026-09-13.md)，执行步骤保留在
+> [下一步完整执行提示词](./docs/V1_2_NEXT_STEP_PROMPT.md)。
 
 ## 项目使命
 
@@ -69,7 +77,7 @@ V1 的 Agent 生命周期**只服务内部坐席**：同租户客户调用上述
 线程绑定的事实源是**租户限定的 `workflow_threads` 行 + 持久 checkpoint**，进程内字典只是
 便利缓存。因此实例 A 中断后进程退出、租约过期，实例 B 用同一 PostgreSQL 与同一 checkpoint
 即可按 `(tenant_id, thread_id)` 读 `state`、恢复 `decision` 并继续执行；同名线程在不同租户下
-互不冲突（checkpoint 键空间为 `tenant:thread`）。实测见
+互不冲突（checkpoint 键空间为 `v2|租户长度|租户|线程长度|线程` 的版本化长度编码）。实测见
 `tests/integration/test_agent_restart_recovery_live.py`（PG live，3 项）。内存 profile 不声称
 持久恢复。
 
@@ -117,7 +125,7 @@ Supervisor 只保留 A/B 实验结论：与单 Agent 无量化业务收益，因
 | 跨进程重启恢复（PG + 固定 checkpoint） | ✅ | ✅ 3 项 PG live | ✅ 隔离库实测 | — | — | — |
 | 死循环与工具去重保护（终态入 checkpoint） | ✅ | ✅ 16 项 | ✅ memory | — | — | — |
 | 确定性领域服务（金额/资格/状态/幂等/审计） | ✅ | ✅ | ✅ | — | — | — |
-| PostgreSQL profile（命令事务/审批事实/租约/API 装配/Agent 主链路） | ✅ | ✅ | ✅ 539 passed 全量（隔离库） | — | — | — |
+| PostgreSQL profile（命令事务/审批事实/租约/API 装配/Agent 主链路） | ✅ | ✅ | ✅ 543 passed 全量（隔离库） | — | — | — |
 | 确定性证据检索基线（本地 RAG） | ✅ | ✅ | ✅ `demo_rag_policy` | — | — | — |
 | LLM 成本记账（输入/输出双向 + N/A 语义） | ✅ | ✅ 21 项 | ✅ 离线路径 | 真实模型成本 | — | — |
 | 真实 LLM 候选模式（白名单/显式模型名/降级） | ✅ 实现完成 | ✅ | 离线验证 | ✅ **真实模型未实测**（无安全 Key，零网络请求） | ✅ | — |
@@ -135,12 +143,12 @@ Supervisor 只保留 A/B 实验结论：与单 Agent 无量化业务收益，因
 . .\scripts\init_d_env.ps1
 # 运行模式 A（离线，不设置 OPSPILOT_TEST_DATABASE_URL）：PG live 破坏性集成按纪律 skip
 .venv\Scripts\python.exe -m pytest tests -q
-# 490 passed, 49 skipped, 1 warning（本次实测，10.6 s）
+# 494 passed, 49 skipped, 1 warning（整改后实测，约 11 s）
 
 # 运行模式 B（隔离 PG）：空库迁移至 0005 后跑全量，PG live 全部实测
 $env:OPSPILOT_TEST_DATABASE_URL = 'postgresql+psycopg2://opspilot:opspilot@127.0.0.1:5433/opspilot_test_final_6003af47'
 .venv\Scripts\python.exe -m pytest tests -q
-# 539 passed, 0 skipped, 1 warning（本次实测，30.1 s）
+# 543 passed, 0 skipped, 1 warning（整改后实测，约 34 s；含独立进程重启恢复）
 
 # 隔离双跑脚本（自动创建两套带随机后缀的测试库）
 .\scripts\run_pg_tests_isolated.ps1

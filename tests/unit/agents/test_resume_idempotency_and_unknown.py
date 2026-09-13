@@ -88,6 +88,12 @@ def test_execute_timeout_enters_unknown_and_reconcile_by_original_operation():
     op2 = svc.get_operation(op_id)
     assert op2.status == OperationStatus.EXECUTED
     assert svc.refunded_amount("ORD-1") == Decimal("100.00")
+    settled = runner.resume("t-unknown", tenant_id="T1")
+    assert settled.finished and settled.outcome == "refunded"
+    assert svc.get_ticket(ticket_id).status == TicketStatus.CLOSED
+    actions = [e.action for e in svc.audit_log()]
+    assert actions.count("execute_timeout") == 1
+    assert actions.count("reconcile_success") == 1
 
     # 对账失败路径（终态）—— 用独立服务避免与上面共享退款上限
     svc2, runner2 = make_runner()
@@ -97,3 +103,22 @@ def test_execute_timeout_enters_unknown_and_reconcile_by_original_operation():
     runner2.reconcile_unknown(op3_id, "failed")
     assert svc2.get_operation(op3_id).status == OperationStatus.FAILED
     assert svc2.refunded_amount("ORD-1") == Decimal("0.00")  # 失败不累计
+    failed = runner2.resume("t-unknown2", tenant_id="T1")
+    assert failed.finished and failed.outcome == "failed"
+    assert failed.state["next_action"] == "finished"
+    assert svc2.get_ticket(r3.state["ticket_id"]).status == TicketStatus.OPEN
+
+
+def test_external_success_before_resume_is_reconciled_without_duplicate_execute():
+    svc, runner = make_runner()
+    pending = runner.start("T1", REQUEST_DAMAGED, thread_id="t-external-executed")
+    op_id = pending.state["operation_id"]
+    runner.submit_decision(op_id, "approved", tenant_id="T1")
+    svc_op = runner.gateway.execute("T1", op_id, external_result="success")
+    assert svc_op.status == OperationStatus.EXECUTED
+
+    recovered = runner.resume("t-external-executed", tenant_id="T1")
+    assert recovered.finished and recovered.outcome == "refunded"
+    assert svc.refunded_amount("ORD-1") == Decimal("100.00")
+    assert svc.get_ticket(pending.state["ticket_id"]).status == TicketStatus.CLOSED
+    assert [e.action for e in svc.audit_log()].count("execute") == 1

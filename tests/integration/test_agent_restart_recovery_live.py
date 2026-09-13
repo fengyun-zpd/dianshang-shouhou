@@ -13,8 +13,13 @@
 """
 from __future__ import annotations
 
+import json
+import os
+import subprocess
+import sys
 import time
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -33,6 +38,7 @@ REQUEST = "订单 ORD-1 商品破损，要求退款"
 H_AGENT = {"X-Api-Key": "demo-agent"}
 H_APPROVER = {"X-Api-Key": "demo-approver"}
 H_AGENT_T2 = {"X-Api-Key": "demo-agent-t2"}
+ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.fixture
@@ -78,51 +84,66 @@ def _close(built: dict) -> None:
     close_sqlite_checkpointer(built["checkpointer"])
 
 
+def _wait_for_lease_expired(thread_id: str, timeout_s: float = 8.0) -> None:
+    """Use PostgreSQL time as the clock instead of a fixed wall-clock sleep."""
+    engine = create_engine(TEST_DB_URL)
+    deadline = time.monotonic() + timeout_s
+    try:
+        while time.monotonic() < deadline:
+            with engine.connect() as conn:
+                expired = conn.execute(text(
+                    "SELECT lease_until IS NULL OR lease_until <= now()"
+                    " FROM workflow_threads WHERE tenant_id='T1' AND thread_id=:th"
+                ), {"th": thread_id}).scalar()
+            if expired:
+                return
+            time.sleep(0.05)
+    finally:
+        engine.dispose()
+    raise AssertionError(f"workflow_threads lease did not expire within {timeout_s}s")
+
+
+def _worker(mode: str, checkpoint: Path, owner: str, thread_id: str,
+            lease_duration_s: int = 60) -> dict:
+    cmd = [
+        sys.executable, str(ROOT / "scripts" / "agent_restart_worker.py"),
+        "--mode", mode, "--url", TEST_DB_URL, "--checkpoint", str(checkpoint),
+        "--owner", owner, "--thread", thread_id,
+        "--lease-duration", str(lease_duration_s),
+    ]
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "utf-8"
+    completed = subprocess.run(cmd, cwd=str(ROOT), env=env,
+                               capture_output=True, text=True,
+                               encoding="utf-8", errors="replace", check=False)
+    assert completed.returncode == 0, (
+        f"worker {mode} failed: stdout={completed.stdout!r} stderr={completed.stderr!r}"
+    )
+    lines = [line for line in completed.stdout.splitlines() if line.strip()]
+    assert lines, f"worker {mode} produced no JSON output"
+    return json.loads(lines[-1])
+
+
 def test_restart_recovers_thread_and_continues(fresh_db, tmp_path):
-    """实例 A 中断 → 关闭 → 实例 B 用同一 PG + checkpoint 读 state 并继续执行。"""
+    """独立进程 A 中断 → 退出 → 独立进程 B 接管并继续执行。"""
     _seed_orders()
     ckpt = tmp_path / "agent.sqlite"
 
-    # ---- 实例 A：启动并停在审批中断（租约 1s，便于模拟崩溃后过期接管）----
-    a = _instance(ckpt, "owner-A", lease_duration_s=1)
-    try:
-        with TestClient(a["app"]) as client_a:
-            started = client_a.post("/api/v1/agent/start", json={
-                "message": REQUEST, "thread_id": "restart-thread", "order_id_hint": "ORD-1",
-            }, headers=H_AGENT)
-            assert started.status_code == 200, started.text
-            body = started.json()
-            assert body["waiting_approval"] is True
-            op_id = body["operation_id"]
-            assert _executed_amount("T1") == Decimal("0.00")
-    finally:
-        _close(a)          # 进程退出：不释放租约（模拟崩溃/强退）
+    started = _worker("start", ckpt, "owner-A", "restart-thread", lease_duration_s=1)
+    assert started["status_code"] == 200, started
+    assert started["body"]["waiting_approval"] is True
+    assert started["body"]["state"]["tenant_id"] == "T1"
+    assert _executed_amount("T1") == Decimal("0.00")
 
-    time.sleep(1.2)        # 等待 A 的 1s 租约过期（允许新 owner 接管）
-
-    # ---- 实例 B：完全新进程（新 checkpointer + 新 runner，无任何内存绑定）----
-    b = _instance(ckpt, "owner-B")
-    try:
-        with TestClient(b["app"]) as client_b:
-            # 1) state 可读：绑定来自 workflow_threads，不是内存字典
-            view = client_b.get("/api/v1/agent/restart-thread/state", headers=H_AGENT)
-            assert view.status_code == 200, view.text
-            assert view.json()["waiting_approval"] is True
-            assert view.json()["operation_id"] == op_id
-            assert view.json()["state"]["tenant_id"] == "T1"
-
-            # 2) 审批人写入领域事实后，B 触发 decision → 重读事实 → 执行
-            version = b["backend"].get_operation("T1", op_id).version
-            ap = client_b.post(f"/api/operations/{op_id}/approve",
-                               json={"expected_version": version}, headers=H_APPROVER)
-            assert ap.status_code == 200, ap.text
-            decided = client_b.post("/api/v1/agent/restart-thread/decision", json={},
-                                    headers=H_APPROVER)
-            assert decided.status_code == 200, decided.text
-            assert decided.json()["outcome"] == "refunded"
-            assert _executed_amount("T1") == Decimal("100.00")
-    finally:
-        _close(b)
+    # Worker A exits without releasing its lease, then B waits on DB time.
+    _wait_for_lease_expired("restart-thread")
+    finished = _worker("finish", ckpt, "owner-B", "restart-thread")
+    assert finished["state_status"] == 200
+    assert finished["state"]["waiting_approval"] is True
+    assert finished["approve_status"] == 200, finished
+    assert finished["decision_status"] == 200, finished
+    assert finished["decision"]["outcome"] == "refunded"
+    assert _executed_amount("T1") == Decimal("100.00")
 
 
 def test_wrong_tenant_cannot_read_recovered_thread(fresh_db, tmp_path):

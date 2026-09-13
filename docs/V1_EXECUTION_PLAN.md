@@ -1,5 +1,8 @@
 # V1 执行方案
 
+> 本文及下方提示词仅作历史留档。当前执行请使用
+> [V1.2 完整修复与验收提示词](./V1_2_NEXT_STEP_PROMPT.md)，不要执行旧的模型模块删除建议。
+
 ## 最终目标
 
 用一条破损退款闭环证明：Agent 组织只读证据和流程恢复，但没有权限决定金额、审批或副作用；确定性领域服务与 PostgreSQL 保证事实、安全和审计。
@@ -11,8 +14,8 @@
 > 其中的状态判断与测试数字**不是当前事实**。当前事实请以 `README.md`、`docs/ARCHITECTURE.md`、
 > `docs/STATUS_AND_RISKS.md`、`docs/TESTING_BASELINE.md`、`docs/INTERVIEW_OVERVIEW.md` 为准。
 > 已被取代的两点：① FastAPI 工厂**已接入** `WorkflowRunner`（`create_app(agent_runner=...)`，
-> `/api/v1/agent/*` 四个接口，仅内部坐席）；② 本文中的测试数字（399/44、443/0 等）属历史轮次，
-> 当前基线为离线 490 passed / 49 skipped、隔离 PG 539 passed / 0 skipped。
+> `/api/v1/agent/*` 四个接口，仅内部坐席）；② 本文中的测试数字（399/44、443/0、490/49、539/0 等）属历史轮次，
+> 当前整改验收基线为离线 494 passed / 49 skipped、隔离 PG 543 passed / 0 skipped。
 
 审批恢复、unknown 原操作对账、领域 API、黄金集和五场景演示。Agent 运行器在本文写作时由脚本/回放
 驱动、FastAPI 工厂尚未接入它（**该状态已在 V1.2 收口轮改变**）。`SupervisorRunner` 只作为

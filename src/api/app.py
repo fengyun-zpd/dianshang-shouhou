@@ -55,6 +55,7 @@ from .schemas import (
     TicketOut,
 )
 from .agent_lab import retrieve_policy, run_boundary_scenario, run_trace
+from .sanitize import redact_value
 
 router = APIRouter(prefix="/api", tags=["after-sales"])
 UI_DIR = Path(__file__).resolve().parent / "ui"
@@ -312,19 +313,30 @@ def _agent_runner(request: Request):
 
 def _agent_view(result) -> dict:
     """统一结果结构（start / clarify / decision / state 共用）。"""
-    state = dict(result.state or {})
+    raw_state = dict(result.state or {})
+    # Checkpoints contain internal request text, simulation controls and
+    # fingerprint metadata. The HTTP contract exposes only workflow fields.
+    public_fields = {
+        "tenant_id", "thread_id", "ticket_id", "intent", "missing_fields",
+        "evidence_refs", "action_draft", "risk_level", "approval_id",
+        "operation_id", "next_action", "error_code", "audit_event_ids",
+        "order_id", "reason_tags", "order_summary", "questions", "outcome",
+        "reply", "approval_summary", "step_count", "decision_still_pending",
+    }
+    state = redact_value({key: value for key, value in raw_state.items()
+                          if key in public_fields})
     return {
         "thread_id": result.thread_id,
         "finished": result.finished,
         "waiting_approval": result.waiting_approval,
         "waiting_clarify": result.waiting_clarify,
-        "interrupt": result.interrupt_value,
+        "interrupt": redact_value(result.interrupt_value),
         "next_action": state.get("next_action"),
         "operation_id": state.get("operation_id"),
         "ticket_id": state.get("ticket_id"),
         "outcome": result.outcome,
         "error_code": result.error_code,
-        "reply": result.reply,
+        "reply": redact_value(result.reply),
         "evidence_refs": list(state.get("evidence_refs") or []),
         "audit_event_ids": list(result.audit_event_ids or []),
         "step_count": int(state.get("step_count") or 0),
@@ -385,10 +397,14 @@ def agent_decision(thread_id: str, request: Request,
     _require_role(identity, (Role.APPROVER, Role.SYSTEM))
     runner = _agent_runner(request)
     current = runner.get_state(thread_id, tenant_id=identity.tenant_id)
-    if not current.waiting_approval:
+    resumable_settlement = bool(
+        current.state and current.state.get("next_action") in {"reconcile_required", "finished"}
+        and current.state.get("operation_id")
+    )
+    if not current.waiting_approval and not resumable_settlement:
         raise AgentStateError(
             409, "AGENT_NOT_WAITING_APPROVAL",
-            f"线程 {thread_id} 当前不在审批等待状态（finished={current.finished}）；"
+            f"线程 {thread_id} 当前不在审批或既有结果收尾状态（finished={current.finished}）；"
             "审批结果请先通过领域审批接口写入事实源")
     # 只传占位恢复值：审批结论一律由 apply_decision 从领域事实源重读
     result = runner.resume(thread_id, payload="_continue_", tenant_id=identity.tenant_id)

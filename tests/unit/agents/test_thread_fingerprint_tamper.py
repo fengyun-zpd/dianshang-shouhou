@@ -18,7 +18,7 @@ def test_forged_fingerprint_in_checkpoint_rejected_on_resume_start():
 
     # 攻击者篡改 checkpoint 中的请求指纹（update_state 直达 checkpoint）
     runner.graph.update_state(
-        {"configurable": {"thread_id": "T1:fp-1"}},
+        runner._cfg("fp-1", "T1"),
         {"thread_request_fingerprint": {"tenant_id": "T1", "request_hash": "forged"}},
     )
     with pytest.raises(ThreadConflictError):
@@ -32,7 +32,7 @@ def test_forged_fingerprint_rejected_even_different_request_text():
     r = runner.start("T1", REQUEST_DAMAGED, thread_id="fp-2")
     assert r.waiting_approval
     runner.graph.update_state(
-        {"configurable": {"thread_id": "T1:fp-2"}},
+        runner._cfg("fp-2", "T1"),
         {"thread_request_fingerprint": {"tenant_id": "T1", "request_hash": "evil"}},
     )
     with pytest.raises(ThreadConflictError):

@@ -9,7 +9,8 @@
   网关不暴露 approver 写通道给 Agent → Agent 无法伪造审批
   （submit_approver_decision 仅供授权人员/上层运行器调用）；
 - 只读查询：订单、历史工单（租户内）、物流（当前未接入 → 显式不可用）；
-- collect_audit_events() 返回自上次水位以来的领域审计事件 id（用于 audit_event_ids）。
+- collect_audit_events() 按租户、线程和当前 ticket/operation 实体返回稳定且去重的领域审计事件 id
+  （用于 audit_event_ids）；进程内集合只是视图去重缓存，不是审计事实源。
 
 工具去重（可选 ledger）：受控写工具按 (工具名, 租户, thread_id, 参数摘要) 去重，
 重复调用复用首次结果；`get_operation` 等事实重读工具**永不缓存**。账本只是第二道防线，
@@ -47,7 +48,9 @@ class AfterSalesGateway:
     def __init__(self, port: AfterSalesApplicationPort,
                  ledger: Optional[ToolCallLedger] = None):
         self._port = port
-        self._audit_watermark = 0  # 已收集到的领域审计事件条数（水位，按租户过滤视图）
+        # Cursor state is a view cache only. The domain audit log remains the
+        # source of truth; each workflow thread sees only its own ticket/op.
+        self._audit_seen: dict[tuple[str, str], set[str]] = {}
         self._ledger = ledger
 
     # ---------- 工具去重（第二道防线；领域幂等键仍是最终兜底） ----------
@@ -194,17 +197,31 @@ class AfterSalesGateway:
 
     # ---------- 审计水位 ----------
 
-    def collect_audit_events(self, tenant_id: str) -> list[str]:
-        """返回自上次水位以来的领域审计事件 id（幂等：重复调用不重复计数）。
+    def collect_audit_events(self, tenant_id: str, thread_id: Optional[str] = None,
+                             entity_ids: Optional[tuple[str, ...] | list[str]] = None,
+                             already_seen: Optional[list[str]] = None) -> list[str]:
+        """Collect stable, thread-scoped IDs from the domain audit source.
 
-        水位作用于租户过滤视图（port.audit_log(tenant_id)）：他租户新增事件不进本
-        租户视图，不影响本租户水位推进。V1 单租户/单流程演示与既有语义等价。
+        The workflow passes its ticket and operation IDs. A tenant-level cursor
+        alone would still mix two same-tenant threads or drop events created by
+        another tenant between calls, so filtering is done against domain event
+        entities before the per-thread de-dup cache is updated.
         """
-        log = self._port.audit_log(tenant_id)
-        fresh = log[self._audit_watermark:]
-        ids = [
-            f"audit-{self._audit_watermark + i}:{e.action}:{e.entity_id}"
-            for i, e in enumerate(fresh)
-        ]
-        self._audit_watermark = len(log)
+        if thread_id is None:
+            ctx = current_tool_context()
+            thread_id = ctx.thread_id if ctx is not None else "__legacy__"
+        key = (tenant_id, thread_id)
+        seen = self._audit_seen.setdefault(key, set())
+        if already_seen:
+            seen.update(already_seen)
+        allowed = set(entity_ids or ())
+        ids: list[str] = []
+        for index, event in enumerate(self._port.audit_log(tenant_id)):
+            if allowed and event.entity_id not in allowed:
+                continue
+            event_id = f"audit-{index}:{event.action}:{event.entity_id}"
+            if event_id in seen:
+                continue
+            seen.add(event_id)
+            ids.append(event_id)
         return ids

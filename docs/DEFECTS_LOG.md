@@ -18,3 +18,15 @@
 
 验证规则：全量回归、黄金集和演示分别记录在 `TESTING_BASELINE.md` 与运行输出中。PostgreSQL
 不可用时，必须将 PG 相关验证标记为未验证，不能用内存结果替代。
+
+## V1.2 补充审查闭环（2026-09-13）
+
+| 编号 | 缺陷 | 整改结论 | 回归证据 |
+| --- | --- | --- | --- |
+| R1 | checkpoint 分隔符碰撞 | 已修复：v2 长度编码，旧键精确匹配，歧义拒绝 | `test_thread_tenant_namespace.py` |
+| R2 | HTTP 流程视图泄露 PII | 已修复：公共字段白名单和递归脱敏，错误响应同样处理 | `test_agent_http_lifecycle.py` |
+| R3 | 审计跨线程/租户遗漏或混入 | 已修复：按线程实体过滤并稳定去重 | Agent 审计回归、`review_v12_boundaries.py` |
+| R4 | unknown/已执行缺少恢复收尾 | 已修复：原操作恢复、领域事实收口、只允许合法关单 | `test_resume_idempotency_and_unknown.py` |
+| R5 | 重启测试租约偶发 409 | 已修复测试证据：独立子进程 + DB 时间等待租约过期 | `test_agent_restart_recovery_live.py` |
+
+本轮闭环的完整历史复现和实测数字见 [V1.2 补充审查](./V1_2_REVIEW_2026-09-13.md)。

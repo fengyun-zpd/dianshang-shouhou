@@ -79,7 +79,7 @@ EXECUTED / FAILED / UNKNOWN / PENDING` 分支；`PENDING` 时忽略本次恢复�
 ## 3. 安全不变量报告（实测 0 违例）
 
 > 当前依据：D 盘环境中的全量 `pytest tests/` 基线见 `TESTING_BASELINE.md`（本轮隔离 PG：
-> 539 passed / 0 skipped；离线：490 passed / 49 skipped）。历史 PG 黄金集报告
+> 当前验收基线：PG 543 passed / 0 skipped；离线 494 passed / 49 skipped。更早的数字和历史 PG 黄金集报告
 > `evals/reports/golden_v1_report.md` 只作为已有证据；面试前必须按当前提交重新运行。
 
 | 不变量 | 要求 | 实测 | 验证位置 |
