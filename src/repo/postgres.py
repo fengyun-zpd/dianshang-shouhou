@@ -250,10 +250,10 @@ class PostgresAfterSalesRepository(AfterSalesRepository):
     def insert_audit(self, row: AuditRow) -> None:
         with self._tx() as conn:
             conn.execute(text(
-                "INSERT INTO audit_events (tenant_id, action, entity_type, entity_id, actor, "
+                "INSERT INTO audit_events (tenant_id, event_id, action, entity_type, entity_id, actor, "
                 "before_state, after_state, idempotency_key, note) VALUES "
-                "(:t,:a,:et,:eid,:actor,:b,:af,:ik,:note)"
-            ), {"t": row.tenant_id, "a": row.action, "et": row.entity_type,
+                "(:t,:event_id,:a,:et,:eid,:actor,:b,:af,:ik,:note)"
+            ), {"t": row.tenant_id, "event_id": row.event_id or None, "a": row.action, "et": row.entity_type,
                 "eid": row.entity_id, "actor": row.actor, "b": row.before_state,
                 "af": row.after_state, "ik": row.idempotency_key, "note": row.note})
 
@@ -261,10 +261,10 @@ class PostgresAfterSalesRepository(AfterSalesRepository):
         with self._tx() as conn:
             rows = conn.execute(text(
                 "SELECT tenant_id, action, entity_type, entity_id, actor, before_state, "
-                "after_state, idempotency_key, note FROM audit_events "
+                "after_state, idempotency_key, note, COALESCE(event_id, 'audit-' || id::text) FROM audit_events "
                 "WHERE tenant_id=:t AND entity_type=:et AND entity_id=:eid ORDER BY id"
             ), {"t": tenant_id, "et": entity_type, "eid": entity_id}).fetchall()
-            return [AuditRow(r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[8]) for r in rows]
+            return [AuditRow(r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[8], r[9]) for r in rows]
 
     # ---------- idempotency_records ----------
     def insert_idem(self, row: IdemRow) -> None:
@@ -319,9 +319,9 @@ class PostgresAfterSalesRepository(AfterSalesRepository):
         with self._tx() as conn:
             rows = conn.execute(text(
                 "SELECT tenant_id, action, entity_type, entity_id, actor, before_state, "
-                "after_state, idempotency_key, note FROM audit_events ORDER BY id"
+                "after_state, idempotency_key, note, COALESCE(event_id, 'audit-' || id::text) FROM audit_events ORDER BY id"
             )).fetchall()
-            return [AuditRow(r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[8]) for r in rows]
+            return [AuditRow(r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[8], r[9]) for r in rows]
 
     def list_idem(self) -> list[IdemRow]:
         with self._tx() as conn:

@@ -20,8 +20,22 @@ def _pg_available() -> bool:
     return probe_postgres(DATABASE_URL)
 
 
-pg_live = pytest.mark.skipif(not _pg_available(),
-                             reason="PostgreSQL 不可达：数据库集成未实测")
+def _pg_schema_version() -> str | None:
+    if not _pg_available():
+        return None
+    from sqlalchemy import create_engine, text
+    try:
+        engine = create_engine(DATABASE_URL)
+        with engine.connect() as conn:
+            version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
+        engine.dispose()
+        return version
+    except Exception:  # noqa: BLE001 - unavailable shared DB should be skipped
+        return None
+
+
+pg_live = pytest.mark.skipif(_pg_schema_version() != "0006",
+                             reason="PostgreSQL 不可达或 schema≠0006：数据库集成未实测")
 
 
 def test_runtime_profile_values():
@@ -31,7 +45,7 @@ def test_runtime_profile_values():
 
 @pg_live
 def test_require_postgres_ready_ok_when_reachable_and_version_ok():
-    """可达且 schema=0005 → 返回 url（pg profile 可装配）。"""
+    """可达且 schema=0006 → 返回 url（pg profile 可装配）。"""
     assert require_postgres_ready(DATABASE_URL) == DATABASE_URL
 
 

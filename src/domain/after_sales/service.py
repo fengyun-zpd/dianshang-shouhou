@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import threading
 from decimal import Decimal
+from uuid import uuid4
 from typing import Optional, Tuple
 
 from ..idempotency import (
@@ -586,4 +587,5 @@ class AfterSalesService:
             after=after.value if after is not None else None,
             idempotency_key=idem_key,
             note=note,
+            event_id=f"evt-{uuid4().hex}",
         ))

@@ -130,4 +130,4 @@ def operation_from_row(r: OperationRow) -> Operation:
 def audit_from_row(r: AuditRow) -> AuditEvent:
     return AuditEvent(action=r.action, entity_type=r.entity_type, entity_id=r.entity_id,
                       actor=Role(r.actor), before=r.before_state, after=r.after_state,
-                      idempotency_key=r.idempotency_key, note=r.note)
+                      idempotency_key=r.idempotency_key, note=r.note, event_id=r.event_id)

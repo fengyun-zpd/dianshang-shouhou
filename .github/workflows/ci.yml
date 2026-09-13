@@ -52,3 +52,12 @@ jobs:
           OPSPILOT_TEST_DATABASE_URL: postgresql+psycopg2://opspilot:opspilot@127.0.0.1:5433/opspilot_test_ci
         run: |
           python scripts/run_tests.py
+      - name: Static and boundary checks
+        env:
+          DATABASE_URL: postgresql+psycopg2://opspilot:opspilot@127.0.0.1:5433/opspilot_test_ci
+          OPSPILOT_TEST_DATABASE_URL: postgresql+psycopg2://opspilot:opspilot@127.0.0.1:5433/opspilot_test_ci
+        run: |
+          python -m compileall -q src scripts alembic
+          python scripts/review_v12_boundaries.py
+          python scripts/review_v12_boundaries.py --pg
+          git diff --check

@@ -8,7 +8,7 @@ profile 语义与边界：
 - --profile memory（默认）：内存 AfterSalesService + MemorySaver checkpoint + 模拟外部执行；
   输出/数字即项目既有基线（golden_v1 11/11、golden_v2 120/120），本文件 pg 分支不得改动它。
 - --profile pg：真实 PG 事实源回放。装配链（失败 → RuntimeError/退出码非 0，绝不回退 memory）：
-  require_postgres_ready(url)（不可达 / schema≠0005 → RuntimeError）→ 每用例重建
+  require_postgres_ready(url)（不可达 / schema≠0006 → RuntimeError）→ 每用例重建
   全部业务表（src/repo/schema.sql；含 workflow_threads/entity_seq）→
   PostgresAfterSalesRepository → PgCommandService → PgCommandAdapter（完整
   AfterSalesApplicationPort）→ open_sqlite_checkpointer(--checkpoint 或 mkstemp 临时唯一文件）
@@ -114,14 +114,14 @@ PG_PROFILE_LEASE_S = 60
 
 
 def _pg_run_mode_text(url: str) -> str:
-    """pg profile 报告 run_mode 文本：从连接串解析主机/库，schema=0005 由门禁保证。"""
+    """pg profile 报告 run_mode 文本：从连接串解析主机/库，schema=0006 由门禁保证。"""
     try:
         from sqlalchemy.engine import make_url
         u = make_url(url)
         loc = f"{u.host or 'localhost'}:{u.port or 5432}/{u.database}"
     except Exception:  # noqa: BLE001  解析失败不阻断报告，退化为原样连接串
         loc = url
-    return (f"本地 PostgreSQL 仓储（{loc}，schema=0005）+ SQLite checkpoint + "
+    return (f"本地 PostgreSQL 仓储（{loc}，schema=0006）+ SQLite checkpoint + "
             "WorkflowRunner 强制 DB 租约 + 模拟外部执行")
 
 
@@ -164,7 +164,7 @@ class PgReplayProfile:
         # 先做纯 URL 守卫，再允许任何连通性/版本探测，避免共享库在 guard 前被访问。
         from src.platform.pg_test_guard import require_isolated_test_db  # noqa: PLC0415
         require_isolated_test_db(url)
-        require_postgres_ready(url)      # 不可达 / schema≠0005 → RuntimeError（no fallback）
+        require_postgres_ready(url)      # 不可达 / schema≠0006 → RuntimeError（no fallback）
         self.url = url
         self.run_mode = _pg_run_mode_text(url)
         self._schema = (ROOT / "src" / "repo" / "schema.sql").read_text(encoding="utf-8")

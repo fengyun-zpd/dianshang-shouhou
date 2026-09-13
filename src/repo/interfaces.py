@@ -88,6 +88,7 @@ class AuditRow:
     after_state: Optional[str]
     idempotency_key: Optional[str] = None
     note: Optional[str] = None
+    event_id: Optional[str] = None
 
 
 @dataclass(frozen=True)

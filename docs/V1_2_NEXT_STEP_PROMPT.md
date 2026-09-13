@@ -175,4 +175,4 @@ PG 不可用就列出未验证项，不用 memory 代替。全量仍失败时保
 - R4：原 operation 的 unknown 对账、已执行恢复和失败收尾；
 - R5：独立子进程重启验收，并以 PostgreSQL 时间判断租约过期。
 
-执行结果：离线 `494 passed / 49 skipped`；隔离 PG `543 passed / 0 skipped`；边界脚本 R1–R4 全部 PASS；隔离双跑两套库各 `25 passed`。真实模型、微调、性能、多实例部署和生产外部系统仍保持未实测/未实现口径。
+执行结果：离线 `502 passed / 55 skipped`；隔离 PG `557 passed / 0 skipped`；边界脚本 R1–R4 全部 PASS；隔离双跑两套库各 `25 passed`。真实模型、微调、性能、多实例部署和生产外部系统仍保持未实测/未实现口径。

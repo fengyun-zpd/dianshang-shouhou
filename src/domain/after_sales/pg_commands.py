@@ -14,6 +14,7 @@ execute / reconcile / close_ticket——单事务落库（业务行+幂等三元
 from __future__ import annotations
 
 import json
+from uuid import uuid4
 from dataclasses import replace
 from decimal import Decimal
 from typing import Optional
@@ -81,7 +82,8 @@ class PgCommandService:
         self._repo.insert_audit(AuditRow(
             tenant_id, action, entity_type, entity_id, actor.value,
             before.value if before is not None else None,
-            after.value if after is not None else None, idem_key, note))
+            after.value if after is not None else None, idem_key, note,
+            f"evt-{uuid4().hex}"))
 
     @staticmethod
     def _json_tags(tags) -> str:

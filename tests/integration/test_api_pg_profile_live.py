@@ -1,7 +1,7 @@
 """PG profile API 端到端（阶段四第 3 节验收）：真实 HTTP 路径使用 PgCommandAdapter
 （完整 AfterSalesApplicationPort：PgCommandService 命令 + Repository 行事实）。
 
-前置：隔离测试库 OPSPILOT_TEST_DATABASE_URL（opspilot_test_*，schema=0005）；
+前置：隔离测试库 OPSPILOT_TEST_DATABASE_URL（opspilot_test_*，schema=0006）；
 不可达/版本不符整模块 skip（绝不回退 DATABASE_URL 指向的共享 opspilot 主库）。
 覆盖端点：POST /api/tickets → refund-drafts → submit → approve → execute；
 SQL 断言 refund_operations 状态/版本、approval_decisions 事实行、审计。
@@ -25,7 +25,7 @@ TEST_DB_URL = live_test_db_url()
 
 
 def _ready() -> bool:
-    """隔离测试库就绪：可达且 alembic schema=0005（保留原 require_postgres_ready 门禁语义）。"""
+    """隔离测试库就绪：可达且 alembic schema=0006（保留原 require_postgres_ready 门禁语义）。"""
     if TEST_DB_URL is None or not pg_reachable(TEST_DB_URL):
         return False
     try:
@@ -37,7 +37,7 @@ def _ready() -> bool:
 
 pytestmark = pytest.mark.skipif(
     not _ready(),
-    reason="OPSPILOT_TEST_DATABASE_URL 未设置/不可达/schema≠0005："
+    reason="OPSPILOT_TEST_DATABASE_URL 未设置/不可达/schema≠0006："
            "未使用隔离测试库，跳过破坏性集成（PG 集成未实测）")
 
 

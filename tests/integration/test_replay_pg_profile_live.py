@@ -1,6 +1,6 @@
 """阶段 C1 冒烟：replay PG profile（evals/replay.py）装配链 + golden_v1 在 PG 真实跑通。
 
-前置：隔离测试库 OPSPILOT_TEST_DATABASE_URL（opspilot_test_*，schema=0005）；
+前置：隔离测试库 OPSPILOT_TEST_DATABASE_URL（opspilot_test_*，schema=0006）；
 不可达/版本不符整模块 skip（绝不回退 DATABASE_URL 指向的共享 opspilot 主库）。
 覆盖（真实行为，非字符串级）：
 - PgReplayProfile 装配：require_postgres_ready 门禁、每用例经 guard 重建 schema
@@ -31,7 +31,7 @@ TEST_DB_URL = live_test_db_url()
 
 
 def _ready() -> bool:
-    """隔离测试库就绪：可达且 alembic schema=0005（保留原 require_postgres_ready 门禁语义）。"""
+    """隔离测试库就绪：可达且 alembic schema=0006（保留原 require_postgres_ready 门禁语义）。"""
     if TEST_DB_URL is None or not pg_reachable(TEST_DB_URL):
         return False
     try:
@@ -43,7 +43,7 @@ def _ready() -> bool:
 
 pytestmark = pytest.mark.skipif(
     not _ready(),
-    reason="OPSPILOT_TEST_DATABASE_URL 未设置/不可达/schema≠0005："
+    reason="OPSPILOT_TEST_DATABASE_URL 未设置/不可达/schema≠0006："
            "PG profile 回放未实测（未使用隔离测试库）")
 
 

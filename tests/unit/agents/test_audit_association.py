@@ -167,10 +167,11 @@ def test_audit_ids_come_from_domain_facts_not_process_state():
 
     owned = {started.state["ticket_id"], started.state["operation_id"]}
     log = svc.audit_log("T1")
-    expected = {f"audit-{index}:{event.action}:{event.entity_id}"
+    expected = {f"{event.event_id or f'audit-{index}'}:{event.action}:{event.entity_id}"
                 for index, event in enumerate(log) if event.entity_id in owned}
 
     assert set(started.audit_event_ids) == expected, "编号必须可由领域审计事实重建"
     assert _entities(started.audit_event_ids) <= {e.entity_id for e in log}
     # 他线程/他实体的事件不在其中
     assert all(item.rsplit(":", 1)[-1] in owned for item in started.audit_event_ids)
+    assert all(event.event_id for event in log if event.entity_id in owned)

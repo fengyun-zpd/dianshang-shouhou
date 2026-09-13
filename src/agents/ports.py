@@ -219,7 +219,8 @@ class AfterSalesGateway:
         for index, event in enumerate(self._port.audit_log(tenant_id)):
             if allowed and event.entity_id not in allowed:
                 continue
-            event_id = f"audit-{index}:{event.action}:{event.entity_id}"
+            stable_id = getattr(event, "event_id", None) or f"audit-{index}"
+            event_id = f"{stable_id}:{event.action}:{event.entity_id}"
             if event_id in seen:
                 continue
             seen.add(event_id)

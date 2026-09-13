@@ -195,3 +195,114 @@ def test_pg_profile_agent_rejects_forged_decision_body(fresh_db, tmp_path):
             assert started["operation_id"]
     finally:
         _close_cp(built)
+
+
+def test_pg_profile_public_agent_view_redacts_pii(fresh_db, tmp_path):
+    """PG profile：公共 Agent 视图和 422 错误均不回显联系方式。"""
+    from src.api import create_app
+    from scripts.run_api import build_pg_backend, demo_token_registry
+
+    _seed_pg_order()
+    built = build_pg_backend(TEST_DB_URL, checkpoint_path=str(tmp_path / "ck-pii.sqlite"),
+                             owner_id="live-test-pii")
+    phone = "13800138000"
+    email = "synthetic@example.test"
+    try:
+        app = create_app(built["backend"], demo_token_registry(), pg_probe=built["probe"],
+                         require_expected_version=True, agent_runner=built["runner"])
+        with TestClient(app) as client:
+            started = client.post("/api/v1/agent/start", json={
+                "message": f"订单 ORD-1 商品破损，电话 {phone}，邮箱 {email}",
+                "thread_id": "pg-pii-thread", "order_id_hint": "ORD-1",
+            }, headers={"X-Api-Key": "demo-agent"})
+            assert started.status_code == 200, started.text
+            state = client.get("/api/v1/agent/pg-pii-thread/state",
+                               headers={"X-Api-Key": "demo-approver"})
+            assert state.status_code == 200
+            assert phone not in started.text and email not in started.text
+            assert phone not in state.text and email not in state.text
+
+            invalid = client.post("/api/v1/agent/start", json={
+                "message": "订单 ORD-1 商品破损", "thread_id": "pg-pii-invalid",
+                "phone": phone,
+            }, headers={"X-Api-Key": "demo-agent"})
+            assert invalid.status_code == 422
+            assert phone not in invalid.text
+    finally:
+        _close_cp(built)
+
+
+def test_pg_profile_audit_ids_stay_with_same_tenant_thread(fresh_db, tmp_path):
+    """PG profile：同租户两个线程交错审批时，审计编号不串线程。"""
+    from src.api import create_app
+    from scripts.run_api import build_pg_backend, demo_token_registry
+
+    _seed_pg_order()
+    built = build_pg_backend(TEST_DB_URL, checkpoint_path=str(tmp_path / "ck-audit.sqlite"),
+                             owner_id="live-test-audit")
+    try:
+        app = create_app(built["backend"], demo_token_registry(), pg_probe=built["probe"],
+                         require_expected_version=True, agent_runner=built["runner"])
+        with TestClient(app) as client:
+            a = client.post("/api/v1/agent/start", json={
+                "message": "订单 ORD-1 商品破损，要求退款", "thread_id": "pg-audit-a",
+                "order_id_hint": "ORD-1"}, headers={"X-Api-Key": "demo-agent"}).json()
+            b = client.post("/api/v1/agent/start", json={
+                "message": "订单 ORD-1 商品破损，要求退款", "thread_id": "pg-audit-b",
+                "order_id_hint": "ORD-1"}, headers={"X-Api-Key": "demo-agent"}).json()
+            for item in (a, b):
+                operation = built["backend"].get_operation("T1", item["operation_id"])
+                approved = client.post(
+                    f"/api/operations/{item['operation_id']}/approve",
+                    json={"expected_version": operation.version},
+                    headers={"X-Api-Key": "demo-approver"},
+                )
+                assert approved.status_code == 200, approved.text
+            done = client.post("/api/v1/agent/pg-audit-a/decision", json={},
+                               headers={"X-Api-Key": "demo-approver"})
+            assert done.status_code == 200, done.text
+            ids = done.json()["audit_event_ids"]
+            assert any(a["operation_id"] in event for event in ids)
+            assert not any(b["operation_id"] in event for event in ids)
+    finally:
+        _close_cp(built)
+
+
+def test_pg_profile_unknown_reconcile_then_decision_closes_ticket(fresh_db, tmp_path):
+    """PG profile：unknown 只能原键对账，恢复 decision 后按事实关单且不重复执行。"""
+    from src.api import create_app
+    from scripts.run_api import build_pg_backend, demo_token_registry
+
+    _seed_pg_order()
+    built = build_pg_backend(TEST_DB_URL, checkpoint_path=str(tmp_path / "ck-reconcile.sqlite"),
+                             owner_id="live-test-reconcile")
+    try:
+        app = create_app(built["backend"], demo_token_registry(), pg_probe=built["probe"],
+                         require_expected_version=True, agent_runner=built["runner"])
+        with TestClient(app) as client:
+            started = client.post("/api/v1/agent/start", json={
+                "message": "订单 ORD-1 商品破损，要求退款", "thread_id": "pg-reconcile",
+                "order_id_hint": "ORD-1"}, headers={"X-Api-Key": "demo-agent"}).json()
+            op_id = started["operation_id"]
+            version = built["backend"].get_operation("T1", op_id).version
+            assert client.post(f"/api/operations/{op_id}/approve",
+                               json={"expected_version": version},
+                               headers={"X-Api-Key": "demo-approver"}).status_code == 200
+            unknown = client.post(f"/api/operations/{op_id}/execute",
+                                  json={"external_result": "timeout"},
+                                  headers={"X-Api-Key": "demo-system"})
+            assert unknown.status_code == 200 and unknown.json()["status"] == "unknown"
+            waiting = client.post("/api/v1/agent/pg-reconcile/decision", json={},
+                                  headers={"X-Api-Key": "demo-approver"})
+            assert waiting.status_code == 200 and waiting.json()["outcome"] == "operation_unknown"
+            reconciled = client.post(f"/api/operations/{op_id}/reconcile",
+                                     json={"result": "success"},
+                                     headers={"X-Api-Key": "demo-system"})
+            assert reconciled.status_code == 200 and reconciled.json()["status"] == "executed"
+            done = client.post("/api/v1/agent/pg-reconcile/decision", json={},
+                               headers={"X-Api-Key": "demo-approver"})
+            assert done.status_code == 200 and done.json()["outcome"] == "refunded"
+            assert built["backend"].get_ticket("T1", started["ticket_id"]).status.value == "closed"
+            assert built["backend"].get_operation("T1", op_id).status.value == "executed"
+    finally:
+        _close_cp(built)

@@ -4,10 +4,10 @@
 > 版本：V1.2 整改验收基线（2026-09-13）。
 
 > **2026-09-13 整改验收：已完成。** 针对补充审查的 R1–R5 已完成实现、回归和文档同步：
-> checkpoint 使用无歧义版本化键，旧键仅在内嵌租户/线程精确匹配时兼容；HTTP 公共视图与错误响应
+> checkpoint 使用无歧义版本化键，旧键仅在内嵌租户/线程精确匹配时兼容；审计事件使用持久化 event_id；HTTP 公共视图与错误响应
 > 做字段白名单和 PII 脱敏；审计按租户、线程和工单/操作实体隔离；外部已执行、对账成功/失败均按
 > 领域事实收口；重启验收由两个独立 Python 进程执行并按数据库时间等待租约到期。
-> 离线全量 **503 passed / 51 skipped**，隔离 PG 全量 **554 passed / 0 skipped**，边界脚本 R1–R4 全部 PASS
+> 离线全量 **502 passed / 55 skipped**，隔离 PG 全量 **557 passed / 0 skipped**，边界脚本 R1–R4 全部 PASS
 > （memory 6 项 + PG 1 项，退出码 0）。
 > 历史失败证据仍保留在[补充审查与复现](./docs/V1_2_REVIEW_2026-09-13.md)，执行步骤保留在
 > [下一步完整执行提示词](./docs/V1_2_NEXT_STEP_PROMPT.md)。
@@ -126,7 +126,7 @@ Supervisor 只保留 A/B 实验结论：与单 Agent 无量化业务收益，因
 | 跨进程重启恢复（PG + 固定 checkpoint） | ✅ | ✅ 3 项 PG live | ✅ 隔离库实测 | — | — | — |
 | 死循环与工具去重保护（终态入 checkpoint） | ✅ | ✅ 16 项 | ✅ memory | — | — | — |
 | 确定性领域服务（金额/资格/状态/幂等/审计） | ✅ | ✅ | ✅ | — | — | — |
-| PostgreSQL profile（命令事务/审批事实/租约/API 装配/Agent 主链路） | ✅ | ✅ | ✅ 554 passed 全量（隔离库） | — | — | — |
+| PostgreSQL profile（命令事务/审批事实/租约/API 装配/Agent 主链路） | ✅ | ✅ | ✅ 557 passed 全量（隔离库） | — | — | — |
 | 确定性证据检索基线（本地 RAG） | ✅ | ✅ | ✅ `demo_rag_policy` | — | — | — |
 | LLM 成本记账（输入/输出双向 + N/A 语义） | ✅ | ✅ 21 项 | ✅ 离线路径 | 真实模型成本 | — | — |
 | 真实 LLM 候选模式（白名单/显式模型名/降级） | ✅ 实现完成 | ✅ | 离线验证 | ✅ **真实模型未实测**（无安全 Key，零网络请求） | ✅ | — |
@@ -144,13 +144,13 @@ Supervisor 只保留 A/B 实验结论：与单 Agent 无量化业务收益，因
 . .\scripts\init_d_env.ps1
 # 运行模式 A（离线，不设置 OPSPILOT_TEST_DATABASE_URL）：PG live 破坏性集成按纪律 skip
 .venv\Scripts\python.exe -m pytest tests -q
-# 503 passed, 51 skipped, 1 warning（独立复验实测，11.0 s）
+# 502 passed, 55 skipped, 1 warning（0006 迁移后实测，约 11 s）
 
-# 运行模式 B（隔离 PG）：空库迁移至 0005 后跑全量，PG live 全部实测
+# 运行模式 B（隔离 PG）：空库迁移至 0006 后跑全量，PG live 全部实测
 # 每轮新建唯一命名的隔离测试库（示例：opspilot_test_v12_<随机后缀>），不要复用历史库名
 $env:OPSPILOT_TEST_DATABASE_URL = 'postgresql+psycopg2://opspilot:opspilot@127.0.0.1:5433/opspilot_test_v12_<随机后缀>'
 .venv\Scripts\python.exe -m pytest tests -q
-# 554 passed, 0 skipped, 1 warning（独立复验实测，33.8 s；含独立进程重启恢复）
+# 557 passed, 0 skipped, 1 warning（0006 迁移后实测，约 37 s；含独立进程重启恢复）
 
 # 隔离双跑脚本（自动创建两套带随机后缀的测试库）
 .\scripts\run_pg_tests_isolated.ps1

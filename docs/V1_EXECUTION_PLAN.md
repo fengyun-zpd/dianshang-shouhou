@@ -15,7 +15,7 @@
 > `docs/STATUS_AND_RISKS.md`、`docs/TESTING_BASELINE.md`、`docs/INTERVIEW_OVERVIEW.md` 为准。
 > 已被取代的两点：① FastAPI 工厂**已接入** `WorkflowRunner`（`create_app(agent_runner=...)`，
 > `/api/v1/agent/*` 四个接口，仅内部坐席）；② 本文中的测试数字（399/44、443/0、490/49、539/0 等）属历史轮次，
-> 当前整改验收基线为离线 494 passed / 49 skipped、隔离 PG 543 passed / 0 skipped。
+> 当前整改验收基线为离线 502 passed / 55 skipped、隔离 PG 557 passed / 0 skipped（0006 迁移后）。
 
 审批恢复、unknown 原操作对账、领域 API、黄金集和五场景演示。Agent 运行器在本文写作时由脚本/回放
 驱动、FastAPI 工厂尚未接入它（**该状态已在 V1.2 收口轮改变**）。`SupervisorRunner` 只作为

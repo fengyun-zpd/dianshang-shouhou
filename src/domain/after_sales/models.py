@@ -201,6 +201,7 @@ class AuditEvent:
     after: Optional[str]
     idempotency_key: Optional[str] = None
     note: Optional[str] = None
+    event_id: Optional[str] = None
 
 
 # ---------- 强类型命令（对齐宪法第四条：写操作强类型参数） ----------

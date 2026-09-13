@@ -11,7 +11,7 @@
   经 MemoryAdapter 注入 create_app（API 只依赖 AfterSalesApplicationPort）。
 - `--backend pg`（R7 真实装配，no-fallback）：
     1. 连接串取 --pg-url 或 DATABASE_URL；缺失 → stderr 报错退出码非 0；
-    2. require_postgres_ready(url)：PostgreSQL 不可达或 Alembic schema ≠ 0005 → RuntimeError
+    2. require_postgres_ready(url)：PostgreSQL 不可达或 Alembic schema ≠ 0006 → RuntimeError
        退出码非 0，**绝不静默回退 memory**；
     3. PostgresAfterSalesRepository(url) → PgCommandService(repo) → PgCommandAdapter（完整 Port）；
     4. 持久 checkpoint：open_sqlite_checkpointer(--checkpoint 或项目 `.runtime/tmp` 唯一文件)
@@ -133,7 +133,7 @@ def build_pg_backend(url: str, checkpoint_path: str | None = None,
     本函数不 seed 任何 PG 业务数据（防污染未知库）。
     返回装配结果字典（backend/runner/checkpointer/probe 等），便于启动与测试。
     """
-    require_postgres_ready(url)          # 不可达 / schema≠0005 → RuntimeError（no fallback）
+    require_postgres_ready(url)          # 不可达 / schema≠0006 → RuntimeError（no fallback）
     repo = PostgresAfterSalesRepository(url)
     backend = PgCommandAdapter(PgCommandService(repo), repo)
     cp_path = checkpoint_path or _default_checkpoint_path()

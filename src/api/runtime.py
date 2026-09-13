@@ -21,7 +21,7 @@ class RuntimeProfile(str, Enum):
     PG = "pg"
 
 
-REQUIRED_SCHEMA_VERSION = "0005"   # 阶段四 0005（approval 唯一/幂等三元组/workflow_threads）
+REQUIRED_SCHEMA_VERSION = "0006"   # 稳定审计 event_id（含 0005 工作流租约）
 
 
 def default_pg_url() -> Optional[str]:

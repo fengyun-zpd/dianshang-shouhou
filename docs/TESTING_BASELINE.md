@@ -1,7 +1,8 @@
 # 测试基线
 
 > **2026-09-13 整改验收 + 独立复验已完成。** 修复 R1–R5 后本轮独立复验：离线全量
-> **503 passed / 51 skipped**，隔离 PG 全量 **554 passed / 0 skipped**，边界脚本 R1–R4 全部 PASS
+> **502 passed / 55 skipped**，隔离 PG 全量 **557 passed / 0 skipped**，边界脚本 R1–R4 全部 PASS
+>（本轮新增稳定审计 `event_id` 迁移与 PG R2–R4 定点回归）。
 > （memory 6 项 + PG 1 项，退出码 0）；重启回归由两个独立 Python 进程执行。下方早期
 > 490/538/539、494/543 数字与 6/7 FAIL 仍保留为历史审查证据，不能改写为当前结果，
 > 详见 [V1.2 补充审查](./V1_2_REVIEW_2026-09-13.md)。
@@ -12,12 +13,12 @@
 . .\scripts\init_d_env.ps1
 # 运行模式 A（离线）：不设置 OPSPILOT_TEST_DATABASE_URL → PG live 破坏性集成按纪律 skip
 .venv\Scripts\python.exe -m pytest tests -q
-# → 503 passed，51 skipped，1 条第三方弃用警告（本轮复验实测，11.0 s）
+# → 502 passed，55 skipped，1 条第三方弃用警告（0006 迁移后实测，约 11 s）
 
-# 运行模式 B（隔离 PG）：本轮新建并迁移到 alembic head 0005 的唯一命名测试库
+# 运行模式 B（隔离 PG）：本轮新建并迁移到 alembic head 0006 的唯一命名测试库
 $env:OPSPILOT_TEST_DATABASE_URL = 'postgresql+psycopg2://opspilot:opspilot@127.0.0.1:5433/opspilot_test_v12_<随机后缀>'
 .venv\Scripts\python.exe -m pytest tests -q
-# → 554 passed，0 skipped，1 条第三方弃用警告（本轮复验实测，33.8 s）
+# → 557 passed，0 skipped，1 条第三方弃用警告（0006 迁移后实测，约 37 s）
 
 # 隔离双跑（官方入口，自动创建两套带随机后缀的测试库）
 .\scripts\run_pg_tests_isolated.ps1

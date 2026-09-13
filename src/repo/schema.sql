@@ -83,6 +83,7 @@ CREATE TABLE IF NOT EXISTS idempotency_records (
 -- 审计（追加式；不含 PII）
 CREATE TABLE IF NOT EXISTS audit_events (
     id              BIGSERIAL PRIMARY KEY,
+    event_id        TEXT,
     tenant_id       TEXT NOT NULL,
     action          TEXT NOT NULL,
     entity_type     TEXT NOT NULL,
@@ -94,6 +95,7 @@ CREATE TABLE IF NOT EXISTS audit_events (
     note            TEXT,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE UNIQUE INDEX IF NOT EXISTS uq_audit_event_id ON audit_events(event_id) WHERE event_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_audit_tenant_entity ON audit_events(tenant_id, entity_type, entity_id);
 
 -- 订单级退款额度并发保护：执行/对账成功前
