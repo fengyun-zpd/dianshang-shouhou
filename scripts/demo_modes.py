@@ -81,7 +81,22 @@ def main() -> int:
     assert svc.refunded_amount("ORD-1") == Decimal("100.00")
     print(f"  outcome={final.outcome}，退款={svc.refunded_amount('ORD-1')} 元（领域裁决）")
 
-    print(f"\n{BAR}\n冒烟通过：四种模式可解析；默认 single_agent；llm 未配置安全回落离线。\n{BAR}")
+    print(f"\n{BAR}\n[4] 模型调用记账：离线规则 tokens=0 / cost=N/A（不伪装真实 LLM 成本）\n{BAR}")
+    from src.models import ModelGateway, load_llm_settings  # noqa: PLC0415
+    settings = load_llm_settings()
+    print(f"  价格配置来源={settings.pricing_source}；模型名显式配置={settings.model_configured}")
+    gw = ModelGateway()
+    resp = gw.analyze_intent("订单 ORD-1 商品破损，要求退款", dataset_version="demo")
+    meta = resp.metadata
+    print(f"  provider={meta.provider} model={meta.model_name} "
+          f"tokens(in/out)={meta.input_tokens}/{meta.output_tokens} "
+          f"cost={meta.cost_display()} token_source={meta.token_source}")
+    assert meta.provider == "offline-rule"
+    assert meta.input_tokens == 0 and meta.output_tokens == 0
+    assert meta.cost_estimate_usd is None, "离线规则不得给出伪造成本"
+
+    print(f"\n{BAR}\n冒烟通过：四种模式可解析；默认 single_agent；llm 未配置安全回落离线；"
+          f"离线记账 tokens=0 / cost=N/A。\n{BAR}")
     return 0
 
 

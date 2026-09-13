@@ -4,7 +4,10 @@
 - 本层唯一依赖 AfterSalesApplicationPort（MemoryAdapter/PgCommandAdapter 均可，
   不 isinstance 分支）；所有领域调用一律 tenant-first；
 - 角色门禁：agent/customer 可创建工单与草稿、submit；approver 可审批/拒绝；
-  system 可执行与对账；任何人不得借 API 伪造权限（错误码不被改写）。
+  system 可执行与对账；任何人不得借 API 伪造权限（错误码不被改写）；
+- Agent 生命周期（`/api/v1/agent/*`）：只转发给已装配的 WorkflowRunner（构造参数
+  agent_runner），不复制任何业务逻辑；decision 不携带审批结论（审批先写入领域事实源）；
+  未装配运行器 → 503，不静默降级。
 """
 from __future__ import annotations
 
@@ -34,11 +37,14 @@ from src.domain.after_sales import (
 from src.domain.after_sales.ports import AfterSalesApplicationPort
 
 from .deps import ApiIdentity, AuthMiddleware, TokenResolver, get_identity
-from .errors import register_error_handlers
+from .errors import AgentStateError, register_error_handlers
 from .schemas import (
+    AgentClarifyIn,
+    AgentDecisionIn,
     AgentLabBoundaryScenarioIn,
     AgentLabRetrieveIn,
     AgentLabTraceIn,
+    AgentStartIn,
     AuditItemOut,
     DecisionIn,
     ExecuteIn,
@@ -282,21 +288,146 @@ def agent_lab_boundary_scenario(body: AgentLabBoundaryScenarioIn,
     return run_boundary_scenario(body.name)
 
 
+# ---------- Agent 生命周期（WorkflowRunner HTTP 主链路） ----------
+#
+# 设计边界：
+# - 本层不复制任何业务逻辑：start / clarify / decision / state 全部转发给当前已装配的
+#   WorkflowRunner（memory profile = 合成数据运行器；pg profile = 真实 PostgreSQL 运行器）；
+# - 身份边界（V1 只服务内部坐席）：start/clarify 仅 AGENT；decision 仅 APPROVER/SYSTEM；
+#   state 允许 AGENT/APPROVER/SYSTEM。**客户自助入口属规划能力，当前不开放**；
+# - 租户一律取认证身份的 tenant_id，请求体不接受 tenant_id（携带 → 422）；
+# - 外部执行结果不由 HTTP 调用者指定：只能由 SYSTEM 角色的领域执行接口
+#   （/api/operations/{id}/execute）写入，再由 decision 重读领域事实；
+# - /decision **不携带审批结论**：审批结果必须先由领域审批接口写入事实源
+#   （/api/operations/{id}/approve|reject），本接口只触发 resume，apply_decision 重读事实。
+
+def _agent_runner(request: Request):
+    runner = getattr(request.app.state, "agent_runner", None)
+    if runner is None:
+        # 未装配运行器时明确 503，不静默降级到领域接口或伪造结果
+        raise AgentStateError(503, "AGENT_RUNNER_UNAVAILABLE",
+                              "Agent 运行器未装配：请以 run_api.py --backend memory|pg 启动")
+    return runner
+
+
+def _agent_view(result) -> dict:
+    """统一结果结构（start / clarify / decision / state 共用）。"""
+    state = dict(result.state or {})
+    return {
+        "thread_id": result.thread_id,
+        "finished": result.finished,
+        "waiting_approval": result.waiting_approval,
+        "waiting_clarify": result.waiting_clarify,
+        "interrupt": result.interrupt_value,
+        "next_action": state.get("next_action"),
+        "operation_id": state.get("operation_id"),
+        "ticket_id": state.get("ticket_id"),
+        "outcome": result.outcome,
+        "error_code": result.error_code,
+        "reply": result.reply,
+        "evidence_refs": list(state.get("evidence_refs") or []),
+        "audit_event_ids": list(result.audit_event_ids or []),
+        "step_count": int(state.get("step_count") or 0),
+        "checkpoint_note": ("checkpoint 只保存流程恢复状态；工单/操作/审批/执行等业务最终事实"
+                            "仍从领域服务（PostgreSQL）读取"),
+        "state": state,
+    }
+
+
+@router.post("/v1/agent/start")
+def agent_start(body: AgentStartIn, request: Request,
+                identity: ApiIdentity = Depends(get_identity)):
+    """启动一轮售后请求（**仅内部坐席 AGENT**）。thread_id 缺省由运行器生成。"""
+    _require_role(identity, (Role.AGENT,))
+    result = _agent_runner(request).start(
+        identity.tenant_id, body.message, thread_id=body.thread_id,
+        order_id_hint=body.order_id_hint)
+    return _agent_view(result)
+
+
+@router.post("/v1/agent/{thread_id}/clarify")
+def agent_clarify(thread_id: str, body: AgentClarifyIn, request: Request,
+                  identity: ApiIdentity = Depends(get_identity)):
+    """澄清补参：只允许在澄清中断状态调用，补参后回到原线程继续执行（仅 AGENT）。
+
+    不允许借澄清接口修改租户、金额、审批状态、操作状态或权限（schema 已禁止额外字段）。
+    """
+    _require_role(identity, (Role.AGENT,))
+    runner = _agent_runner(request)
+    current = runner.get_state(thread_id, tenant_id=identity.tenant_id)
+    if not current.waiting_clarify:
+        raise AgentStateError(
+            409, "AGENT_NOT_WAITING_CLARIFY",
+            f"线程 {thread_id} 当前不在澄清状态（finished={current.finished}，"
+            f"waiting_approval={current.waiting_approval}），拒绝澄清补参")
+    payload: dict = {}
+    if body.order_id:
+        payload["order_id"] = body.order_id
+    if body.description:
+        payload["description"] = body.description
+    elif body.message:
+        payload["description"] = body.message
+    result = runner.resume(thread_id, payload=payload, tenant_id=identity.tenant_id)
+    return _agent_view(result)
+
+
+@router.post("/v1/agent/{thread_id}/decision")
+def agent_decision(thread_id: str, request: Request,
+                   body: Optional[AgentDecisionIn] = None,
+                   identity: ApiIdentity = Depends(get_identity)):
+    """触发审批后的工作流恢复（只触发重读，不携带审批结论）。
+
+    - 请求体允许为空 `{}`；携带 approved/rejected/decision 等字段 → 422；
+    - 仅 APPROVER / SYSTEM 可调用；
+    - 领域事实仍为待审批 → 工作流继续等待；approved → 执行；rejected → 拒绝收口；
+      unknown → operation_unknown（不自动换键重试）。
+    """
+    _require_role(identity, (Role.APPROVER, Role.SYSTEM))
+    runner = _agent_runner(request)
+    current = runner.get_state(thread_id, tenant_id=identity.tenant_id)
+    if not current.waiting_approval:
+        raise AgentStateError(
+            409, "AGENT_NOT_WAITING_APPROVAL",
+            f"线程 {thread_id} 当前不在审批等待状态（finished={current.finished}）；"
+            "审批结果请先通过领域审批接口写入事实源")
+    # 只传占位恢复值：审批结论一律由 apply_decision 从领域事实源重读
+    result = runner.resume(thread_id, payload="_continue_", tenant_id=identity.tenant_id)
+    return _agent_view(result)
+
+
+@router.get("/v1/agent/{thread_id}/state")
+def agent_state(thread_id: str, request: Request,
+                identity: ApiIdentity = Depends(get_identity)):
+    """只读查询线程视图（内部坐席：AGENT / APPROVER / SYSTEM）。
+
+    线程作用域为 (tenant_id, thread_id)；不存在或属于其他租户统一返回 404，
+    不暴露所属租户。
+    """
+    _require_role(identity, (Role.AGENT, Role.APPROVER, Role.SYSTEM))
+    return _agent_view(_agent_runner(request).get_state(
+        thread_id, tenant_id=identity.tenant_id))
+
+
 # ---------- 工厂 ----------
 
 def create_app(service: AfterSalesApplicationPort, registry: TokenResolver,
                pg_probe=None, require_expected_version: bool = False,
-               demo_reset=None) -> FastAPI:
+               demo_reset=None, agent_runner=None) -> FastAPI:
     """FastAPI 工厂。service 为实现 AfterSalesApplicationPort 的后端（Memory/PgCommand
     Adapter 均可，调用方不 isinstance）。require_expected_version=True（pg profile）：
     审批/拒绝必须由客户端提交 expected_version，服务端不代填（422）。
-    pg_probe：可调用 → bool，用于 /health/ready 反映 PostgreSQL 可用性。"""
+    pg_probe：可调用 → bool，用于 /health/ready 反映 PostgreSQL 可用性。
+    demo_reset：仅 memory 合成演示后端提供；提供时注册 /api/demo/reset，
+    **pg profile（None）下该路由根本不注册**（不是注册后返回 404）。
+    agent_runner：可选 WorkflowRunner——装配后 /api/v1/agent/* 生效；未装配时明确 503。
+    """
     app = FastAPI(title="OpsPilot After-Sales API", version="0.1")
     app.state.service = service
     app.state.registry = registry
     app.state.pg_probe = pg_probe
     app.state.require_expected_version = require_expected_version
     app.state.demo_reset = demo_reset
+    app.state.agent_runner = agent_runner
     app.add_middleware(AuthMiddleware, registry=registry)
     app.add_middleware(RequestIdMiddleware)
 
@@ -330,16 +461,17 @@ def create_app(service: AfterSalesApplicationPort, registry: TokenResolver,
 
     app.include_router(router)
 
-    @app.post("/api/demo/reset", tags=["demo"])
-    def reset_demo(identity: ApiIdentity = Depends(get_identity)):
-        """重置固定合成演示数据；仅 memory demo 注册，生产/PG profile 不暴露。"""
-        _require_role(identity, (Role.AGENT,))
-        reset = app.state.demo_reset
-        if reset is None:
-            from fastapi import HTTPException
-            raise HTTPException(status_code=404, detail="演示重置仅适用于 memory 合成后端")
-        reset()
-        return {"status": "reset", "mode": "memory_demo", "side_effect": False}
+    if demo_reset is not None:
+        @app.post("/api/demo/reset", tags=["demo"])
+        def reset_demo(identity: ApiIdentity = Depends(get_identity)):
+            """重置固定合成演示数据；仅 memory demo 注册。
+
+            pg profile（demo_reset=None）下本路由**不注册**：生产/PG profile 不暴露
+            memory reset，避免任何“重置业务库”的可能。
+            """
+            _require_role(identity, (Role.AGENT,))
+            app.state.demo_reset()
+            return {"status": "reset", "mode": "memory_demo", "side_effect": False}
 
     register_error_handlers(app)
     return app

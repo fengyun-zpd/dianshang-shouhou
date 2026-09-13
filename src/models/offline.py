@@ -9,7 +9,7 @@ import time
 
 from src.agents.intent import clarify_questions, extract_intent
 
-from .base import LLMClient, ModelResponse, ModelSchemaError, estimate_tokens
+from .base import LLMClient, ModelResponse, ModelSchemaError
 from .schemas import (
     ClarificationDecision,
     EvidenceBoundExplanation,
@@ -67,12 +67,16 @@ class OfflineRuleClient(LLMClient):
             raise ModelSchemaError(f"offline 适配器不支持输出 Schema：{response_schema.__name__}")
 
         duration = (time.monotonic() - started) * 1000.0
+        # 离线规则不调用任何模型：token 记为 0、成本记 N/A（不把估算值冒充真实 LLM 成本）
         meta = ModelInvocationMetadata(
             provider=self.provider, model_name=self.model_name,
             model_version=self.model_version, task=task,
             prompt_version="N/A（规则）", dataset_version=dataset_version,
             duration_ms=round(duration, 2),
-            input_tokens=estimate_tokens(text), output_tokens=0, cost_estimate_usd=0.0,
+            input_tokens=0, output_tokens=0,
+            cost_estimate_usd=None, input_cost=None, output_cost=None,
+            currency="N/A", pricing_source="N/A（离线规则不调用模型，无 token 计费）",
+            token_source="not_applicable",
             degraded=False,
         )
         return ModelResponse(payload=payload, metadata=meta)

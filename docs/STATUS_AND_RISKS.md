@@ -1,23 +1,64 @@
 # 项目状态与风险
 
-> 更新：2026-09-07（V1.1）。
+> 更新：2026-09-13（V1.2 收口轮）。
 
 | 项目 | 状态 | 事实边界 |
 | --- | --- | --- |
-| 单 Agent 售后闭环 | 已实现 | LangGraph 澄清、证据、审批恢复、unknown 对账 |
-| 确定性领域服务 | 已实现 | `after_sales/` 与 PG 命令路径裁决金额、资格、状态、幂等、并发、审计 |
-| 确定性证据检索基线（本地 RAG） | 已实现 | PolicyStore 检索：citation、版本/租户/启用约束、注入拒绝、无证据转人工；不裁决金额 |
-| PostgreSQL profile | 已实现 | 命令事务、审批事实、租约和 API 装配 |
-| 面试演示 | 已实现 | demo_interview（七场景）+ demo_rag_policy（检索展示）真实断言 |
-| Supervisor/多 Agent 编排 | V1.1 实验 | 当前演示为四角色只读编排（Triage/Evidence/Resolution/RiskReview）；历史三角色实现仅作兼容对照；同黄金集 A/B 无收益，默认单 Agent；不是真实 LLM 子 Agent |
-| 受控 LLM 适配（离线基线） | 已实现 | openai_compatible 适配器仅环境变量配置；无 Key 自动离线；内容守卫拦截金额/审批/状态；**真实模型未实测** |
-| 微调实验入口 | 骨架未运行 | `scripts/gen_sft_samples.py` 固定种子合成样本；无 GPU/Key 未训练，不声称任何效果 |
-| 真实 LLM 指标、真实微调、生产级前端、外部接入、生产部署 | 未实现或未实测 | 不属于 V1.1 主链路；本地演示工作台已实现，但不具备生产身份与部署能力 |
+| 单 Agent 售后闭环 | 已实现 / 已测试 / 已验证 | LangGraph 澄清、证据、审批恢复、unknown 对账；memory 黄金集 11/11 |
+| **Agent 生命周期 HTTP 主链路** | **已实现 / 已测试 / 已验证** | `start`/`clarify`（仅 AGENT）、`decision`（APPROVER/SYSTEM）、`state`（AGENT/APPROVER/SYSTEM）；29 项 e2e + 5 项 PG live |
+| **身份边界收紧** | **已实现 / 已测试** | 同租户客户调用 Agent 接口 → 403；客户自助入口为**规划能力**，当前不开放 |
+| **外部结果不由调用者指定** | **已实现 / 已测试** | `start` 不接受 `simulate_external`/`external_result`（→ 422）；未知状态必须由 SYSTEM 经领域执行接口写入 |
+| **跨进程重启恢复（PG）** | **已实现 / 已测试 / 已验证** | 线程绑定事实源 = 租户限定 `workflow_threads` + 固定 checkpoint `.runtime/checkpoints/opspilot-agent.sqlite`；3 项 PG live |
+| **死循环保护（终态持久化）** | **已实现 / 已测试 / 已验证** | 步数上限 32（可覆盖）+ recursion limit；终态入 checkpoint，新实例可读；16 项单测 |
+| **证据块 PII 脱敏** | **已实现 / 已测试** | 注入检测通过后逐块 `redact_pii`，再做 token 计数与发送；测试断言请求体与日志均无手机号/邮箱/身份证号 |
+| 确定性领域服务 | 已实现 / 已测试 / 已验证 | `after_sales/` 与 PG 命令路径裁决金额、资格、状态、幂等、并发、审计 |
+| 确定性证据检索基线（本地 RAG） | 已实现 / 已测试 / 已验证 | PolicyStore 检索：citation、版本/租户/启用约束、注入拒绝、无证据转人工 |
+| PostgreSQL profile | 已实现 / 已测试 / 已验证 | 命令事务、审批事实、租约、API 装配、Agent 主链路；隔离库全量 **539 passed / 0 skipped** |
+| 工作台「Agent 全链路」演示区 | 已实现 / 已验证 | 真实调用四个接口；六条路径（正常/澄清/拒绝/未知状态/跨租户拒绝/循环终止）已在运行中的服务上逐条验证 |
+| Supervisor/多 Agent 编排 | 可选实验 | 四角色只读编排；同黄金集 A/B 无收益，默认单 Agent |
+| 受控 LLM 适配（离线基线） | **实现完成 / 离线验证 / 真实模型未实测** | openai_compatible 适配器仅环境变量配置；无 Key 自动离线且零网络；内容守卫拦截金额/审批/状态 |
+| LLM-as-Judge 评测 | **实现完成 / 离线验证 / 真实模型未实测** | 只评话术质量；真实裁判走同一内容守卫与 PII 脱敏；无未降级调用时报告按未实测输出 |
+| 微调实验入口 | 骨架未运行 | 固定种子合成样本；无 GPU/Key 未训练，不声称任何效果 |
+| 生产部署 / 真实支付 / CRM / 企业微信 | 未实现 | 不属于本项目 |
 
-当前 D 盘基线（2026-09-07 Agent Lab 边界剧本变更后实测）：未配置隔离 PG → **399 passed，44 skipped，1 warning**；设置 `OPSPILOT_TEST_DATABASE_URL` 指向唯一命名的隔离库 → **443 passed，0 skipped，1 warning**。隔离脚本还在两套独立数据库各完成 `25 passed`，并将迁移升至 `0005`。前一模式的跳过项表示未启用 PG live 测试，不能取代后一模式的 PG 验证；唯一警告来自 Starlette/AnyIO 的第三方弃用提示。数据为固定种子合成数据。破坏性 PG 集成只允许 `opspilot_test_*`@localhost（fail-closed guard，见 `docs/POSTGRES.md`）。
+## 当前 D 盘基线（2026-09-13 实测）
 
-已清理早期退款服务、Mule Bridge、SQLite 快照恢复和 PgBackedSession 整库镜像原型，避免双实现和额外协议面。
+- 离线全量：**490 passed，49 skipped，1 warning**（10.6 s）；
+- 隔离 PG 全量（`opspilot_test_final_6003af47`，迁移至 `0005`）：**539 passed，0 skipped，1 warning**（30.1 s）；
+- `scripts/run_pg_tests_isolated.ps1`：`opspilot_test_a_74ae988e` / `opspilot_test_b_74ae988e`
+  各 `25 passed`，`ISOLATED DOUBLE-RUN PASS`。
 
-主要风险：真实模型行为未知，靠离线基线和能力矩阵隔离；PG 需要本地 Docker 与迁移，面试前按 `POSTGRES.md` 复跑；文档每次随代码同步；所有临时、下载、缓存和 checkpoint 固定落 D 盘 `.runtime/` 或 `.cache/`。
+前一模式的 49 个 skip 表示未启用 PG live 测试，不能取代后一模式的 PG 验证；唯一警告来自
+Starlette/AnyIO 的第三方弃用提示。数据为固定种子合成数据。**历史轮次数字（399/44、443/0、
+462/44、481/46、506/0、527/0）不再作为当前基线。**
 
-下一步不增加检索层级、多 Agent 默认编排、真实微调、向量数据库或外部系统，只做可复现验收、演示和缺陷修复。
+## 明确未实测 / 未验证
+
+| 项 | 状态 | 原因 |
+| --- | --- | --- |
+| 真实 LLM 准确率 / 成本 / 延迟 | **未实测** | 本环境无安全 Key；candidate 模式安全降级离线，零网络请求 |
+| 真实 LLM-as-Judge 分数 | **未实测** | 同上；仅离线规则裁判（真实调用路径已实现并用 mock 单测覆盖） |
+| 微调效果 | **未实测** | 无 GPU/Key，未训练 |
+| 并发吞吐 / 性能 | **未实测** | 无压测；所有耗时数字仅为本机单次运行的观测值 |
+| 多实例并行部署（多进程共享同一 PG + checkpoint） | **未验证** | 固定 checkpoint 默认单实例使用；多实例应各自指定 `--checkpoint` 或改用服务端 checkpointer |
+| 生产身份系统 / 部署 | **未实现** | 进程内演示 token registry（含 T2 演示身份，仅用于跨租户拒绝演示） |
+
+## 风险与对策
+
+- **真实模型行为未知**：靠能力矩阵（高风险任务直接拒绝）+ 内容守卫 + 离线降级隔离；无 Key 时零网络。
+- **跨租户存在性泄露**：错误租户与"不存在"返回同一个 404 与同结构消息；错误消息不含所属租户（测试断言两种响应除线程名外逐字一致）。
+- **调用者伪造副作用参数**：`start`/`clarify`/`decision` 一律 `extra="forbid"`；审批结论与外部执行结果只能由对应领域的授权接口写入。
+- **成本口径被误读**：成本仅由配置的单价计算，未配置一律 `N/A`；离线规则 `tokens=0`，报告显式说明"不代表 0 成本"。
+- **Judge 分数被当作验收**：报告与文档明确 Judge 只评估模糊质量；业务失败由确定性检查独立标记。
+- **循环保护被误解为万能**：`step_count` 只在节点正常返回时写回 checkpoint；上限判定按节点**进入次数**计算；终态已持久化并可被新实例读取。
+- **报告污染**：未实测的候选报告写 `.runtime/reports/`；单元测试走 `tmp_path`；本轮已用哈希比对验证测试不改写 `evals/reports/`。
+- **文档漂移**：文档每次随代码同步；发现冲突先报告，不静默选择。
+
+已清理早期退款服务、Mule Bridge、SQLite 快照恢复和 PgBackedSession 整库镜像原型，避免双实现
+和额外协议面。
+
+## 范围冻结
+
+V1.2 收口后不新增功能名词（默认多 Agent、微调/DPO、pgvector、长期记忆、缓存平台、真实支付/
+CRM、生产部署一律不做）；Judge 保持独立、只评话术质量。后续只做缺陷修复、可复现验证与文档
+事实对齐。

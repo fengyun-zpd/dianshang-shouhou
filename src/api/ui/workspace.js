@@ -132,6 +132,150 @@
       toast(error.message, true);
     } finally { document.querySelectorAll(".boundary-option").forEach((button) => { button.disabled = false; }); }
   };
+
+  // ---------- Agent 全链路（真实调用 /api/v1/agent/*，展示真实返回值） ----------
+  const afState = { threadId: null, operationId: null, ticketId: null, note: "" };
+  const AF_AGENT = "demo-agent", AF_APPROVER = "demo-approver", AF_SYSTEM = "demo-system", AF_T2 = "demo-agent-t2";
+  const AF_ORDER = "ORD-1001";   // 合成演示后端唯一 seed 订单
+  // 独立剧本前重置合成数据（与「安全剧本」同一约定）；pg profile 不注册该路由 → 忽略失败
+  const afReset = async () => {
+    try { await api("/api/demo/reset", { method: "POST", body: "{}" }, AF_AGENT); }
+    catch { /* pg profile 未注册 reset：沿用当前数据继续 */ }
+    afState.threadId = null; afState.operationId = null; afState.ticketId = null;
+  };
+  const afTag = (label, value, cls = "") => `<div class="af-field${cls ? ` ${cls}` : ""}"><span>${escapeHtml(label)}</span><b>${escapeHtml(value)}</b></div>`;
+  const afRender = (view, note) => {
+    const node = $("#agent-flow-view");
+    if (!view) { node.className = "agent-flow-view"; node.innerHTML = `<span>${escapeHtml(note || "无结果")}</span>`; return; }
+    const state = view.state || {};
+    const draft = state.action_draft || null;
+    const fields = [
+      afTag("thread_id", view.thread_id || "-"),
+      afTag("是否等待审批", String(view.waiting_approval ?? false), view.waiting_approval ? "on" : ""),
+      afTag("是否等待澄清", String(view.waiting_clarify ?? false), view.waiting_clarify ? "on" : ""),
+      afTag("next_action", view.next_action || "-"),
+      afTag("operation_id", view.operation_id || "-"),
+      afTag("ticket_id", view.ticket_id || "-"),
+      afTag("outcome", view.outcome || "-"),
+      afTag("error_code", view.error_code || "-", view.error_code ? "warn" : ""),
+      afTag("step_count", String(view.step_count ?? 0)),
+    ];
+    const extras = [];
+    if (draft) extras.push(`<p><b>审批草稿</b>：金额 ¥${escapeHtml(draft.amount)}（政策 ${escapeHtml(draft.policy_id)}，金额由领域服务裁决）</p>`);
+    if (view.evidence_refs?.length) extras.push(`<p><b>证据引用</b>：${view.evidence_refs.map(escapeHtml).join("、")}</p>`);
+    if (view.audit_event_ids?.length) extras.push(`<p><b>审计编号</b>：${view.audit_event_ids.map(escapeHtml).join("、")}</p>`);
+    if (view.reply) extras.push(`<p><b>回复</b>：${escapeHtml(view.reply)}</p>`);
+    if (note) extras.push(`<p><b>本次动作</b>：${escapeHtml(note)}</p>`);
+    node.className = "agent-flow-view filled";
+    node.innerHTML = `<div class="af-grid">${fields.join("")}</div>${extras.join("")}`;
+  };
+  const afBegin = (name) => { const s = $("#agent-flow-status"); s.textContent = name; s.className = "status-tag neutral"; };
+  const afDone = (name) => { const s = $("#agent-flow-status"); s.textContent = name; s.className = "status-tag safe"; };
+  const afStart = async (withOrder) => {
+    afBegin("正在启动");
+    try {
+      const body = { message: withOrder ? `订单 ${AF_ORDER} 商品破损，要求退款` : "我要退款，商品破损", thread_id: `ui-agent-${Date.now()}${withOrder ? "" : "-c"}` };
+      if (withOrder) body.order_id_hint = AF_ORDER;
+      const view = await api("/api/v1/agent/start", { method: "POST", body: JSON.stringify(body) }, AF_AGENT);
+      afState.threadId = view.thread_id; afState.operationId = view.operation_id; afState.ticketId = view.ticket_id;
+      afDone(withOrder ? "已启动：等待审批" : "已启动：等待澄清");
+      afRender(view, withOrder ? "start（正常路径）" : "start（缺订单号 → 澄清中断）");
+      toast(withOrder ? "Agent 已启动并停在人工审批前。" : "信息不足，Agent 停在澄清中断。");
+    } catch (error) { afBegin("启动失败"); afRender(null, error.message); toast(error.message, true); }
+  };
+  const afClarify = async () => {
+    if (!afState.threadId) return toast("请先执行「启动（缺订单号）」", true);
+    afBegin("正在补参");
+    try {
+      const view = await api(`/api/v1/agent/${encodeURIComponent(afState.threadId)}/clarify`, { method: "POST",
+        body: JSON.stringify({ order_id: AF_ORDER, description: "商品破损" }) }, AF_AGENT);
+      afState.operationId = view.operation_id; afState.ticketId = view.ticket_id;
+      afDone("补参后回到原线程"); afRender(view, "clarify（补参后继续原线程，回到审批等待）");
+    } catch (error) { afBegin("补参失败"); afRender(null, error.message); toast(error.message, true); }
+  };
+  const afOperationVersion = async () => {
+    if (!afState.ticketId || !afState.operationId) throw new Error("当前线程还没有可审批的操作");
+    const ops = await api(`/api/tickets/${encodeURIComponent(afState.ticketId)}/operations`, {}, AF_APPROVER);
+    const op = ops.find((item) => item.operation_id === afState.operationId);
+    if (!op) throw new Error("未找到当前草稿操作");
+    return op.version;
+  };
+  const afWriteFact = async (kind) => {
+    if (!afState.threadId) return toast("请先启动一个线程", true);
+    afBegin(`正在写入审批事实：${kind}`);
+    try {
+      const version = await afOperationVersion();
+      const body = kind === "approve" ? { reason: "演示授权", expected_version: version } : { reason: "演示拒绝", expected_version: version };
+      const op = await api(`/api/operations/${encodeURIComponent(afState.operationId)}/${kind}`, { method: "POST", body: JSON.stringify(body) }, AF_APPROVER);
+      const view = await api(`/api/v1/agent/${encodeURIComponent(afState.threadId)}/state`, {}, AF_AGENT);
+      afDone(`领域事实已写入：${op.status}`);
+      afRender(view, `${kind}（决定由 APPROVER 写入领域事实源，Agent 未携带结论）`);
+    } catch (error) { afBegin("写入审批事实失败"); afRender(null, error.message); toast(error.message, true); }
+  };
+  const afDecision = async () => {
+    if (!afState.threadId) return toast("请先启动一个线程", true);
+    afBegin("正在触发恢复");
+    try {
+      const view = await api(`/api/v1/agent/${encodeURIComponent(afState.threadId)}/decision`, { method: "POST", body: "{}" }, AF_APPROVER);
+      afDone("恢复完成"); afRender(view, "decision（空 body，只触发 apply_decision 重读领域事实）");
+    } catch (error) { afBegin("恢复失败"); afRender(null, error.message); toast(error.message, true); }
+  };
+  const afRefresh = async () => {
+    if (!afState.threadId) return toast("请先启动一个线程", true);
+    afBegin("正在查询状态");
+    try {
+      const view = await api(`/api/v1/agent/${encodeURIComponent(afState.threadId)}/state`, {}, AF_AGENT);
+      afDone("状态已刷新"); afRender(view, "state（只读视图）");
+    } catch (error) { afBegin("查询失败"); afRender(null, error.message); toast(error.message, true); }
+  };
+  const afUnknown = async () => {
+    afBegin("未知状态演示");
+    await afReset();
+    try {
+      const body = { message: `订单 ${AF_ORDER} 商品破损，要求退款`, thread_id: `ui-unknown-${Date.now()}`, order_id_hint: AF_ORDER };
+      const started = await api("/api/v1/agent/start", { method: "POST", body: JSON.stringify(body) }, AF_AGENT);
+      afState.threadId = started.thread_id; afState.operationId = started.operation_id; afState.ticketId = started.ticket_id;
+      const ops = await api(`/api/tickets/${encodeURIComponent(started.ticket_id)}/operations`, {}, AF_APPROVER);
+      const op = ops.find((item) => item.operation_id === started.operation_id);
+      await api(`/api/operations/${encodeURIComponent(started.operation_id)}/approve`, { method: "POST",
+        body: JSON.stringify({ reason: "演示授权", expected_version: op.version }) }, AF_APPROVER);
+      // 外部执行结果只能由 SYSTEM 角色的领域执行接口写入（HTTP start 不接受该字段）
+      const unknown = await api(`/api/operations/${encodeURIComponent(started.operation_id)}/execute`, { method: "POST",
+        body: JSON.stringify({ external_result: "timeout" }) }, AF_SYSTEM);
+      const view = await api(`/api/v1/agent/${encodeURIComponent(started.thread_id)}/decision`, { method: "POST", body: "{}" }, AF_APPROVER);
+      afDone(`未知状态：${unknown.status}`);
+      afRender(view, "SYSTEM 写入 timeout → unknown；decision 只重读事实，不换键重试");
+    } catch (error) { afBegin("未知状态演示失败"); afRender(null, error.message); toast(error.message, true); }
+  };
+  const afLoop = async () => {
+    afBegin("循环保护演示");
+    await afReset();
+    try {
+      const body = { message: `订单 ${AF_ORDER} 商品破损，要求退款`, thread_id: `ui-loop-${Date.now()}`, order_id_hint: AF_ORDER };
+      const started = await api("/api/v1/agent/start", { method: "POST", body: JSON.stringify(body) }, AF_AGENT);
+      afState.threadId = started.thread_id;
+      let view = started, resumes = 0;
+      // 反复恢复但始终不写入审批事实：领域事实保持 PENDING → 步数累加到上限后安全停止
+      while (!view.error_code && resumes < 40) {
+        view = await api(`/api/v1/agent/${encodeURIComponent(started.thread_id)}/decision`, { method: "POST", body: "{}" }, AF_APPROVER);
+        resumes += 1;
+      }
+      afDone(view.error_code ? `已安全停止：${view.error_code}` : "未触发保护");
+      afRender(view, `连续 resume ${resumes} 次未提交审批事实 → ${view.error_code || "未触发"}（触发后无新增写入、无退款执行）`);
+    } catch (error) { afBegin("循环演示失败"); afRender(null, error.message); toast(error.message, true); }
+  };
+  const afCrossTenant = async () => {
+    if (!afState.threadId) return toast("请先用内部坐席身份启动一个线程", true);
+    const target = afState.threadId;
+    afBegin("跨租户读取");
+    try {
+      const view = await api(`/api/v1/agent/${encodeURIComponent(target)}/state`, {}, AF_T2);
+      afDone("意外成功"); afRender(view, "T2 读取 T1 线程意外成功（不符合预期）");
+    } catch (error) {
+      afDone(`已拒绝：HTTP ${error.status}`);
+      afRender(null, `T2 身份读取 T1 线程 ${target} → HTTP ${error.status} ${error.code || ""}（统一 404，不暴露所属租户）`);
+    }
+  };
   $("#start-case").addEventListener("click", createTicket); $("#draft-action").addEventListener("click", createDraft); $("#approve-action").addEventListener("click", approve); $("#execute-action").addEventListener("click", execute); $("#refresh-audit").addEventListener("click", loadAudit);
   document.querySelectorAll(".workspace-tab").forEach((tab) => tab.addEventListener("click", () => switchView(tab.dataset.viewTarget)));
   document.querySelectorAll("[data-switch-view]").forEach((button) => button.addEventListener("click", () => switchView(button.dataset.switchView)));
@@ -139,6 +283,12 @@
   $("#run-lab").addEventListener("click", runLab); $("#retrieve-evidence").addEventListener("click", retrieveEvidence);
   document.querySelectorAll("[data-scenario]").forEach((button) => button.addEventListener("click", () => ({ reject: runRejectScenario, unknown: runUnknownScenario, idempotency: runIdempotencyScenario, permission: runPermissionScenario }[button.dataset.scenario])()));
   document.querySelectorAll("[data-boundary]").forEach((button) => button.addEventListener("click", () => runBoundaryScenario(button.dataset.boundary)));
+  $("#af-start").addEventListener("click", () => afStart(true)); $("#af-start-clarify").addEventListener("click", () => afStart(false));
+  $("#af-clarify").addEventListener("click", afClarify);
+  $("#af-approve").addEventListener("click", () => afWriteFact("approve")); $("#af-reject").addEventListener("click", () => afWriteFact("reject"));
+  $("#af-decision").addEventListener("click", afDecision); $("#af-state").addEventListener("click", afRefresh);
+  $("#af-unknown").addEventListener("click", afUnknown); $("#af-loop").addEventListener("click", afLoop);
+  $("#af-cross").addEventListener("click", afCrossTenant);
   $("#retrieval-query").addEventListener("keydown", (event) => { if (event.key === "Enter") retrieveEvidence(); });
   const flowButton = $("#show-flow");
   if (flowButton) flowButton.addEventListener("click", () => $("#flow").scrollIntoView({ behavior: "smooth" }));

@@ -20,6 +20,7 @@ from typing import Optional
 
 from src.rag import PolicyStore
 
+from .graph import DEFAULT_MAX_STEPS
 from .runner import WorkflowRunner
 
 _ORCHESTRATIONS = ("three-agent", "four-role")
@@ -29,12 +30,13 @@ class SupervisorRunner(WorkflowRunner):
     """Supervisor 模式（子 Agent 只读证据编排）。"""
 
     def __init__(self, service, policy_store: Optional[PolicyStore] = None,
-                 checkpointer=None, orchestration: str = "three-agent"):
+                 checkpointer=None, orchestration: str = "three-agent",
+                 max_steps: int = DEFAULT_MAX_STEPS):
         if orchestration not in _ORCHESTRATIONS:
             raise ValueError(f"未知 Supervisor 编排：{orchestration!r}（可选 {_ORCHESTRATIONS}）")
         self.policy_store = policy_store
         self.orchestration = orchestration
-        super().__init__(service, checkpointer)
+        super().__init__(service, checkpointer, max_steps=max_steps)
 
     def _build_graph(self, checkpointer=None):
         from .graph import build_workflow
@@ -45,4 +47,5 @@ class SupervisorRunner(WorkflowRunner):
             from .subagents import build_supervisor_evidence
             evidence = build_supervisor_evidence(self.gateway, self.policy_store)
         return build_workflow(self.gateway, checkpointer,
-                              evidence_node=evidence, mode="supervisor")
+                              evidence_node=evidence, mode="supervisor",
+                              max_steps=self._max_steps)

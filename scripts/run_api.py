@@ -19,10 +19,20 @@
     5. WorkflowRunner(backend, checkpointer=cp, lease_repo=repo, owner_id=--owner-id
        或 "run_api-{hostname}-{pid}"（稳定唯一）, lease_duration_s=60)——pg profile
        默认强制 D9 workflow_threads 租约；
-    6. create_app(backend, registry, pg_probe=probe, require_expected_version=True)
-       ——pg 审批要求客户端提交 expected_version（422 拒绝服务端代填）。
+    6. create_app(backend, registry, pg_probe=probe, require_expected_version=True,
+       agent_runner=runner)
+       ——pg 审批要求客户端提交 expected_version（422 拒绝服务端代填）；
+       /api/v1/agent/* 由同一 PG runner 驱动（真实 PostgreSQL 事实源 + 持久 checkpoint
+       + D9 租约）；/api/demo/reset 在 pg profile 下**不注册**。
   **PG 业务数据（订单/政策/工单等）启动时不自动 seed**（防污染未知库）；
   seed 仅存在于 memory 分支（build_memory_backend）。token registry 为进程内演示映射。
+- Agent 生命周期 HTTP 接口（memory/pg 共用同一装配路径）：
+    POST /api/v1/agent/start              启动（Agent/Customer；租户取认证身份）
+    POST /api/v1/agent/{thread_id}/clarify 澄清补参（仅澄清中断状态）
+    POST /api/v1/agent/{thread_id}/decision 触发恢复（仅 APPROVER/SYSTEM；空 body；
+                                            审批结论必须先写入领域事实源）
+    GET  /api/v1/agent/{thread_id}/state  只读线程视图（租户作用域）
+  未装配 runner 时上述接口返回 503 AGENT_RUNNER_UNAVAILABLE（不静默降级）。
 - /health/live 恒 200；/health/ready 反映 PostgreSQL 可用性（pg 就绪 → 200；探测不可用 → 503）。
 """
 from __future__ import annotations
@@ -31,7 +41,6 @@ import argparse
 import os
 import socket
 import sys
-import tempfile
 from decimal import Decimal
 from pathlib import Path
 from uuid import uuid4
@@ -70,12 +79,17 @@ def build_memory_backend() -> tuple[AfterSalesService, ApiTokenRegistry]:
 
 
 def demo_token_registry() -> ApiTokenRegistry:
-    """进程内演示 token 映射（仅身份；业务数据是否 seed 由后端分支决定）。"""
+    """进程内演示 token 映射（仅身份；业务数据是否 seed 由后端分支决定）。
+
+    含一个 T2 演示身份：用于工作台与演示脚本的「跨租户拒绝」路径
+    （Agent 生命周期只服务内部坐席，T2 读 T1 线程应得到统一 404）。
+    """
     reg = ApiTokenRegistry()
     reg.register("demo-agent", ApiIdentity("agent-1", "T1", Role.AGENT))
     reg.register("demo-approver", ApiIdentity("approver-1", "T1", Role.APPROVER))
     reg.register("demo-system", ApiIdentity("system-1", "T1", Role.SYSTEM))
     reg.register("demo-customer", ApiIdentity("cust-1", "T1", Role.CUSTOMER, customer_id="C1"))
+    reg.register("demo-agent-t2", ApiIdentity("agent-2", "T2", Role.AGENT))
     return reg
 
 
@@ -93,12 +107,15 @@ def make_pg_probe(pg_url: str):
 
 
 def _default_checkpoint_path() -> str:
-    """项目 .runtime/tmp 下唯一 SQLite checkpoint 文件（D 盘存储约束；进程退出由调用方保持/关闭）。"""
-    from src.platform.runtime_paths import runtime_tmp_dir
-    fd, path = tempfile.mkstemp(prefix=f"opspilot-ckpt-{os.getpid()}-",
-                                suffix=".sqlite", dir=str(runtime_tmp_dir()))
-    os.close(fd)
-    return path
+    """**固定**的 D 盘 SQLite checkpoint 文件：`.runtime/checkpoints/opspilot-agent.sqlite`。
+
+    重启恢复要求：pg profile 不能用 PID 临时文件——否则进程重启后 checkpoint 丢失，
+    新实例无法按 (tenant_id, thread_id) 恢复线程。固定路径 + 租户限定的
+    workflow_threads 行共同保证跨进程恢复（checkpoint 只存流程状态，不存业务真相）。
+    可用 --checkpoint 显式覆盖（多实例部署应各自指定不同文件或改用服务端 checkpointer）。
+    """
+    from src.platform.runtime_paths import runtime_checkpoints_dir
+    return str(runtime_checkpoints_dir() / "opspilot-agent.sqlite")
 
 
 def _default_owner_id() -> str:
@@ -159,8 +176,10 @@ def main() -> int:
                         help="PostgreSQL 连接串（--backend pg 必需，或设 DATABASE_URL）；"
                              "memory 分支提供时仅启用 /health/ready 真实探测")
     parser.add_argument("--checkpoint", default=None,
-                        help="LangGraph 持久 checkpoint 的 SQLite 文件路径（仅 pg；缺省生成系统"
-                             "临时目录唯一文件）。checkpoint 只存流程恢复状态，不存业务最终真相")
+                        help="LangGraph 持久 checkpoint 的 SQLite 文件路径（仅 pg；缺省 "
+                             ".runtime/checkpoints/opspilot-agent.sqlite 固定路径，"
+                             "保证进程重启后仍能恢复线程）。checkpoint 只存流程恢复状态，"
+                             "不存业务最终真相")
     parser.add_argument("--owner-id", default=None,
                         help="workflow_threads 租约 owner 标识（仅 pg；缺省 "
                              "run_api-{hostname}-{pid}，稳定唯一）。进程重启接管以同 owner 续租")
@@ -176,27 +195,48 @@ def main() -> int:
                                  owner_id=args.owner_id)
         # pg profile：审批 expected_version 必填（服务端不代填）；业务数据未 seed
         app = create_app(built["backend"], demo_token_registry(),
-                         pg_probe=built["probe"], require_expected_version=True)
+                         pg_probe=built["probe"], require_expected_version=True,
+                         agent_runner=built["runner"])
         print(f"pg profile 装配完成：repo={built['url']}；owner={built['owner_id']}；"
-              f"checkpoint={built['checkpoint_path']}")
+              f"checkpoint={built['checkpoint_path']}（固定路径：重启后可按 "
+              f"(tenant_id, thread_id) 从 workflow_threads + checkpoint 恢复）")
     else:
         svc, reg = build_memory_backend()
         probe = make_pg_probe(args.pg_url) if args.pg_url else None
         # memory 后端经 MemoryAdapter 注入（API 只依赖 AfterSalesApplicationPort）
+        service = MemoryAdapter(svc)
+        agent_runner = WorkflowRunner(service)
+
         def reset_memory_demo() -> None:
+            """重置合成演示数据：**同时**重建 service 与 runner。
+
+            runner 持有网关（绑定后端 Port）与内存 checkpoint；只换 service 会让
+            runner 继续引用旧服务并残留旧线程，因此必须成对重建。
+            """
+            nonlocal service, agent_runner
             fresh_service, _ = build_memory_backend()
-            app.state.service = MemoryAdapter(fresh_service)
-        app = create_app(MemoryAdapter(svc), reg, pg_probe=probe,
-                         demo_reset=reset_memory_demo)
+            service = MemoryAdapter(fresh_service)
+            agent_runner = WorkflowRunner(service)
+            app.state.service = service
+            app.state.agent_runner = agent_runner
+
+        app = create_app(service, reg, pg_probe=probe,
+                         demo_reset=reset_memory_demo,
+                         agent_runner=agent_runner)
 
     _smoke(app)
 
     import uvicorn
     print(f"OpsPilot API 启动：http://{args.host}:{args.port} "
           f"(backend={args.backend}；pg_probe={'on' if args.backend == 'pg' or args.pg_url else 'off'})")
-    print("开发 token：X-Api-Key = demo-agent / demo-approver / demo-system / demo-customer")
+    print("开发 token：X-Api-Key = demo-agent / demo-approver / demo-system / "
+          "demo-customer / demo-agent-t2（T2 演示身份，用于跨租户拒绝演示）")
     if args.backend == "pg":
-        print("边界：PG 业务数据启动时不自动 seed；checkpoint 仅存流程恢复状态。")
+        print("边界：PG 业务数据启动时不自动 seed；checkpoint 仅存流程恢复状态；"
+              "线程唯一键 = (tenant_id, thread_id)，跨进程可恢复。")
+    else:
+        print("边界：memory profile 为**进程内合成演示**——业务数据与流程状态都在进程内存中，"
+              "重启即重置，不提供持久恢复。")
     uvicorn.run(app, host=args.host, port=args.port)
     return 0
 

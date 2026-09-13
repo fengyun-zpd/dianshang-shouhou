@@ -8,7 +8,7 @@ Supervisor 编排（src/agents/supervisor.py）：
 - 可选 orchestration="four-role"：四角色只读流程 Triage → Evidence → Resolution →
   RiskReview（multiagent.py，V1.1 新增；规则实现，非真实 LLM）。
 """
-from .graph import build_workflow
+from .graph import AgentLoopDetected, DEFAULT_MAX_STEPS, LOOP_ERROR_CODE, build_workflow
 from .multiagent import (
     EVIDENCE_AGENT_SPEC,
     RESOLUTION_AGENT_SPEC,
@@ -20,8 +20,15 @@ from .multiagent import (
     build_four_role_orchestrator,
 )
 from .ports import AfterSalesGateway
-from .runner import RunResult, WorkflowRunner
+from .runner import (
+    RunResult,
+    ThreadConflictError,
+    ThreadLeaseError,
+    UnknownThreadError,
+    WorkflowRunner,
+)
 from .state import AgentState
+from .tool_ledger import ToolCallLedger, args_digest, tool_call_context
 from .subagents import (
     HISTORY_AGENT_SPEC,
     ORDER_AGENT_SPEC,
@@ -34,10 +41,13 @@ from .supervisor import SupervisorRunner
 
 __all__ = [
     "AfterSalesGateway",
+    "AgentLoopDetected",
     "AgentState",
+    "DEFAULT_MAX_STEPS",
     "EVIDENCE_AGENT_SPEC",
     "FourRoleOrchestrator",
     "HISTORY_AGENT_SPEC",
+    "LOOP_ERROR_CODE",
     "ORDER_AGENT_SPEC",
     "POLICY_AGENT_SPEC",
     "RESOLUTION_AGENT_SPEC",
@@ -49,8 +59,14 @@ __all__ = [
     "SubAgentSpec",
     "SupervisorRunner",
     "TRIAGE_AGENT_SPEC",
+    "ThreadConflictError",
+    "ThreadLeaseError",
+    "ToolCallLedger",
+    "UnknownThreadError",
     "WorkflowRunner",
+    "args_digest",
     "build_four_role_orchestrator",
     "build_supervisor_evidence",
     "build_workflow",
+    "tool_call_context",
 ]

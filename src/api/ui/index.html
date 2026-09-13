@@ -102,6 +102,25 @@
           <div id="scenario-result" class="scenario-result" aria-live="polite"><span>选择一个剧本，开始面试演示。</span></div>
         </div>
       </section>
+      <section class="panel agent-flow-panel" id="agent-flow">
+        <div class="panel-header"><div><span class="eyebrow">HTTP Agent 生命周期</span><h2>Agent 全链路</h2></div><span id="agent-flow-status" class="status-tag neutral">等待启动</span></div>
+        <div class="agent-flow-content">
+          <p class="agent-flow-intro">真实调用 <code>/api/v1/agent/*</code> 四个接口，展示启动 → 澄清 → 审批草稿 → 批准/拒绝 → 恢复 → 当前状态。审批结论必须先经领域审批接口写入事实源，decision 只触发重读；外部执行结果只能由 SYSTEM 角色写入。</p>
+          <div class="agent-flow-actions">
+            <button class="agent-flow-action primary" id="af-start"><b>01</b>启动（正常）</button>
+            <button class="agent-flow-action" id="af-start-clarify"><b>02</b>启动（缺订单号）</button>
+            <button class="agent-flow-action" id="af-clarify"><b>03</b>澄清补参</button>
+            <button class="agent-flow-action" id="af-approve"><b>04</b>写入审批事实：批准</button>
+            <button class="agent-flow-action" id="af-reject"><b>04</b>写入审批事实：拒绝</button>
+            <button class="agent-flow-action primary" id="af-decision"><b>05</b>触发恢复 decision</button>
+            <button class="agent-flow-action" id="af-state"><b>06</b>刷新状态</button>
+            <button class="agent-flow-action" id="af-unknown"><b>07</b>未知状态</button>
+            <button class="agent-flow-action" id="af-loop"><b>08</b>循环保护</button>
+            <button class="agent-flow-action" id="af-cross"><b>09</b>跨租户拒绝</button>
+          </div>
+          <div id="agent-flow-view" class="agent-flow-view"><span>点击「启动（正常）」开始；每一步都调用真实受保护 API，页面只展示真实返回值。</span></div>
+        </div>
+      </section>
       <footer><span>OpsPilot 本地演示环境 · 合成数据</span><span>业务事实由领域服务与 PostgreSQL 路径裁决</span></footer>
       </main>
 

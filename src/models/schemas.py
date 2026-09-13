@@ -50,7 +50,12 @@ class EvidenceBoundExplanation(BaseModel):
 
 
 class ModelInvocationMetadata(BaseModel):
-    """单次模型调用元数据（评测与记账）。未实测字段留空/N/A，不填虚构值。"""
+    """单次模型调用元数据（评测与记账）。
+
+    诚实边界：未实测/未配置的字段一律留空或显式标记，不填虚构值。
+    成本：`cost_estimate_usd` / `input_cost` / `output_cost` 为 None 表示**价格未配置**
+    （报告显示 N/A），绝不写 0 冒充真实成本；`token_source` 说明 token 的来源。
+    """
     provider: str
     model_name: str
     model_version: str = ""
@@ -60,6 +65,22 @@ class ModelInvocationMetadata(BaseModel):
     duration_ms: float = 0.0
     input_tokens: int = 0
     output_tokens: int = 0
-    cost_estimate_usd: float = 0.0
+    # None = 未配置价格/不适用（例如离线规则）；0.0 才是「价格为 0 的真实计算结果」
+    cost_estimate_usd: Optional[float] = None
+    input_cost: Optional[float] = None
+    output_cost: Optional[float] = None
+    currency: str = "USD"
+    pricing_source: str = "未配置"
+    token_source: str = "measured"   # measured | estimated | not_applicable
     degraded: bool = False          # 是否降级（True=未走主模型）
     error: Optional[str] = None     # 降级原因（如 "TIMEOUT"/"SCHEMA_ERROR"）
+
+    @property
+    def total_tokens(self) -> int:
+        return int(self.input_tokens or 0) + int(self.output_tokens or 0)
+
+    def cost_display(self) -> str:
+        """成本展示：未配置 → N/A（不伪造）；已配置 → 币种 + 数值。"""
+        if self.cost_estimate_usd is None:
+            return "N/A"
+        return f"{self.currency} {self.cost_estimate_usd:.6f}"

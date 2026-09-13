@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class TicketCreateIn(BaseModel):
@@ -66,6 +66,49 @@ class AgentLabRetrieveIn(BaseModel):
 
 class AgentLabBoundaryScenarioIn(BaseModel):
     name: str = Field(..., pattern="^(clarify|no_evidence|cross_tenant|pii)$")
+
+
+class AgentStartIn(BaseModel):
+    """Agent 启动请求（V1 只服务内部坐席；客户入口属规划能力）。
+
+    安全边界（extra="forbid"）：请求体**只**接受用户诉求与线程标识。
+    出现 tenant_id / 金额 / 角色 / 审批结果 / 外部执行结果等字段 → 422（拒绝而非静默忽略）；
+    租户只由认证身份推导；外部执行结果只能由 SYSTEM 角色的领域执行接口写入。
+    """
+    model_config = {"extra": "forbid"}
+
+    message: str = Field(..., min_length=1, max_length=2000)
+    thread_id: Optional[str] = Field(None, min_length=1, max_length=100)
+    order_id_hint: Optional[str] = Field(None, min_length=3, max_length=64)
+
+
+class AgentClarifyIn(BaseModel):
+    """澄清补参请求。
+
+    安全边界（extra="forbid"）：只允许补「信息」，不允许借澄清接口修改租户、金额、
+    审批状态、操作状态或权限；至少提供一个有效字段（空载荷不会推进工作流）。
+    """
+    model_config = {"extra": "forbid"}
+
+    message: Optional[str] = Field(None, min_length=1, max_length=2000)
+    order_id: Optional[str] = Field(None, min_length=3, max_length=64)
+    description: Optional[str] = Field(None, min_length=1, max_length=2000)
+
+    @model_validator(mode="after")
+    def _at_least_one_field(self):
+        if not any((self.message, self.order_id, self.description)):
+            raise ValueError("澄清请求至少需要 message / order_id / description 之一（空载荷不推进工作流）")
+        return self
+
+
+class AgentDecisionIn(BaseModel):
+    """决策触发请求：允许空 body，且**不接受**任何审批结论字段。
+
+    审批结果必须先经领域审批接口写入事实源（/api/operations/{id}/approve|reject）；
+    本接口只触发 WorkflowRunner.resume，apply_decision 会重新读取带版本的审批事实。
+    携带 approved/rejected/decision 等字段 → 422（拒绝伪造审批结论）。
+    """
+    model_config = {"extra": "forbid"}
 
 
 class ReconcileIn(BaseModel):

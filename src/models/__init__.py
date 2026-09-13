@@ -25,7 +25,17 @@ from .base import (
     assert_payload_safe,
     estimate_tokens,
 )
-from .config import LLMSettings, assert_safe_network, load_llm_settings
+from .config import (
+    PRICE_ENV_INPUT,
+    PRICE_ENV_LEGACY_INPUT,
+    PRICE_ENV_OUTPUT,
+    PRICING_NOT_CONFIGURED,
+    CostBreakdown,
+    LLMSettings,
+    assert_safe_network,
+    is_allowed_base_url,
+    load_llm_settings,
+)
 from .offline import OfflineRuleClient
 from .openai_compatible import OpenAICompatibleClient
 from .router import HIGH_RISK_TASKS, LOW_RISK_TASKS, ModelEntry, ModelGateway, ModelRegistry, ModelTask
@@ -39,6 +49,7 @@ from .schemas import (
 
 __all__ = [
     "ClarificationDecision",
+    "CostBreakdown",
     "EvidenceBoundExplanation",
     "HIGH_RISK_TASKS",
     "IntentExtraction",
@@ -64,9 +75,14 @@ __all__ = [
     "ModelTimeoutError",
     "OfflineRuleClient",
     "OpenAICompatibleClient",
+    "PRICE_ENV_INPUT",
+    "PRICE_ENV_LEGACY_INPUT",
+    "PRICE_ENV_OUTPUT",
+    "PRICING_NOT_CONFIGURED",
     "assert_output_safe",
     "assert_payload_safe",
     "assert_safe_network",
     "estimate_tokens",
+    "is_allowed_base_url",
     "load_llm_settings",
 ]

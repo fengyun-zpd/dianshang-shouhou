@@ -35,4 +35,26 @@ $env:OPSPILOT_TEST_DATABASE_URL = 'postgresql+psycopg2://opspilot:opspilot@127.0
 
 `PgCommandService` 在事务中校验租户、角色、金额、政策版本、状态和 expected version，再写入业务行、审批、审计与幂等记录并重读返回。退款执行使用订单容量和锁/CAS；未知外部结果只能按原 `operation_id` 对账。`workflow_threads` 只保存 Runner 租约，不能替代业务事实。
 
+PG profile 下 `/api/v1/agent/*`（Agent 生命周期 HTTP，仅内部坐席）由同一个 `build_pg_backend`
+产出的 `WorkflowRunner` 驱动：真实 `PgCommandAdapter` + **固定** SQLite checkpoint
+（`.runtime/checkpoints/opspilot-agent.sqlite`，可用 `--checkpoint` 覆盖；不使用 PID 临时文件）
++ `workflow_threads` 租约。审批事实从 PG 读取，`decision` 接口只触发重读；
+`/api/demo/reset` 在 pg profile 下**不注册**（该路由只属于 memory 合成演示后端）。
+
+线程唯一键是 `(tenant_id, thread_id)`：**绑定事实源是租户限定的 `workflow_threads` 行 + 持久
+checkpoint**，进程内字典只是便利缓存。因此实例 A 中断后进程退出（不释放租约）、租约过期，实例 B
+用同一 PG 与同一 checkpoint 即可接管并继续执行；同名线程在不同租户下互不冲突；错误租户读取与
+"线程不存在"返回**同一个** 404，消息不含所属租户。租约语义不变：他人持约未过期时推进被拒绝。
+
+实测（隔离库 live）：
+
+```powershell
+.venv\Scripts\python.exe -m pytest tests/integration/test_run_api_pg_backend_live.py -q
+# → 4 passed（start→审批事实→decision→state 全链路，以 refund_operations 行金额验收；伪造 decision body 422）
+.venv\Scripts\python.exe -m pytest tests/integration/test_agent_restart_recovery_live.py -q
+# → 3 passed（实例 A 中断 → 关闭 → 实例 B 恢复；错误租户 404；同名线程；租约仍生效）
+```
+
 已删除 `PgBackedSession` 整库清空重插和快照恢复原型。生产部署、生产备份、支付或 CRM 接入未实现。
+固定 checkpoint 默认面向单实例；多实例部署应各自指定 `--checkpoint` 或改用服务端 checkpointer
+（当前**未验证**多实例并行）。

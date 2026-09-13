@@ -1,17 +1,24 @@
 # OpsPilot V1 架构
 
 ```text
-FastAPI（当前已验证：领域服务接口与审批/审计边界）
-  -> AfterSalesApplicationPort
-       |-- MemoryAdapter（测试/演示）
-       `-- PgCommandAdapter（PG profile）
-             -> PgCommandService（权限/金额/状态/幂等/审批/审计/租约）
-             -> PostgreSQL（业务事实源）
-WorkflowRunner（脚本/回放驱动的单 Agent 流程）
-  -> 只读证据、确定性证据检索基线（本地 RAG，可选接入）、澄清、审批 interrupt/resume
-SQLite checkpoint（仅流程状态）
+FastAPI（HTTP 主链路：领域服务接口 + Agent 生命周期接口）
+  ├── 领域服务接口（已实现/已测试/已验证）
+  │     -> AfterSalesApplicationPort
+  │          |-- MemoryAdapter（测试/演示）
+  │          `-- PgCommandAdapter（PG profile）
+  │                -> PgCommandService（权限/金额/状态/幂等/审批/审计/租约）
+  │                -> PostgreSQL（业务事实源）
+  └── Agent 生命周期接口（已实现/已测试/已验证，仅内部坐席）
+        POST /api/v1/agent/start               -> WorkflowRunner.start()（仅 AGENT）
+        POST /api/v1/agent/{id}/clarify        -> WorkflowRunner.resume()（仅澄清中断；仅 AGENT）
+        POST /api/v1/agent/{id}/decision       -> WorkflowRunner.resume("_continue_"；不携带审批结论)
+        GET  /api/v1/agent/{id}/state          -> WorkflowRunner.get_state()（只读；(租户,线程) 作用域）
+              -> 单 Agent 工作流（只读证据、确定性证据检索基线、澄清与审批 interrupt/resume）
+              -> 节点步数上限 + 工具去重账本（确定性保护）
+线程绑定事实源（PG profile）：workflow_threads（租户限定）+ 固定 SQLite checkpoint
+                            .runtime/checkpoints/opspilot-agent.sqlite（仅流程状态）
 
-本地演示工作台（`src/api/ui/`）通过受保护 API 展示上述领域接口、隔离 Agent Lab 和评测边界；它使用合成数据，不能视为生产运营后台。
+本地演示工作台（`src/api/ui/`）通过受保护 API 展示上述领域接口、Agent 全链路面板、隔离 Agent Lab 和评测边界；它使用合成数据，不能视为生产运营后台。
 ```
 
 `src/domain/after_sales/` 是唯一业务主实现。早期退款服务、Mule Bridge 和整库镜像持久化原型已删除，不参与默认运行时。
@@ -24,12 +31,70 @@ SQLite checkpoint（仅流程状态）
 | 授权人员 | 带版本 approve/reject 决定 | 直接改写业务事实 |
 | checkpoint | 流程挂起与恢复 | 订单、金额、审批、执行结果 |
 
-默认验收路径是确定性领域 API 加单 Agent 回放/演示。当前 FastAPI 工厂没有接入 WorkflowRunner，不能宣称 HTTP 已覆盖 Agent 启动、澄清和恢复；若不补这层，面试叙述应明确二者是两个入口。Supervisor 只作 A/B 实验；同一黄金集下没有收益，因此不进入默认路径。真实 LLM 与微调均未实测/未实现。
+## Agent 生命周期 HTTP 主链路（V1.2 起并入默认链路）
+
+`create_app(..., agent_runner=...)` 把当前已装配的 `WorkflowRunner` 暴露为 HTTP：
+`scripts/run_api.py --backend memory` 创建内存运行器（**进程内合成演示**，重启即重置）；
+`--backend pg` 复用同一 PG 运行器（真实 PostgreSQL 后端 +
+`.runtime/checkpoints/opspilot-agent.sqlite` 固定 checkpoint + D9 租约）。未装配运行器时接口
+返回 `503 AGENT_RUNNER_UNAVAILABLE`，**不静默降级**、不伪造结果。
+
+| 接口 | 角色 | 语义 | 关键边界 |
+| --- | --- | --- | --- |
+| `POST /api/v1/agent/start` | **仅 AGENT** | 调用 `WorkflowRunner.start()` | 租户只取认证身份；`extra="forbid"`（tenant_id/金额/角色/审批结果/外部结果 → 422）；同 (租户, 线程) 异请求 → 409 |
+| `POST /api/v1/agent/{thread_id}/clarify` | **仅 AGENT** | 澄清补参后回到原线程 | 仅澄清中断状态可用；`extra="forbid"`；空载荷 422 |
+| `POST /api/v1/agent/{thread_id}/decision` | APPROVER / SYSTEM | **只触发** `resume(payload="_continue_")` | 不携带 `approved/rejected`（携带 → 422）；`apply_decision` 重读带版本的领域审批事实 |
+| `GET /api/v1/agent/{thread_id}/state` | AGENT / APPROVER / SYSTEM | 只读线程视图 | 线程唯一键 `(tenant_id, thread_id)`；不存在或错误租户统一 404（不暴露归属） |
+
+V1 只服务内部坐席：**同租户客户调用任一接口 → 403**；客户端自助入口属规划能力，当前不开放。
+
+外部执行结果不由 HTTP 调用者指定：`start` 不接受 `simulate_external`；未知状态必须由 SYSTEM
+调用 `/api/operations/{id}/execute` 写入 `timeout`（领域事实 `unknown`），再由 `decision` 重读。
+runner 内部的 `simulate_external` 参数仅用于测试与合成演示（HTTP 层不可达）。
+
+`/decision` 的存在意义是**把"触发"与"决定"分开**：审批结论必须先经
+`/api/operations/{operation_id}/approve|reject` 写入领域事实源；HTTP body、checkpoint 与
+模型输出都不能作为审批依据。领域事实仍为 `PENDING_APPROVAL` 时，工作流继续等待；
+`unknown` 时返回 `operation_unknown` 且只允许以原 `operation_id` 对账。
+
+### 跨进程恢复（PG profile）
+
+线程绑定的事实源 = **租户限定的 `workflow_threads` 行 + 持久 checkpoint**；进程内字典只是
+便利缓存。因此：
+
+- 实例 A 中断 → 进程退出（不释放租约）→ 租约过期后实例 B 用同一 PG + 同一 fixed checkpoint
+  接管，可按 `(tenant_id, thread_id)` 读 `state`、恢复 `decision` 并继续执行；
+- 同名线程在不同租户下互不冲突（checkpoint 键空间 `tenant:thread`）；
+- 错误租户读取与"线程不存在"返回**同一个** 404 与同样结构的消息（不可区分、不含所属租户）；
+- 内存 profile 不声称持久恢复（进程内演示）。
+
+实测：`tests/integration/test_agent_restart_recovery_live.py`（3 项 PG live，含租约仍生效）。
+
+## 确定性保护边界（V1.2 新增）
+
+| 保护 | 机制 | 触发后的行为 |
+| --- | --- | --- |
+| 死循环 | 节点包装器递增 `step_count`（默认上限 32，可构造参数覆盖） | 抛 `AgentLoopDetected` → `AGENT_LOOP_DETECTED` / `outcome=escalated` / 转人工；**触发后无新增领域写入、无退款执行** |
+| 单次 invoke 超级步失控 | LangGraph `recursion_limit`（`max_steps*2+10`） | `GraphRecursionError` → 同一错误码收口 |
+| 重复工具调用 | 工具去重账本：键 =（工具名, 租户, thread_id, 参数摘要） | 复用首次结果，不发起第二次领域调用；领域幂等键仍是最终兜底 |
+| 审批事实过期 | `get_operation` 明确列入"永不缓存"清单 | 每次恢复都读事实源最新版本 |
+
+循环终态**写入持久 checkpoint**（流程状态，非业务事实）：新实例 `get_state` 仍返回
+`AGENT_LOOP_DETECTED` / `escalated` / 人工接管原因；检测前已形成的草稿与审批事实保留在领域
+事实源中，不受影响。
+
+限制（如实）：`step_count` 只在节点**正常返回**时写回 checkpoint——LangGraph 的 `interrupt()`
+会丢弃该节点的写入，因此持久化的计数不含"进入即挂起"的节点；但上限判定按**节点进入次数**
+计算，两类计数都能阻止无界循环（`tests/unit/agents/test_loop_protection.py`）。
+
+默认验收路径是确定性领域 API 加**已并入 HTTP 的** Agent 生命周期。Supervisor 只作 A/B 实验；
+同一黄金集下没有收益，因此不进入默认路径。真实 LLM 与微调均未实测/未实现。
 
 ```powershell
 cd D:\workplace\PyCharmMiscProject\私域
 . .\scripts\init_d_env.ps1
 .venv\Scripts\python.exe -m pytest tests/ -q
 .venv\Scripts\python.exe scripts\demo_interview.py
+.venv\Scripts\python.exe scripts\demo_agent_http.py      # HTTP 生命周期（9 场景）
 .venv\Scripts\python.exe scripts\run_api.py --backend memory
 ```

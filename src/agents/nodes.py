@@ -217,8 +217,14 @@ def build_nodes(gateway: AfterSalesGateway,
         }
 
     def request_approval(state: AgentState) -> dict:
-        """高风险动作草稿落库后挂起，等待人工审批（interrupt）。"""
-        interrupt({
+        """高风险动作草稿落库后挂起，等待人工审批（interrupt）。
+
+        本节点在两种情况下被调用：草稿刚落库，或 apply_decision 读到领域审批事实仍为
+        PENDING（本次恢复被忽略）。后者会带上 `waiting=True` 与原因说明，语义一致：
+        挂起等待，不产生任何副作用。
+        """
+        pending = bool(state.get("decision_still_pending"))
+        payload = {
             "type": APPROVAL_INTERRUPT_TYPE,
             "approval_id": state.get("approval_id"),
             "operation_id": state.get("operation_id"),
@@ -226,7 +232,11 @@ def build_nodes(gateway: AfterSalesGateway,
             "risk_level": state.get("risk_level", "high"),
             "action_draft": state.get("action_draft"),
             "summary": state.get("approval_summary"),
-        })
+        }
+        if pending:
+            payload["waiting"] = True
+            payload["reason"] = ("审批决定尚未提交到领域服务；已忽略本次恢复请求，继续等待真实审批")
+        interrupt(payload)
         return {"next_action": "wait_approval"}
 
     # ---------- 恢复：重读领域事实源中的审批决定 ----------
@@ -236,43 +246,50 @@ def build_nodes(gateway: AfterSalesGateway,
 
         - APPROVED → 受控执行；REJECTED → 关单定性拒绝（无副作用）；
         - EXECUTED/FAILED/UNKNOWN → 幂等收尾，不重复执行；
-        - PENDING（审批未提交）→ 忽略任何 resume 携带的决定，再次 interrupt 等待真实审批；
-          每次 resume 都回到本循环重新读领域决定，直到终审。
+        - PENDING（审批未提交）→ 忽略任何 resume 携带的决定，路由回 request_approval
+          再次挂起等待真实审批。**本节点从不 interrupt**，因此每次恢复都会完整执行一次
+          并让 step_count 递增：重复等待受最大步数保护，不会无限运行。
+
+        `decision` 只写回状态用于观测，**不作为业务依据**：审批结果只能来自
+        `gateway.get_operation`（领域事实源，带版本号）。
         """
         op_id = state.get("operation_id")
         tenant = state.get("tenant_id")
-        while True:
-            if not op_id:
-                return {"error_code": "OPERATION_NOT_FOUND", "outcome": "error",
-                        "next_action": "escalate", "reply": "恢复失败：缺少操作编号"}
-            try:
-                op = gateway.get_operation(tenant, op_id)  # 只读，领域服务为事实源
-            except AfterSalesError as e:
-                return {"error_code": e.code.value, "outcome": "error",
-                        "next_action": "escalate",
-                        "reply": f"恢复失败：操作不存在或不可读（{e.message}），未执行任何副作用"}
-            if op.status == OperationStatus.APPROVED:
-                return {"next_action": "execute_operation", "decision": "approved"}
-            if op.status == OperationStatus.REJECTED:
-                return {"next_action": "settle_rejected", "decision": "rejected"}
-            if op.status == OperationStatus.EXECUTED:
-                return {"outcome": "already_executed", "next_action": "finished",
-                        "reply": "该操作此前已执行完成，重复恢复不重复执行（幂等）"}
-            if op.status == OperationStatus.FAILED:
-                return {"outcome": "failed", "next_action": "finished",
-                        "reply": "该操作已对账失败并终态，重复恢复不重复执行"}
-            if op.status == OperationStatus.UNKNOWN:
-                return {"outcome": "operation_unknown", "next_action": "reconcile_required",
-                        "reply": "外部执行结果未知，操作处于 operation_unknown；只能以原操作编号查询/对账，禁止换键重试"}
-            # PENDING_APPROVAL 等未决：审批决定尚未提交 → 不执行任何副作用，
-            # 再次挂起等待真实审批（resume 携带的 decision 不生效）
-            interrupt({
-                "type": APPROVAL_INTERRUPT_TYPE,
-                "waiting": True,
-                "approval_id": state.get("approval_id"),
-                "operation_id": op_id,
-                "reason": "审批决定尚未提交到领域服务；已忽略本次恢复请求，继续等待真实审批",
-            })
+        if not op_id:
+            return {"error_code": "OPERATION_NOT_FOUND", "outcome": "error",
+                    "next_action": "escalate", "reply": "恢复失败：缺少操作编号"}
+        try:
+            op = gateway.get_operation(tenant, op_id)  # 只读，领域服务为事实源
+        except AfterSalesError as e:
+            return {"error_code": e.code.value, "outcome": "error",
+                    "next_action": "escalate",
+                    "reply": f"恢复失败：操作不存在或不可读（{e.message}），未执行任何副作用"}
+        if op.status == OperationStatus.APPROVED:
+            return {"next_action": "execute_operation", "decision": "approved",
+                    "decision_still_pending": False}
+        if op.status == OperationStatus.REJECTED:
+            return {"next_action": "settle_rejected", "decision": "rejected",
+                    "decision_still_pending": False}
+        if op.status == OperationStatus.EXECUTED:
+            return {"outcome": "already_executed", "next_action": "finished",
+                    "decision_still_pending": False,
+                    "reply": "该操作此前已执行完成，重复恢复不重复执行（幂等）"}
+        if op.status == OperationStatus.FAILED:
+            return {"outcome": "failed", "next_action": "finished",
+                    "decision_still_pending": False,
+                    "reply": "该操作已对账失败并终态，重复恢复不重复执行"}
+        if op.status == OperationStatus.UNKNOWN:
+            return {"outcome": "operation_unknown", "next_action": "reconcile_required",
+                    "decision_still_pending": False,
+                    "reply": "外部执行结果未知，操作处于 operation_unknown；只能以原操作编号查询/对账，禁止换键重试"}
+        # PENDING_APPROVAL 等未决：审批决定尚未提交 → 不执行任何副作用，
+        # 回到 request_approval 再次挂起等待真实审批（resume 携带的 decision 不生效）
+        return {
+            "next_action": "wait_approval",
+            "decision_still_pending": True,
+            "decision": "ignored（领域审批事实仍为未决，本节点只触发重读）",
+            "approval_summary": state.get("approval_summary"),
+        }
 
     # ---------- 执行 / 收尾 ----------
 

@@ -49,6 +49,8 @@ class AgentState(TypedDict, total=False):
     # 线程生命周期（任务卡 J）：请求指纹（tenant + 规范化请求哈希），
     # checkpoint 中不可变——同一 thread 只能继续原请求。
     thread_request_fingerprint: Optional[dict]
+    step_count: int                 # 节点步数上限保护，防止异常循环
+    decision_still_pending: bool    # 上次恢复时领域审批事实仍为未决（仅观测，非业务依据）
 
 
 def new_state() -> AgentState:

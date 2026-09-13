@@ -10,10 +10,14 @@
   （submit_approver_decision 仅供授权人员/上层运行器调用）；
 - 只读查询：订单、历史工单（租户内）、物流（当前未接入 → 显式不可用）；
 - collect_audit_events() 返回自上次水位以来的领域审计事件 id（用于 audit_event_ids）。
+
+工具去重（可选 ledger）：受控写工具按 (工具名, 租户, thread_id, 参数摘要) 去重，
+重复调用复用首次结果；`get_operation` 等事实重读工具**永不缓存**。账本只是第二道防线，
+重复副作用的最终兜底仍是领域服务幂等键。
 """
 from __future__ import annotations
 
-from typing import Optional, Tuple
+from typing import Any, Callable, Optional, Tuple
 
 from src.domain.after_sales import (
     AfterSalesTicket,
@@ -34,13 +38,40 @@ from src.domain.after_sales import (
 )
 from src.domain.after_sales.ports import AfterSalesApplicationPort
 
+from .tool_ledger import NEVER_DEDUPED_TOOLS, ToolCallLedger, current_tool_context
+
 
 class AfterSalesGateway:
     """包住 AfterSalesApplicationPort 的受控通道（进程内实现，不绑定后端类型）。"""
 
-    def __init__(self, port: AfterSalesApplicationPort):
+    def __init__(self, port: AfterSalesApplicationPort,
+                 ledger: Optional[ToolCallLedger] = None):
         self._port = port
         self._audit_watermark = 0  # 已收集到的领域审计事件条数（水位，按租户过滤视图）
+        self._ledger = ledger
+
+    # ---------- 工具去重（第二道防线；领域幂等键仍是最终兜底） ----------
+
+    def _dedup(self, tool: str, tenant_id: Optional[str], args: dict,
+               fn: Callable[[], Any]) -> Any:
+        """受控写工具去重：命中重复键复用首次结果，不发起第二次领域调用。
+
+        以下情况直接穿透（不去重）：
+        - 未装配账本（向后兼容）；
+        - 工具在 NEVER_DEDUPED_TOOLS（审批/操作事实重读必须每次读事实源）；
+        - 无节点执行上下文（脚本直调网关，不假设线程语义）。
+        """
+        ledger = self._ledger
+        if ledger is None or tool in NEVER_DEDUPED_TOOLS:
+            return fn()
+        ctx = current_tool_context()
+        if ctx is None or not ctx.thread_id:
+            return fn()
+        return ledger.invoke(tool, tenant_id, ctx.thread_id, args, fn)
+
+    @property
+    def tool_ledger(self) -> Optional[ToolCallLedger]:
+        return self._ledger
 
     # ---------- 只读查询（证据编排） ----------
 
@@ -75,44 +106,68 @@ class AfterSalesGateway:
         self, tenant_id: str, order_id: str, customer_id: str,
         reason: str, reason_tags: Tuple[str, ...], idempotency_key: str,
     ) -> AfterSalesTicket:
-        return self._port.create_ticket(CreateTicketCommand(
-            tenant_id=tenant_id, order_id=order_id, customer_id=customer_id,
-            request_type=RequestType.REFUND, reason=reason, reason_tags=reason_tags,
-            actor=Role.AGENT, idempotency_key=idempotency_key,
-        ))
+        return self._dedup(
+            "create_ticket", tenant_id,
+            {"order_id": order_id, "customer_id": customer_id, "reason": reason,
+             "reason_tags": list(reason_tags), "idempotency_key": idempotency_key},
+            lambda: self._port.create_ticket(CreateTicketCommand(
+                tenant_id=tenant_id, order_id=order_id, customer_id=customer_id,
+                request_type=RequestType.REFUND, reason=reason, reason_tags=reason_tags,
+                actor=Role.AGENT, idempotency_key=idempotency_key,
+            )),
+        )
 
     def create_refund(self, tenant_id: str, ticket_id: str, amount,
                       reason_detail: str, idempotency_key: str) -> Operation:
-        return self._port.create_refund_draft(tenant_id, CreateRefundCommand(
-            ticket_id=ticket_id, amount=amount, reason_detail=reason_detail,
-            actor=Role.AGENT, idempotency_key=idempotency_key,
-        ))
+        return self._dedup(
+            "create_refund", tenant_id,
+            {"ticket_id": ticket_id, "amount": str(amount),
+             "reason_detail": reason_detail, "idempotency_key": idempotency_key},
+            lambda: self._port.create_refund_draft(tenant_id, CreateRefundCommand(
+                ticket_id=ticket_id, amount=amount, reason_detail=reason_detail,
+                actor=Role.AGENT, idempotency_key=idempotency_key,
+            )),
+        )
 
     def submit(self, tenant_id: str, operation_id: str) -> Operation:
         """提交审批（幂等）：DRAFT → PENDING_APPROVAL；已提交或已终态则原样返回。
 
         幂等化位于网关层（编排语义），不改动领域服务的严格状态机。
         """
-        op = self._port.get_operation(tenant_id, operation_id)
-        if op.status == OperationStatus.DRAFT:
-            return self._port.submit(tenant_id,
-                                     SubmitCommand(operation_id=operation_id, actor=Role.AGENT))
-        return op
+        def _do() -> Operation:
+            op = self._port.get_operation(tenant_id, operation_id)
+            if op.status == OperationStatus.DRAFT:
+                return self._port.submit(tenant_id, SubmitCommand(
+                    operation_id=operation_id, actor=Role.AGENT))
+            return op
+
+        return self._dedup("submit", tenant_id, {"operation_id": operation_id}, _do)
 
     def close_ticket(self, tenant_id: str, ticket_id: str) -> AfterSalesTicket:
-        return self._port.close_ticket(tenant_id,
-                                       CloseTicketCommand(ticket_id=ticket_id, actor=Role.AGENT))
+        return self._dedup(
+            "close_ticket", tenant_id, {"ticket_id": ticket_id},
+            lambda: self._port.close_ticket(tenant_id, CloseTicketCommand(
+                ticket_id=ticket_id, actor=Role.AGENT)),
+        )
 
     def execute(self, tenant_id: str, operation_id: str,
                 external_result: str = "success") -> Operation:
-        return self._port.execute(tenant_id, ExecuteCommand(
-            operation_id=operation_id, actor=Role.SYSTEM, external_result=external_result,
-        ))
+        return self._dedup(
+            "execute", tenant_id,
+            {"operation_id": operation_id, "external_result": external_result},
+            lambda: self._port.execute(tenant_id, ExecuteCommand(
+                operation_id=operation_id, actor=Role.SYSTEM,
+                external_result=external_result)),
+        )
 
     def reconcile(self, tenant_id: str, operation_id: str, result: str) -> Operation:
         """operation_unknown 对账收口（SYSTEM；只能以原 operation_id）。"""
-        return self._port.reconcile(tenant_id, ReconcileCommand(
-            operation_id=operation_id, actor=Role.SYSTEM, result=result))
+        return self._dedup(
+            "reconcile", tenant_id,
+            {"operation_id": operation_id, "result": result},
+            lambda: self._port.reconcile(tenant_id, ReconcileCommand(
+                operation_id=operation_id, actor=Role.SYSTEM, result=result)),
+        )
 
     # ---------- 审批（由外部授权人员提交决定到事实源；Agent 无此通道） ----------
 

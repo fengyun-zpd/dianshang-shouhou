@@ -7,14 +7,22 @@
 ## 审查结论
 
 当前 V1 已有完整的单 Agent 闭环、确定性领域服务、确定性证据检索基线（本地 RAG）、PostgreSQL 命令路径、
-审批恢复、unknown 原操作对账、领域 API、黄金集和五场景演示。Agent 运行器目前由脚本/回放
-驱动，FastAPI 工厂没有接入它，因此不能把 HTTP 说成 Agent 主链路。`SupervisorRunner` 只作为
+> **历史快照（2026-09-07，已被 V1.2 收口轮取代）**：本文保留当时的问题定位与实施顺序，
+> 其中的状态判断与测试数字**不是当前事实**。当前事实请以 `README.md`、`docs/ARCHITECTURE.md`、
+> `docs/STATUS_AND_RISKS.md`、`docs/TESTING_BASELINE.md`、`docs/INTERVIEW_OVERVIEW.md` 为准。
+> 已被取代的两点：① FastAPI 工厂**已接入** `WorkflowRunner`（`create_app(agent_runner=...)`，
+> `/api/v1/agent/*` 四个接口，仅内部坐席）；② 本文中的测试数字（399/44、443/0 等）属历史轮次，
+> 当前基线为离线 490 passed / 49 skipped、隔离 PG 539 passed / 0 skipped。
+
+审批恢复、unknown 原操作对账、领域 API、黄金集和五场景演示。Agent 运行器在本文写作时由脚本/回放
+驱动、FastAPI 工厂尚未接入它（**该状态已在 V1.2 收口轮改变**）。`SupervisorRunner` 只作为
 A/B 实验保留；模型模块只提供离线规则基线和受控影子入口；没有实际微调。这些边界与面试目标一致。
 PG destructive-operation guard 已实现并有拒绝路径回归测试（`src/platform/pg_test_guard.py`
 fail-closed：仅 `opspilot_test_*`@localhost 可被 DROP/重建，非法 URL 在连接探测前失败）。
-当前 D 盘全量（2026-09-07 Agent Lab 边界剧本变更后实测）：未配置隔离 PG → 399 passed、44 skipped、1 条第三方弃用警告；
-配置 `OPSPILOT_TEST_DATABASE_URL`（opspilot_test_* 隔离库）→ 443 passed、0 skipped、1 条第三方弃用警告。`scripts/run_pg_tests_isolated.ps1`
-已在两套独立数据库各完成 25 passed，均执行迁移至 `0005`；未配置隔离库时的 44 个 skip 仅是该运行模式的纪律性跳过，不能替代 PG 验证。
+**历史数字（2026-09-07 实测，仅作留档）**：未配置隔离 PG → 399 passed、44 skipped；
+配置 `OPSPILOT_TEST_DATABASE_URL`（opspilot_test_* 隔离库）→ 443 passed、0 skipped。
+当前基线见 `docs/TESTING_BASELINE.md`；未配置隔离库时的 skip 仅是该运行模式的纪律性跳过，
+不能替代 PG 验证。
 
 继续增加 RAG 层级、多 Agent、向量库、微调、生产前端或外部集成只会增加解释成本，不能提高当前
 主张的可信度。下一阶段应进入 **V1 发布候选验收**，把现有能力变成可复现、可讲解的证据。

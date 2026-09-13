@@ -10,7 +10,7 @@ from decimal import Decimal
 import pytest
 
 from src.agents import WorkflowRunner
-from src.agents.runner import ThreadConflictError
+from src.agents.runner import ThreadConflictError, UnknownThreadError
 from tests.unit.agents.helpers import REQUEST_DAMAGED, make_runner
 
 
@@ -57,13 +57,22 @@ def test_repeat_same_request_returns_original_result():
     assert len(svc.audit_log()) == before                 # 无重复副作用
 
 
-def test_tenant_binding_immutable_on_repeat_and_resume():
+def test_thread_scope_is_tenant_qualified():
+    """线程作用域 = (tenant_id, thread_id)：同名线程跨租户互不冲突，但不可跨租户读写。"""
     svc, runner = make_runner()
     r = runner.start("T1", REQUEST_DAMAGED, thread_id="t-j5")
-    with pytest.raises(ValueError):
-        runner.start("T2", REQUEST_DAMAGED, thread_id="t-j5")
-    with pytest.raises(ValueError):
-        runner.resume("t-j5", tenant_id="T2")
+    assert r.state["tenant_id"] == "T1"
+
+    # 同名线程在 T2 下是独立线程（不冲突），checkpoint 键空间相互隔离
+    t2 = runner.start("T2", REQUEST_DAMAGED, thread_id="t-j5")
+    assert t2.state["tenant_id"] == "T2"
+    assert (runner._cfg("t-j5", "T1")["configurable"]["thread_id"]
+            != runner._cfg("t-j5", "T2")["configurable"]["thread_id"])
+
+    # 跨租户读写一律 UnknownThreadError（通用 404，不暴露所属租户）
+    with pytest.raises(UnknownThreadError) as wrong_tenant:
+        runner.resume("t-j5", tenant_id="T3")
+    assert "T1" not in str(wrong_tenant.value) and "T2" not in str(wrong_tenant.value)
     assert svc.refunded_amount("ORD-1") == Decimal("0.00")
 
 

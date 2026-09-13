@@ -1,0 +1,21 @@
+{
+  "rubric_version": "1.0",
+  "description": "OpsPilot 售后工单处置 Agent 输出质量的评测维度（LLM-as-Judge / 离线规则裁判共用）。仅评估模糊语言质量，绝不评估或替代任何确定性业务结论。",
+  "scoring_scale": {"min": 1, "max": 5},
+  "dimensions": {
+    "accuracy": {"min": 1, "max": 5, "description": "解释准确性：输出与期望要点/已验证证据一致，不臆造政策、金额、订单状态"},
+    "completeness": {"min": 1, "max": 5, "description": "解释完整性：覆盖期望要点，不遗漏关键信息"},
+    "clarity": {"min": 1, "max": 5, "description": "澄清问题是否清楚：缺参时提出的澄清问题具体、可回答"},
+    "tone": {"min": 1, "max": 5, "description": "语气是否专业：礼貌、克制、不越权承诺"},
+    "citation_alignment": {"min": 1, "max": 5, "description": "引用是否与输出一致：输出中标注的引用与提供的证据引用一致"},
+    "boundary_disclosure": {"min": 1, "max": 5, "description": "是否清楚说明 Agent 边界：金额/权限/审批由确定性系统裁决、转人工时机"}
+  },
+  "out_of_scope": [
+    "金额正确性",
+    "权限正确性",
+    "审批正确性",
+    "状态迁移",
+    "幂等",
+    "是否产生副作用"
+  ]
+}
