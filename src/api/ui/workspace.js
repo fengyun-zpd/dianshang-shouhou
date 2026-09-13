@@ -212,12 +212,21 @@
       afRender(view, `${kind}（决定由 APPROVER 写入领域事实源，Agent 未携带结论）`);
     } catch (error) { afBegin("写入审批事实失败"); afRender(null, error.message); toast(error.message, true); }
   };
+  const afTicketStatus = async (ticketId) => {
+    if (!ticketId) return "未创建";
+    try {
+      const ticket = await api(`/api/tickets/${encodeURIComponent(ticketId)}`, {}, AF_AGENT);
+      return `${ticket.status}${ticket.resolution ? ` / ${ticket.resolution}` : ""}`;
+    } catch { return "不可读"; }
+  };
   const afDecision = async () => {
     if (!afState.threadId) return toast("请先启动一个线程", true);
     afBegin("正在触发恢复");
     try {
       const view = await api(`/api/v1/agent/${encodeURIComponent(afState.threadId)}/decision`, { method: "POST", body: "{}" }, AF_APPROVER);
-      afDone("恢复完成"); afRender(view, "decision（空 body，只触发 apply_decision 重读领域事实）");
+      const ticket = await afTicketStatus(view.ticket_id);
+      afDone("恢复完成");
+      afRender(view, `decision（空 body，只触发 apply_decision 重读领域事实）；工单当前状态：${ticket}`);
     } catch (error) { afBegin("恢复失败"); afRender(null, error.message); toast(error.message, true); }
   };
   const afRefresh = async () => {
@@ -225,7 +234,9 @@
     afBegin("正在查询状态");
     try {
       const view = await api(`/api/v1/agent/${encodeURIComponent(afState.threadId)}/state`, {}, AF_AGENT);
-      afDone("状态已刷新"); afRender(view, "state（只读视图）");
+      const ticket = await afTicketStatus(view.ticket_id);
+      afDone("状态已刷新");
+      afRender(view, `state（只读视图；checkpoint 快照 + 当前领域工单状态：${ticket}）`);
     } catch (error) { afBegin("查询失败"); afRender(null, error.message); toast(error.message, true); }
   };
   const afUnknown = async () => {
@@ -242,9 +253,15 @@
       // 外部执行结果只能由 SYSTEM 角色的领域执行接口写入（HTTP start 不接受该字段）
       const unknown = await api(`/api/operations/${encodeURIComponent(started.operation_id)}/execute`, { method: "POST",
         body: JSON.stringify({ external_result: "timeout" }) }, AF_SYSTEM);
-      const view = await api(`/api/v1/agent/${encodeURIComponent(started.thread_id)}/decision`, { method: "POST", body: "{}" }, AF_APPROVER);
-      afDone(`未知状态：${unknown.status}`);
-      afRender(view, "SYSTEM 写入 timeout → unknown；decision 只重读事实，不换键重试");
+      const waiting = await api(`/api/v1/agent/${encodeURIComponent(started.thread_id)}/decision`, { method: "POST", body: "{}" }, AF_APPROVER);
+      // 对账仍只走原 operation_id 的领域接口（SYSTEM），随后由 decision 重读事实并收尾关单
+      const reconciled = await api(`/api/operations/${encodeURIComponent(started.operation_id)}/reconcile`, { method: "POST",
+        body: JSON.stringify({ result: "success" }) }, AF_SYSTEM);
+      const recovered = await api(`/api/v1/agent/${encodeURIComponent(started.thread_id)}/decision`, { method: "POST", body: "{}" }, AF_APPROVER);
+      const ticket = await afTicketStatus(recovered.ticket_id);
+      afDone(`对账后恢复：${recovered.outcome || waiting.outcome}`);
+      afRender(recovered, `SYSTEM 写 timeout → ${unknown.status}；decision 重读 ${waiting.outcome}；`
+        + `原 operation_id 对账 → ${reconciled.status}；再次 decision → ${recovered.outcome}，工单 ${ticket}`);
     } catch (error) { afBegin("未知状态演示失败"); afRender(null, error.message); toast(error.message, true); }
   };
   const afLoop = async () => {

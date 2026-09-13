@@ -23,10 +23,13 @@
 
 | 编号 | 缺陷 | 整改结论 | 回归证据 |
 | --- | --- | --- | --- |
-| R1 | checkpoint 分隔符碰撞 | 已修复：v2 长度编码，旧键精确匹配，歧义拒绝 | `test_thread_tenant_namespace.py` |
-| R2 | HTTP 流程视图泄露 PII | 已修复：公共字段白名单和递归脱敏，错误响应同样处理 | `test_agent_http_lifecycle.py` |
-| R3 | 审计跨线程/租户遗漏或混入 | 已修复：按线程实体过滤并稳定去重 | Agent 审计回归、`review_v12_boundaries.py` |
-| R4 | unknown/已执行缺少恢复收尾 | 已修复：原操作恢复、领域事实收口、只允许合法关单 | `test_resume_idempotency_and_unknown.py` |
-| R5 | 重启测试租约偶发 409 | 已修复测试证据：独立子进程 + DB 时间等待租约过期 | `test_agent_restart_recovery_live.py` |
+| R1 | checkpoint 分隔符碰撞 | 已修复：v2 长度编码，旧键精确匹配，歧义拒绝 | `tests/unit/agents/test_thread_tenant_namespace.py`、`review_v12_boundaries.py` R1-*、`test_agent_http_lifecycle.py::test_colon_collision_http_is_isolated_and_write_free`（零业务写入）、`test_agent_restart_recovery_live.py::test_pg_colon_collision_start_then_read_stays_isolated`（PG：先 start 后 GET） |
+| R2 | HTTP 流程视图泄露 PII | 已修复：公共字段白名单和递归脱敏，错误响应同样处理 | `test_agent_http_lifecycle.py::test_public_agent_views_and_validation_errors_redact_pii`、`::test_clarify_decision_views_and_logs_redact_pii`（含日志）、`::test_request_fingerprint_distinguishes_raw_text_with_same_public_view`（脱敏不合并不同原始请求） |
+| R3 | 审计跨线程/租户遗漏或混入 | 已修复：按线程实体过滤并稳定去重 | `tests/unit/agents/test_audit_association.py`（5 项：跨租户交错、同租户交错审批、重复读取、新实例重建、领域事实可重建）、`review_v12_boundaries.py` R3-* |
+| R4 | unknown/已执行缺少恢复收尾 | 已修复：原操作恢复、领域事实收口、只允许合法关单 | `tests/unit/agents/test_resume_idempotency_and_unknown.py`（含关单失败保留错误码/重试收尾）、`review_v12_boundaries.py` R4-* |
+| R5 | 重启测试租约偶发 409 | 已修复测试证据：独立子进程 + DB 时间等待租约过期 | `tests/integration/test_agent_restart_recovery_live.py`（独立进程 A/B；循环终态跨实例存活） |
+
+回归有效性：临时回退 R1/R3 对应实现后，上述新增回归确实失败（audit 2 failed、namespace 3 failed、
+PG collision 1 failed），恢复源码后全部通过；明细见 `docs/TESTING_BASELINE.md`。
 
 本轮闭环的完整历史复现和实测数字见 [V1.2 补充审查](./V1_2_REVIEW_2026-09-13.md)。

@@ -105,7 +105,7 @@
       <section class="panel agent-flow-panel" id="agent-flow">
         <div class="panel-header"><div><span class="eyebrow">HTTP Agent 生命周期</span><h2>Agent 全链路</h2></div><span id="agent-flow-status" class="status-tag neutral">等待启动</span></div>
         <div class="agent-flow-content">
-          <p class="agent-flow-intro">真实调用 <code>/api/v1/agent/*</code> 四个接口，展示启动 → 澄清 → 审批草稿 → 批准/拒绝 → 恢复 → 当前状态。审批结论必须先经领域审批接口写入事实源，decision 只触发重读；外部执行结果只能由 SYSTEM 角色写入。</p>
+          <p class="agent-flow-intro">真实调用 <code>/api/v1/agent/*</code> 四个接口，展示启动 → 澄清 → 审批草稿 → 批准/拒绝 → 恢复 → 当前状态。审批结论必须先经领域审批接口写入事实源，decision 只触发重读；外部执行结果只能由 SYSTEM 角色写入。响应由服务端统一脱敏（联系方式不进公共视图），审批/执行/关单仍以领域事实为准。</p>
           <div class="agent-flow-actions">
             <button class="agent-flow-action primary" id="af-start"><b>01</b>启动（正常）</button>
             <button class="agent-flow-action" id="af-start-clarify"><b>02</b>启动（缺订单号）</button>

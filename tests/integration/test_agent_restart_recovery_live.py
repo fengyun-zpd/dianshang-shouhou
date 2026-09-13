@@ -68,6 +68,15 @@ def _executed_amount(tenant: str) -> Decimal:
     return Decimal(total)
 
 
+def _count(table: str) -> int:
+    engine = create_engine(TEST_DB_URL)
+    try:
+        with engine.connect() as conn:
+            return int(conn.execute(text(f"SELECT COUNT(*) FROM {table}")).scalar())
+    finally:
+        engine.dispose()
+
+
 def _instance(checkpoint_path, owner_id: str, lease_duration_s: int = 60) -> dict:
     from src.api import create_app
     from scripts.run_api import build_pg_backend, demo_token_registry
@@ -214,4 +223,118 @@ def test_lease_semantics_still_enforced_between_instances(fresh_db, tmp_path):
             assert _executed_amount("T1") == Decimal("100.00")
     finally:
         _close(a)
+        _close(b)
+
+def test_pg_colon_collision_start_then_read_stays_isolated(fresh_db, tmp_path):
+    """R1（PG 回归）：攻击者先 start 留下本租户线程行后，GET 仍不得读到他人状态。"""
+    from src.api import ApiIdentity, ApiTokenRegistry, create_app
+    from src.domain.after_sales import Role
+
+    _seed_orders()
+    ckpt = tmp_path / "collision.sqlite"
+    built = _instance(ckpt, "owner-collision")
+    registry = ApiTokenRegistry()
+    registry.register("tok-owner", ApiIdentity("synthetic-owner", "T1:dept", Role.AGENT))
+    registry.register("tok-reader", ApiIdentity("synthetic-reader", "T1", Role.AGENT))
+    app = create_app(built["backend"], registry, pg_probe=built["probe"],
+                     require_expected_version=True, agent_runner=built["runner"])
+    try:
+        with TestClient(app) as client:
+            owner = client.post("/api/v1/agent/start", json={
+                "message": "我要退款，商品破损", "thread_id": "victim"},
+                headers={"X-Api-Key": "tok-owner"})
+            assert owner.status_code == 200, owner.text
+            assert owner.json()["state"]["tenant_id"] == "T1:dept"
+
+            # 会与旧键 `T1:dept:victim` 碰撞的线程名：攻击者先 start 留下本租户线程行
+            attack = client.post("/api/v1/agent/start", json={
+                "message": "我要退款，商品破损", "thread_id": "dept:victim"},
+                headers={"X-Api-Key": "tok-reader"})
+            assert attack.status_code == 200, attack.text
+
+            reader = client.get("/api/v1/agent/dept:victim/state",
+                                headers={"X-Api-Key": "tok-reader"})
+            assert reader.status_code == 200
+            assert reader.json()["state"]["tenant_id"] == "T1", "不得读到 T1:dept 的 checkpoint"
+            assert reader.json()["thread_id"] == "dept:victim"
+
+            forbidden = client.get("/api/v1/agent/victim/state",
+                                   headers={"X-Api-Key": "tok-reader"})
+            assert forbidden.status_code == 404
+            assert "T1:dept" not in forbidden.text, "错误响应不得回显他租户标识"
+
+            own = client.get("/api/v1/agent/victim/state", headers={"X-Api-Key": "tok-owner"})
+            assert own.status_code == 200
+            assert own.json()["state"]["tenant_id"] == "T1:dept"
+            assert own.json()["waiting_clarify"] is True, "合法线程不得被碰撞请求干扰"
+
+            # 零业务写入：两条线程都停在澄清，只有两行工作流租约事实
+            assert _executed_amount("T1") == Decimal("0.00")
+            assert _count("tickets") == 0
+            assert _count("refund_operations") == 0
+            assert _count("workflow_threads") == 2
+    finally:
+        _close(built)
+
+
+def test_loop_stop_terminal_survives_restart_without_reexecution(fresh_db, tmp_path):
+    """R5：循环保护终态写入 checkpoint 后，新实例仍读到 escalated，且不得重启执行。"""
+    from src.agents import LOOP_ERROR_CODE, WorkflowRunner
+    from src.api import create_app
+    from scripts.run_api import build_pg_backend, demo_token_registry
+
+    _seed_orders()
+    ckpt = tmp_path / "loop.sqlite"
+    a = build_pg_backend(TEST_DB_URL, checkpoint_path=str(ckpt), owner_id="loop-A",
+                         lease_duration_s=60)
+    runner_a = WorkflowRunner(a["backend"], checkpointer=a["checkpointer"],
+                              lease_repo=a["repo"], owner_id="loop-A", max_steps=8)
+    app_a = create_app(a["backend"], demo_token_registry(), pg_probe=a["probe"],
+                       require_expected_version=True, agent_runner=runner_a)
+    try:
+        with TestClient(app_a) as client:
+            started = client.post("/api/v1/agent/start", json={
+                "message": REQUEST, "thread_id": "loop-thread", "order_id_hint": "ORD-1"},
+                headers=H_AGENT)
+            assert started.status_code == 200, started.text
+            op_id = started.json()["operation_id"]
+            ticket_id = started.json()["ticket_id"]
+            view = started.json()
+            for _ in range(6):
+                view = client.post("/api/v1/agent/loop-thread/decision", json={},
+                                   headers=H_APPROVER).json()
+                if view.get("error_code"):
+                    break
+            assert view["error_code"] == LOOP_ERROR_CODE, view
+    finally:
+        _close(a)
+
+    # 新实例：新 checkpointer + 新 runner，仅共享 PostgreSQL 与同一 checkpoint 文件
+    b = _instance(ckpt, "loop-B")
+    try:
+        with TestClient(b["app"]) as client:
+            view = client.get("/api/v1/agent/loop-thread/state", headers=H_AGENT)
+            assert view.status_code == 200, view.text
+            body = view.json()
+            assert body["error_code"] == LOOP_ERROR_CODE, "终态必须可从 checkpoint 恢复"
+            assert body["outcome"] == "escalated"
+            assert body["finished"] is True and body["waiting_approval"] is False
+            assert "转人工" in body["reply"]
+
+            # 检测前已形成的草稿与审批事实保留
+            assert b["backend"].get_ticket("T1", ticket_id).status.value == "open"
+            assert b["backend"].get_operation("T1", op_id).status.value == "pending_approval"
+
+            # 不得重启执行：新实例推进被拒，且无退款
+            blocked = client.post("/api/v1/agent/loop-thread/decision", json={},
+                                  headers=H_APPROVER)
+            assert blocked.status_code == 409, blocked.text
+            assert _executed_amount("T1") == Decimal("0.00")
+            assert _count("tickets") == 1 and _count("refund_operations") == 1
+
+            # 审计不串单：编号只指向本线程的 ticket/operation
+            owned = {ticket_id, op_id}
+            assert body["audit_event_ids"]
+            assert all(item.rsplit(":", 1)[-1] in owned for item in body["audit_event_ids"])
+    finally:
         _close(b)

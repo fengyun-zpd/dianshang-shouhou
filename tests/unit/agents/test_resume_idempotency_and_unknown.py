@@ -122,3 +122,40 @@ def test_external_success_before_resume_is_reconciled_without_duplicate_execute(
     assert svc.refunded_amount("ORD-1") == Decimal("100.00")
     assert svc.get_ticket(pending.state["ticket_id"]).status == TicketStatus.CLOSED
     assert [e.action for e in svc.audit_log()].count("execute") == 1
+
+
+def test_close_failure_keeps_structured_error_and_recovers_on_retry(monkeypatch):
+    """收尾关单失败必须保留原错误码与人工处理信息，恢复后仍可收尾且不重复执行（R4）。"""
+    svc, runner = make_runner()
+    pending = runner.start("T1", REQUEST_DAMAGED, thread_id="t-close-fail")
+    op_id = pending.state["operation_id"]
+    ticket_id = pending.state["ticket_id"]
+    runner.submit_decision(op_id, "approved", tenant_id="T1")
+    executed = runner.gateway.execute("T1", op_id, external_result="success")
+    assert executed.status == OperationStatus.EXECUTED
+
+    real_close = runner.gateway.close_ticket
+
+    def refuse_close(tenant_id, target_ticket):
+        raise AfterSalesError(AfterSalesErrorCode.TICKET_HAS_OPEN_OPERATIONS, "合成关单失败")
+
+    monkeypatch.setattr(runner.gateway, "close_ticket", refuse_close)
+    failed = runner.resume("t-close-fail", tenant_id="T1")
+    assert failed.error_code == AfterSalesErrorCode.TICKET_HAS_OPEN_OPERATIONS.value
+    assert failed.outcome == "escalated", "不得把收尾失败改写为成功"
+    assert "人工" in failed.reply
+    assert svc.get_ticket(ticket_id).status == TicketStatus.OPEN
+    assert svc.refunded_amount("ORD-1") == Decimal("100.00")
+
+    monkeypatch.setattr(runner.gateway, "close_ticket", real_close)
+    recovered = runner.resume("t-close-fail", tenant_id="T1")
+    assert recovered.finished and recovered.outcome == "refunded"
+    assert recovered.error_code is None
+    assert svc.get_ticket(ticket_id).status == TicketStatus.CLOSED
+
+    actions = [e.action for e in svc.audit_log()]
+    assert actions.count("execute") == 1, "恢复收尾绝不重复执行退款"
+    assert actions.count("close_ticket") == 1
+    state = svc.export_state()
+    assert len(state["tickets"]) == 1 and len(state["operations"]) == 1, "恢复不得重新建单"
+    assert svc.refunded_amount("ORD-1") == Decimal("100.00")

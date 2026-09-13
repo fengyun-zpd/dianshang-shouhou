@@ -225,6 +225,78 @@ def test_public_agent_views_and_validation_errors_redact_pii():
         assert raw not in invalid.text
 
 
+def test_clarify_decision_views_and_logs_redact_pii(caplog):
+    """澄清/恢复/冲突错误路径与日志同样不得回显原始联系方式（R2）。"""
+    import logging
+
+    client, _, _ = _client()
+    phone, email, id_card = "13912345678", "bob@example.com", "11010519491231002X"
+    with caplog.at_level(logging.DEBUG):
+        started = _start(client, message="订单 ORD-1 商品破损，电话 " + phone,
+                         thread_id="t-pii2")
+        assert started.status_code == 200
+        clarified = client.post("/api/v1/agent/t-pii2/clarify",
+                                json={"order_id": "ORD-1", "description": f"联系人 {email}"},
+                                headers=_h("tok-agent"))
+        # 同线程异请求 → 409 稳定错误路径也不得回显原文
+        conflicted = _start(client, message=f"另一请求 {id_card}", thread_id="t-pii2")
+        assert conflicted.status_code == 409
+        decided = _decide(client, "t-pii2")
+
+    for response in (started, clarified, conflicted, decided):
+        for raw in (phone, email, id_card):
+            assert raw not in response.text, f"{raw!r} 不得出现在 HTTP 响应中"
+    logs = "\n".join(record.getMessage() for record in caplog.records)
+    for raw in (phone, email, id_card):
+        assert raw not in logs, f"{raw!r} 不得出现在日志中"
+
+
+def test_request_fingerprint_distinguishes_raw_text_with_same_public_view():
+    """脱敏后的公共视图相同 ≠ 同一请求：指纹必须区分原始文本（R2）。"""
+    client, svc, _ = _client()
+    first = _start(client, message="订单 ORD-1 商品破损，要求退款，电话 13800000001",
+                   thread_id="t-fp-distinct")
+    assert first.status_code == 200
+    second = _start(client, message="订单 ORD-1 商品破损，要求退款，电话 13800000002",
+                    thread_id="t-fp-distinct")
+    assert second.status_code == 409, "仅联系方式不同的原始请求不得被掩码合并"
+    assert second.json()["code"] == "AGENT_THREAD_CONFLICT"
+    assert "13800000002" not in second.text and "13800000001" not in second.text
+    # 冲突不产生副作用，业务事实未变
+    assert first.json()["state"]["action_draft"]["amount"] == "100.00"
+    assert svc.refunded_amount("ORD-1") == Decimal("0.00")
+
+
+def test_colon_collision_http_is_isolated_and_write_free():
+    """(T1:dept, victim) 与 (T1, dept:victim) 不得共用 checkpoint（R1）。"""
+    client, svc, _ = _client()
+    client.app.state.registry.register(
+        "tok-colon", ApiIdentity("synthetic-owner", "T1:dept", Role.AGENT))
+
+    owner = client.post("/api/v1/agent/start", json={
+        "message": "我要退款，商品破损", "thread_id": "victim"}, headers=_h("tok-colon"))
+    assert owner.status_code == 200, owner.text
+
+    audit_before = len(svc.audit_log())
+    leaked = client.get("/api/v1/agent/dept:victim/state", headers=_h("tok-agent"))
+    assert leaked.status_code == 404, "他租户线程必须统一 404"
+    resumed = client.post("/api/v1/agent/dept:victim/decision", json={},
+                          headers=_h("tok-approver"))
+    assert resumed.status_code == 404
+    assert "T1:dept" not in leaked.text, "错误响应不得回显他租户标识"
+    # 越权请求零新增业务写入（owner 线程缺订单号停在澄清，尚未产生任何业务事实）
+    assert len(svc.audit_log()) == audit_before
+    assert len(svc.export_state()["tickets"]) == 0
+    assert len(svc.export_state()["operations"]) == 0
+    assert svc.refunded_amount("ORD-1") == Decimal("0.00")
+
+    # 原租户线程仍可读、可继续（碰撞不破坏合法使用）
+    own = client.get("/api/v1/agent/victim/state", headers=_h("tok-colon"))
+    assert own.status_code == 200
+    assert own.json()["state"]["tenant_id"] == "T1:dept"
+    assert own.json()["waiting_clarify"] is True
+
+
 def test_cross_tenant_state_read_is_generic_404():
     """错误租户返回通用 404：不区分「不存在」与「属于其他租户」，也不暴露所属租户。"""
     client, _, _ = _client()

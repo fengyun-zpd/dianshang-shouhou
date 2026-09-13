@@ -2,8 +2,8 @@
 
 > 更新：2026-09-13（V1.2 整改验收）。
 
-> **R1–R5 已完成整改并通过针对性回归。** 当前离线全量为 **494 passed / 49 skipped**，
-> 隔离 PostgreSQL 全量为 **543 passed / 0 skipped**；R1–R4 边界脚本全部 PASS，R5 使用两个
+> **R1–R5 已完成整改，并通过独立复验。** 当前离线全量为 **503 passed / 51 skipped**，
+> 隔离 PostgreSQL 全量为 **554 passed / 0 skipped**；R1–R4 边界脚本全部 PASS（退出码 0），R5 使用两个
 > 独立 Python 进程并按数据库时间等待租约到期。旧的失败复现与修复前数字保留在
 > [2026-09-13 补充审查](./V1_2_REVIEW_2026-09-13.md)，不作为当前基线。
 
@@ -18,7 +18,7 @@
 | **证据块 PII 脱敏** | **已实现 / 已测试** | 注入检测通过后逐块 `redact_pii`，再做 token 计数与发送；测试断言请求体与日志均无手机号/邮箱/身份证号 |
 | 确定性领域服务 | 已实现 / 已测试 / 已验证 | `after_sales/` 与 PG 命令路径裁决金额、资格、状态、幂等、并发、审计 |
 | 确定性证据检索基线（本地 RAG） | 已实现 / 已测试 / 已验证 | PolicyStore 检索：citation、版本/租户/启用约束、注入拒绝、无证据转人工 |
-| PostgreSQL profile | 已实现 / 已测试 / 已验证 | 命令事务、审批事实、租约、API 装配、Agent 主链路；隔离库全量 **543 passed / 0 skipped** |
+| PostgreSQL profile | 已实现 / 已测试 / 已验证 | 命令事务、审批事实、租约、API 装配、Agent 主链路；隔离库全量 **554 passed / 0 skipped** |
 | 工作台「Agent 全链路」演示区 | 已实现 / 已验证 | 真实调用四个接口；六条路径（正常/澄清/拒绝/未知状态/跨租户拒绝/循环终止）已在运行中的服务上逐条验证 |
 | Supervisor/多 Agent 编排 | 可选实验 | 四角色只读编排；同黄金集 A/B 无收益，默认单 Agent |
 | 受控 LLM 适配（离线基线） | **实现完成 / 离线验证 / 真实模型未实测** | openai_compatible 适配器仅环境变量配置；无 Key 自动离线且零网络；内容守卫拦截金额/审批/状态 |
@@ -28,8 +28,8 @@
 
 ## 当前 D 盘基线（2026-09-13 整改后实测）
 
-- 离线全量：**494 passed，49 skipped，1 warning**（本机单次运行）；
-- 隔离 PG 全量（本轮显式 `OPSPILOT_TEST_DATABASE_URL`，迁移至 `0005`）：**543 passed，0 skipped，1 warning**；
+- 离线全量：**503 passed，51 skipped，1 warning**（本机单次运行，11.0 s）；
+- 隔离 PG 全量（本轮显式 `OPSPILOT_TEST_DATABASE_URL`，新建库迁移至 `0005`）：**554 passed，0 skipped，1 warning**（33.8 s）；
 - `scripts/run_pg_tests_isolated.ps1`：两套随机后缀隔离库各 `25 passed`，`ISOLATED DOUBLE-RUN PASS`。
 
 | 审查项 | 整改结果 | 证据 |
