@@ -43,10 +43,24 @@ FastAPI（HTTP 主链路：领域服务接口 + Agent 生命周期接口）
 | --- | --- | --- | --- |
 | `POST /api/v1/agent/start` | **仅 AGENT** | 调用 `WorkflowRunner.start()` | 租户只取认证身份；`extra="forbid"`（tenant_id/金额/角色/审批结果/外部结果 → 422）；同 (租户, 线程) 异请求 → 409 |
 | `POST /api/v1/agent/{thread_id}/clarify` | **仅 AGENT** | 澄清补参后回到原线程 | 仅澄清中断状态可用；`extra="forbid"`；空载荷 422 |
-| `POST /api/v1/agent/{thread_id}/decision` | APPROVER / SYSTEM | **只触发** `resume(payload="_continue_")` | 不携带 `approved/rejected`（携带 → 422）；`apply_decision` 重读带版本的领域审批事实 |
-| `GET /api/v1/agent/{thread_id}/state` | AGENT / APPROVER / SYSTEM | 只读线程视图 | 线程唯一键 `(tenant_id, thread_id)`；不存在或错误租户统一 404（不暴露归属） |
+| `POST /api/v1/agent/{thread_id}/decision` | APPROVER / SYSTEM | **只触发** `resume(payload="_continue_")`；待对账/待收尾的既有线程同样由此显式恢复 | 不携带 `approved/rejected`（携带 → 422）；`apply_decision` 重读带版本的领域审批事实；已安全停止的循环终态不接受推进（409） |
+| `GET /api/v1/agent/{thread_id}/state` | AGENT / APPROVER / SYSTEM | 只读线程视图 | 线程唯一键 `(tenant_id, thread_id)`；不存在或错误租户统一 404（不暴露归属）；响应只含公共字段并统一脱敏 |
 
 V1 只服务内部坐席：**同租户客户调用任一接口 → 403**；客户端自助入口属规划能力，当前不开放。
+
+HTTP 对外视图（R2）：`_agent_view` 只暴露工作流所需字段（thread/ticket/operation/金额/证据/
+错误码/步数/审计编号），**不整体序列化内部 checkpoint**；`user_request`、
+`thread_request_fingerprint`、`simulate_external` 等内部字段不出现在响应中；错误响应与
+422 校验回显同样脱敏。请求指纹仍按**原始**请求文本计算，脱敏不改变幂等与冲突判定。
+
+收尾恢复（R4）：`decision` 除审批等待外，也允许对 `next_action ∈ {reconcile_required, finished}`
+的既有线程显式恢复；runner 从领域事实重读操作状态，只在 **EXECUTED/REJECTED** 时调用既有
+关单命令收尾（**绝不再次 execute**），`FAILED` 保持工单开放并转人工；unknown 未对账前不关单、
+不换键。收尾失败保留原领域错误码与人工处理信息，不改写为成功。
+
+审计关联（R3）：`collect_audit_events(tenant, thread, (ticket_id, operation_id))` 从领域审计事实
+按租户 + 线程绑定实体过滤，进程内集合只是去重视图；因此他线程/他租户事件不会混入，重复读取与
+进程重启都不会重复或遗漏。
 
 外部执行结果不由 HTTP 调用者指定：`start` 不接受 `simulate_external`；未知状态必须由 SYSTEM
 调用 `/api/operations/{id}/execute` 写入 `timeout`（领域事实 `unknown`），再由 `decision` 重读。
@@ -68,7 +82,8 @@ runner 内部的 `simulate_external` 参数仅用于测试与合成演示（HTTP
 - 错误租户读取与"线程不存在"返回**同一个** 404 与同样结构的消息（不可区分、不含所属租户）；
 - 内存 profile 不声称持久恢复（进程内演示）。
 
-实测：`tests/integration/test_agent_restart_recovery_live.py`（3 项 PG live，含独立进程重启和租约仍生效）。
+实测：`tests/integration/test_agent_restart_recovery_live.py`（5 项 PG live，含独立进程重启、
+租约仍生效、冒号碰撞隔离、循环终态跨实例存活）。
 
 ## 确定性保护边界（V1.2 新增）
 

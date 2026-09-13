@@ -48,17 +48,24 @@ checkpoint**，进程内字典只是便利缓存。因此实例 A 中断后进�
 checkpoint 键使用带版本的长度编码 `v2|租户长度|租户|线程长度|线程`，不受标识符中冒号影响；
 旧键只有在 checkpoint 内嵌租户/线程与请求精确一致时才兼容，歧义旧键直接拒绝。
 
+收尾恢复（R4）与审计关联（R3）同样以 PG 事实为准：`decision` 恢复时从 `refund_operations`
+重读状态，只在 `executed`/`rejected` 时调用既有领域关单命令收尾（绝不再次执行），`failed`
+保持工单开放转人工，`unknown` 未用原 `operation_id` 对账前不关单；`audit_event_ids` 由
+`audit_events`（`ORDER BY id`）按租户 + 本线程 ticket/operation 过滤重建，稳定且可去重。
+
 实测（隔离库 live）：
 
 ```powershell
 .venv\Scripts\python.exe -m pytest tests/integration/test_run_api_pg_backend_live.py -q
 # → 4 passed（start→审批事实→decision→state 全链路，以 refund_operations 行金额验收；伪造 decision body 422）
 .venv\Scripts\python.exe -m pytest tests/integration/test_agent_restart_recovery_live.py -q
-# → 3 passed（独立进程 A/B；实例 A 中断 → 按 PostgreSQL 时间等待租约到期 → 实例 B 恢复；错误租户 404；同名线程；租约仍生效）
+# → 5 passed（独立进程 A/B；实例 A 中断 → 按 PostgreSQL 时间等待租约到期 → 实例 B 恢复；错误租户 404；
+#   同名线程；租约仍生效；R1 冒号碰撞先 start 后 GET 仍隔离；循环终态跨实例存活且推进被拒）
 ```
 
-2026-09-13 整改验收全量结果：离线 `494 passed / 49 skipped`；隔离 PG `543 passed / 0 skipped`。
-这两个数字来自固定种子合成数据和本机单次运行，不代表生产吞吐或真实企业收益。
+2026-09-13 整改验收独立复验全量结果：离线 `503 passed / 51 skipped`；隔离 PG `554 passed /
+0 skipped`；边界脚本 `scripts/review_v12_boundaries.py` memory 6 项 + PG 1 项全部 PASS（退出码 0）。
+这些数字来自固定种子合成数据和本机单次运行，不代表生产吞吐或真实企业收益。
 
 已删除 `PgBackedSession` 整库清空重插和快照恢复原型。生产部署、生产备份、支付或 CRM 接入未实现。
 固定 checkpoint 默认面向单实例；多实例部署应各自指定 `--checkpoint` 或改用服务端 checkpointer
