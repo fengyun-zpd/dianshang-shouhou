@@ -258,7 +258,7 @@ def _conclude(r: dict) -> str:
 
 def _render(r: dict) -> str:
     lines = [
-        "# 运行模式 A/B 对照报告（V1.1：单 Agent vs three-agent vs four-role）",
+        "# 运行模式 A/B 对照报告（单 Agent vs three-agent vs four-role）",
         "",
         f"- 数据集版本：`{r['dataset_version']}`（黄金集 {r['total']} 条，固定种子合成数据）",
         f"- 模型版本：{r['model_version']}",

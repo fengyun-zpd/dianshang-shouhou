@@ -1,260 +1,159 @@
-# OpsPilot
+# OpsPilot · 电商售后数字化工具
 
-> 企业售后工单处置 Agent 与可靠性评测项目。
-> 版本：V1.2 整改验收基线（2026-09-13）。
+> 个人开发项目，围绕电商退款工单开展流程设计、可靠性验证与业务更新尝试。
+> 文档更新：2026-09-16；最近一次已记录的完整业务回归：2026-09-13。
 
-> **2026-09-13 整改验收：已完成。** 针对补充审查的 R1–R5 已完成实现、回归和文档同步：
-> checkpoint 使用无歧义版本化键，旧键仅在内嵌租户/线程精确匹配时兼容；审计事件使用持久化 event_id；HTTP 公共视图与错误响应
-> 做字段白名单和 PII 脱敏；审计按租户、线程和工单/操作实体隔离；外部已执行、对账成功/失败均按
-> 领域事实收口；重启验收由两个独立 Python 进程执行并按数据库时间等待租约到期。
-> 离线全量 **502 passed / 55 skipped**，隔离 PG 全量 **557 passed / 0 skipped**，边界脚本 R1–R4 全部 PASS
-> （memory 6 项 + PG 1 项，退出码 0）。
-> 历史失败证据仍保留在[补充审查与复现](./docs/V1_2_REVIEW_2026-09-13.md)，执行步骤保留在
-> [下一步完整执行提示词](./docs/V1_2_NEXT_STEP_PROMPT.md)。
+OpsPilot 将售后请求整理、订单核验、政策查证、退款草稿、人工审批和处理记录串成可追踪的工作流程。
+项目面向电商内部售后坐席，探索如何用数字化工具减少信息反复核对、明确处理责任，并为后续企业业务拓展提供可验证的设计基础。
+当前以退款工单为已实现主线；退换货、补发、物流接入和客户自助服务均不能视为已完成能力。
 
-## 项目使命
+项目使用固定种子的合成业务样本开展开发和验证，尚未接入真实支付、生产 CRM 或企业客户数据。
+实际运营效率、企业收益、真实模型效果及生产性能均未实测。
 
-构建可面试展示、可复现的**单 Agent 售后退款可靠性工作流**：证明 Agent 能在证据不足、越权、
-重复请求、工具失败和外部结果未知时安全停止、等待或转人工；金额、资格、状态、审批与最终
-事实永远由确定性领域服务 + PostgreSQL 裁决。
+## 电商售后业务场景
 
-## V1.2 主张
+| 业务问题 | 当前处理方式 | 业务设计目的 |
+| --- | --- | --- |
+| 售后描述不完整、缺少订单号 | 保留原工单上下文并请求补充信息 | 减少依据不全时的错误处理 |
+| 退款理由需要匹配政策 | 检索租户内有效政策，保留文档版本与引用位置 | 让处理依据可以复核 |
+| 退款金额与资格需要核算 | 由确定性领域服务读取订单事实并计算 | 避免语言模型自行决定金额 |
+| 退款需要责任人确认 | 先创建动作草稿，授权人员提交带版本的审批决定 | 明确申请、审批和执行的职责 |
+| 请求重复或外部结果暂时不明 | 同键同载荷复用结果；未知结果按原操作对账 | 控制重复退款风险 |
+| 工单中断、工具失败或越权请求 | 按状态等待、拒绝、恢复或转人工，保留审计记录 | 使异常处理具有明确出口 |
 
-OpsPilot 证明 Agent 可以在受控权限内、经 **HTTP 生命周期接口**组织一条退款工单流程，并在
-证据不足、越权、重复请求、工具失败、外部结果未知和自身反复循环时安全停止、等待或转人工。
+## 业务流程与职责
 
-- 单 Agent 负责意图、澄清、只读证据检索和方案解释。
-- 确定性领域服务负责金额、资格、状态、权限、幂等、并发与审计。
-- 高风险动作先生成草稿，只有授权人员提交审批决定后才可执行。
-- **审批结论必须先写入领域事实源；HTTP `decision` 接口只触发恢复，`apply_decision` 重读带版本的审批事实。**
-- PostgreSQL 是业务事实源；SQLite/内存 checkpoint 只保存流程恢复位置。
-- **确定性证据检索基线**（本地 PolicyStore 检索：租户隔离、版本有效、引用定位、注入拒绝、无证据转人工）在 Agent 回放中提供政策 citation；不能裁决金额、资格或状态，也不能替代 PostgreSQL 事实。
-
-## HTTP Agent 生命周期（V1.2 新增，已实现/已测试/已验证）
-
-Agent 启动、澄清与恢复不再是"另一套入口"：`create_app(..., agent_runner=...)` 把当前装配的
-`WorkflowRunner` 暴露为 HTTP。`scripts/run_api.py --backend memory` 创建内存运行器（**进程内
-合成演示**，重启即重置）；`--backend pg` 复用同一 PG 运行器（真实 PostgreSQL 后端 +
-`.runtime/checkpoints/opspilot-agent.sqlite` 固定 checkpoint + D9 线程租约，**跨进程可恢复**）。
-未装配运行器时接口返回 `503 AGENT_RUNNER_UNAVAILABLE`，不静默降级、不伪造结果。
-
-```text
-POST /api/v1/agent/start               启动（仅内部坐席 AGENT）
-POST /api/v1/agent/{thread_id}/clarify 澄清补参（仅澄清中断状态）
-POST /api/v1/agent/{thread_id}/decision 触发恢复（仅 APPROVER / SYSTEM，body 可为 {}）
-GET  /api/v1/agent/{thread_id}/state   只读线程视图（AGENT / APPROVER / SYSTEM）
+```mermaid
+flowchart LR
+    A[售后请求] --> B[订单核验与信息澄清]
+    B --> C[有效政策证据]
+    C --> D[规则计算与退款草稿]
+    D --> E[授权人员审批]
+    E --> F[重读审批事实]
+    F --> G[执行与结果核对]
+    G --> H[工单收尾与审计]
+    G --> I[结果未知：原操作对账]
+    I --> G
+    C --> J[证据不足：转人工]
 ```
 
-| 接口 | 角色 | 请求要点 | 关键边界 | 失败路径 |
-| --- | --- | --- | --- | --- |
-| `start` | **仅 AGENT** | `message` / `thread_id?` / `order_id_hint?` | `extra="forbid"`：租户、金额、角色、审批结果、外部结果字段 → 422；租户只取认证身份 | 同 (租户, thread) 异请求 → 409 `AGENT_THREAD_CONFLICT` |
-| `clarify` | **仅 AGENT** | `order_id` / `description` / `message` 至少一个 | `extra="forbid"`：不能借澄清改租户/金额/审批状态/权限；非澄清状态 → 409 | 空载荷 → 422 |
-| `decision` | APPROVER / SYSTEM | body 可为 `{}` | **不携带** `approved`/`rejected`/`decision`（携带 → 422）；只触发 `resume("_continue_")` | 非审批等待状态 → 409 `AGENT_NOT_WAITING_APPROVAL`；Agent 调用 → 403 |
-| `state` | AGENT / APPROVER / SYSTEM | 无请求体 | 线程唯一键 = `(tenant_id, thread_id)` | 不存在**或**错误租户 → 统一 404 `AGENT_THREAD_NOT_FOUND`（不暴露所属租户） |
+- **Agent 工作流**：理解请求、澄清信息、编排只读检索、组织处理步骤与解释结果。
+- **确定性领域服务**：裁决金额、资格、权限、状态、幂等、并发和审计；错误码按原义返回。
+- **授权人员**：审批退款草稿；模型输出或自然语言中的“同意”不能替代审批决定。
+- **PostgreSQL**：持久化业务事实。LangGraph checkpoint 仅保存流程恢复状态。
+- **本地工作台**：通过受保护接口查看工单、证据、审批状态和处理轨迹；当前采用合成数据及本地身份配置。
 
-V1 的 Agent 生命周期**只服务内部坐席**：同租户客户调用上述任一接口都会得到 403
-（`AFTER_SALES_PERMISSION_DENIED`）。**客户自助入口属规划能力，当前不开放**。
+## 当前能力与验证范围
 
-外部执行结果**不由 HTTP 调用者指定**：`start` 不接受 `simulate_external`/`external_result`；
-未知状态演示必须由授权 SYSTEM 调用 `/api/operations/{id}/execute` 写入 `timeout`（领域事实变
-`unknown`），再由 `decision` 重读领域事实。runner 内部仍保留 `simulate_external` 参数，
-**仅用于测试与合成演示**（HTTP 层不可达）。
+| 能力 | 状态 | 依据与限制 |
+| --- | --- | --- |
+| 退款工单闭环 | 已实现并验证 | 信息澄清、政策检索、草稿、审批恢复、异常对账及收尾；合成黄金集 11/11 |
+| Agent 生命周期 HTTP 接口 | 已实现并验证 | `start / clarify / decision / state`；当前 31 项 HTTP 用例、7 项 PG 接入用例 |
+| 数据库存储与重启恢复 | 已实现并验证 | PG 命令事务、线程租约及固定 checkpoint；5 项重启恢复用例，包含独立进程接续 |
+| 权限、幂等与敏感信息保护 | 已实现并验证 | 租户隔离、带版本审批、重复请求校验、公共视图白名单与脱敏 |
+| 审计事件持久标识 | 已实现并验证 | 数据迁移 `0006` 增加 `event_id`；历史无 ID 对象仍保留兼容读取 |
+| 循环控制与工具去重 | 已实现并验证 | 默认节点步数上限 32；审批事实重读不缓存；安全停止终态写入 checkpoint |
+| 本地政策检索 | 已实现并验证 | 有效版本、适用范围、引用定位、注入拒绝与无证据转人工 |
+| LLM 适配与质量评估入口 | 实现完成，离线验证 | 真实模型和真实 Judge 未实测；缺少安全配置时降级离线，不发送网络请求 |
+| 多角色只读编排 | 可选业务更新实验 | 合成集合内与单 Agent 正确性持平，尚无已测业务收益，默认仍为单 Agent |
+| 客户自助、退换货、补发、真实物流 | 规划 / 未接入 | 需要分别设计业务状态、权限、数据来源及验收场景 |
+| 微调、生产部署及真实外部写入 | 未运行 / 未实现 | 不能用本地合成样本结果代替真实系统验证 |
 
-调用顺序（正常闭环）：
+用例数在 2026-09-16 通过收集检查核对，收集检查不等同于重新执行测试。
+完整状态见[项目状态与风险](./docs/STATUS_AND_RISKS.md)。
 
-```text
-1) POST /api/v1/agent/start                    → waiting_approval=true，返回 operation_id
-2) POST /api/operations/{operation_id}/approve → 授权人把审批事实写入领域事实源（带版本）
-3) POST /api/v1/agent/{thread_id}/decision     → body {} → apply_decision 重读事实 → 执行
-4) GET  /api/v1/agent/{thread_id}/state        → 只读视图（outcome / audit_event_ids / step_count）
-```
+## HTTP 业务接入
 
-> 面试讲解要点：Agent 只负责理解请求、澄清信息、检索证据和组织流程。审批结果必须先写入领域
-> 事实源，decision HTTP 接口只触发工作流恢复，apply_decision 会重新读取带版本的审批事实。
-> 金额、资格、状态、权限、幂等和审计仍由确定性领域服务负责。
+`create_app(..., agent_runner=...)` 将 `WorkflowRunner` 接入 FastAPI；接口与领域服务共享业务规则。
+未装配运行器时返回 `503 AGENT_RUNNER_UNAVAILABLE`。
 
-### 跨进程恢复（PG profile）
+| 接口 | 身份 | 行为与失败条件 |
+| --- | --- | --- |
+| `POST /api/v1/agent/start` | AGENT | 启动流程；租户取认证身份；同线程异请求返回 409；额外权限或金额字段返回 422 |
+| `POST /api/v1/agent/{thread_id}/clarify` | AGENT | 仅在澄清状态接受补充信息；空载荷 422，状态不符 409 |
+| `POST /api/v1/agent/{thread_id}/decision` | APPROVER / SYSTEM | 空请求体即可触发恢复；重读已提交的审批或执行事实；携带审批结论字段返回 422 |
+| `GET /api/v1/agent/{thread_id}/state` | AGENT / APPROVER / SYSTEM | 返回脱敏公共视图；错误租户与不存在线程统一返回 404 |
 
-线程绑定的事实源是**租户限定的 `workflow_threads` 行 + 持久 checkpoint**，进程内字典只是
-便利缓存。因此实例 A 中断后进程退出、租约过期，实例 B 用同一 PostgreSQL 与同一 checkpoint
-即可按 `(tenant_id, thread_id)` 读 `state`、恢复 `decision` 并继续执行；同名线程在不同租户下
-互不冲突（checkpoint 键空间为 `v2|租户长度|租户|线程长度|线程` 的版本化长度编码）。实测见
-`tests/integration/test_agent_restart_recovery_live.py`（PG live，3 项）。内存 profile 不声称
-持久恢复。
+这些接口只服务内部坐席，同租户客户身份调用也会被拒绝。审批先通过
+`/api/operations/{operation_id}/approve` 或 `reject` 写入领域事实，再触发工作流恢复。
+外部结果不能通过 `start` 请求指定；本地未知状态验证由授权 SYSTEM 经领域执行入口写入模拟超时。
 
-### 确定性保护（V1.2 新增）
+线程按 `(tenant_id, thread_id)` 隔离，checkpoint 使用长度编码键；旧键只有在嵌入身份精确匹配时才可读取。
+PG 下可在租约到期后，由新进程使用同一数据库与 checkpoint 接续处理。该验证覆盖顺序重启恢复，
+不代表多实例并发部署已通过验证。收尾遇到 `executed / rejected / failed / unknown` 时按领域状态分别处理，
+不重复执行退款，不把收尾失败改写成成功。详见[架构设计](./docs/ARCHITECTURE.md)。
 
-- **步数上限**：每个节点进入时 `step_count` 递增，默认上限 32（可构造参数覆盖）。超出即抛
-  `AgentLoopDetected` → `error_code=AGENT_LOOP_DETECTED`、`outcome=escalated`、回复明确说明
-  已转人工；**触发后无新增领域写入、无退款执行**（被拦截节点体不执行）。终态标记写入
-  **持久 checkpoint**，进程重启后的新实例仍能读到 `AGENT_LOOP_DETECTED` 与人工接管原因；
-  检测前已形成的草稿与审批事实原样保留。
-- **第二道防线**：LangGraph `recursion_limit`（`max_steps*2+10`）兜住单次 invoke 内的超级步失控。
-- **工具去重账本**：键 =（工具名, 租户, thread_id, 参数摘要）。同线程同工具同参数重复调用复用
-  首次结果；`get_operation`（审批事实重读）**永不缓存**。领域幂等键仍是重复副作用的最终兜底。
-- **不依赖模型自觉**：以上全部是确定性代码路径，与 LLM 是否启用无关。
+## 本地使用
 
-## V1.2 范围
-
-保留单 Agent LangGraph（默认路径）、确定性证据检索基线、PostgreSQL 命令路径、黄金集、回放与演示。
-Supervisor 只保留 A/B 实验结论：与单 Agent 无量化业务收益，因此默认不用；V1.2 提供**四角色只读
-多 Agent 可选编排**（Triage/Evidence/Resolution/RiskReview，`SupervisorRunner(orchestration="four-role")`），
-每角色轨迹（trace_id/输入输出摘要/耗时/工具调用/citation/拒绝原因）经
-`scripts/demo_supervisor_trace.py` 可复现查看；`evals/compare_modes.py` 的当前结论看 single/four-role。
-运行模式开关见 `src/agents/modes.py`：`single_agent`（**默认**）/`multi_agent`（四角色实验）/
-`offline_rule`（无 LLM Key 自动离线规则）/`llm`（仅显式配置安全 Key + 白名单 Base URL 才可用，
-未配置安全回落 `offline_rule`）。
-
-项目内的 `src/api/ui/` 是本地合成数据演示工作台，用于展示领域闭环、Agent Lab 轨迹和评测边界；
-它不是生产运营后台，也没有接入真实身份系统或真实外部副作用。
-
-不纳入 V1.2：真实 LLM 指标（未实测）、真实微调效果（仅实验入口/合成样本，无 GPU 未运行）、
-真实 Mule/MCP、生产级前端身份与部署、pgvector、长期记忆和生产部署。
-
-```text
-请求 -> 订单/租户核验 -> 政策证据与澄清 -> 规则计算 -> 动作草稿
-     -> 人工审批 interrupt -> 重读事实 resume -> 执行或 operation_unknown
-     -> 原 operation_id 对账 -> 关单与审计
-```
-
-## 能力状态（严格区分口径）
-
-| 能力 | 已实现 | 已测试 | 已验证（本机实测） | 未实测 | 可选 | 规划 |
-| --- | --- | --- | --- | --- | --- | --- |
-| 单 Agent 退款闭环（澄清/证据/审批恢复/unknown 对账） | ✅ | ✅ | ✅ memory 黄金集 11/11 | — | — | — |
-| Agent 生命周期 HTTP（start/clarify/decision/state） | ✅ | ✅ 29 项 e2e + 5 项 PG live | ✅ memory 与 PG profile | — | — | — |
-| 跨进程重启恢复（PG + 固定 checkpoint） | ✅ | ✅ 3 项 PG live | ✅ 隔离库实测 | — | — | — |
-| 死循环与工具去重保护（终态入 checkpoint） | ✅ | ✅ 16 项 | ✅ memory | — | — | — |
-| 确定性领域服务（金额/资格/状态/幂等/审计） | ✅ | ✅ | ✅ | — | — | — |
-| PostgreSQL profile（命令事务/审批事实/租约/API 装配/Agent 主链路） | ✅ | ✅ | ✅ 557 passed 全量（隔离库） | — | — | — |
-| 确定性证据检索基线（本地 RAG） | ✅ | ✅ | ✅ `demo_rag_policy` | — | — | — |
-| LLM 成本记账（输入/输出双向 + N/A 语义） | ✅ | ✅ 21 项 | ✅ 离线路径 | 真实模型成本 | — | — |
-| 真实 LLM 候选模式（白名单/显式模型名/降级） | ✅ 实现完成 | ✅ | 离线验证 | ✅ **真实模型未实测**（无安全 Key，零网络请求） | ✅ | — |
-| LLM-as-Judge 评测（话术质量，不参与业务裁决） | ✅ 实现完成 | ✅ 19 项 | 离线验证（规则裁判） | ✅ **真实裁判未实测** | ✅ | — |
-| 四角色只读多 Agent | ✅ | ✅ | ✅ A/B 无收益 | 真实 LLM 子 Agent | ✅ 实验 | — |
-| **客户端自助入口** | — | — | — | — | — | ✅ 规划能力（当前仅内部坐席） |
-| 微调（LoRA/QLoRA/DPO） | 仅样本生成入口 | — | — | ✅ 未训练 | — | ✅ |
-| 生产部署 / 真实支付 / CRM / 企业微信 | — | — | — | — | — | ✅ 不属于本项目 |
-
-## 当前验证
-
-2026-09-13，在 D 盘运行时环境实测（`.venv` home=D:\Anaconda，Python 3.12.4）：
+在项目根目录启动 PowerShell，先设置项目运行时目录，再启动本地工作台：
 
 ```powershell
 . .\scripts\init_d_env.ps1
-# 运行模式 A（离线，不设置 OPSPILOT_TEST_DATABASE_URL）：PG live 破坏性集成按纪律 skip
-.venv\Scripts\python.exe -m pytest tests -q
-# 502 passed, 55 skipped, 1 warning（0006 迁移后实测，约 11 s）
-
-# 运行模式 B（隔离 PG）：空库迁移至 0006 后跑全量，PG live 全部实测
-# 每轮新建唯一命名的隔离测试库（示例：opspilot_test_v12_<随机后缀>），不要复用历史库名
-$env:OPSPILOT_TEST_DATABASE_URL = 'postgresql+psycopg2://opspilot:opspilot@127.0.0.1:5433/opspilot_test_v12_<随机后缀>'
-.venv\Scripts\python.exe -m pytest tests -q
-# 557 passed, 0 skipped, 1 warning（0006 迁移后实测，约 37 s；含独立进程重启恢复）
-
-# 隔离双跑脚本（自动创建两套带随机后缀的测试库）
-.\scripts\run_pg_tests_isolated.ps1
-# opspilot_test_a_74ae988e / opspilot_test_b_74ae988e 各 25 passed；ISOLATED DOUBLE-RUN PASS
-
-.venv\Scripts\python.exe scripts\demo_agent_http.py             # HTTP 生命周期九步（含 404/422/循环）
-.venv\Scripts\python.exe scripts\demo_interview.py              # 七场景（五核心 + 跨租户/重复请求）
-.venv\Scripts\python.exe scripts\demo_supervisor_trace.py --mode multi_agent   # 四角色轨迹 8/8
-.venv\Scripts\python.exe evals\replay.py --dataset golden_v1     # 11/11
-.venv\Scripts\python.exe evals\compare_modes.py                  # single/three-agent/four-role 11/11 持平
-.venv\Scripts\python.exe evals\run_model_shadow_eval.py --mode offline    # tokens=0, cost=N/A
-.venv\Scripts\python.exe evals\run_model_shadow_eval.py --mode candidate  # 未实测；零网络请求
-.venv\Scripts\python.exe evals\run_llm_judge.py --mode offline            # 离线规则裁判（真实裁判未实测）
-.venv\Scripts\python.exe evals\run_llm_judge.py --mode judge              # 未配置安全环境 → 安全降级，零网络
-.venv\Scripts\python.exe scripts\run_api.py --backend memory --port 8080  # 工作台六条路径人工验证
-node --check src/api/ui/workspace.js                             # 通过
-git diff --check                                                 # 通过
+.venv\Scripts\python.exe scripts\run_api.py --backend memory --port 8080
+# 浏览器访问 http://127.0.0.1:8080/
 ```
 
-未设置隔离库时的 49 个跳过项只表示该运行模式未启用 PG live 测试，不能取代模式 B 的 PG 验证。
-唯一警告来自 Starlette/AnyIO 的第三方弃用提示，不影响通过结论。数据为固定种子合成数据，
-不代表真实企业收益；**真实模型、微调效果、生产连接和性能均未实测**。破坏性 PG 集成只允许
-`opspilot_test_*`@localhost（`OPSPILOT_TEST_DATABASE_URL`），共享主库永不被 DROP
-（见 `src/platform/pg_test_guard.py`）。
+`memory` 使用进程内合成数据，重启后重置；工作台的场景重置只作用于该模式。
+`pg` 模式使用 PostgreSQL 与固定 checkpoint，不注册 `/api/demo/reset`，也不会自动填充业务数据。
+数据库准备、隔离测试和启动要求见 [PostgreSQL 使用说明](./docs/POSTGRES.md)。
 
-> 报告落盘约定：canonical 报告（`shadow_eval_offline.md`、`judge_offline.md`、黄金集/对照报告）
-> 写入 `evals/reports/`；**未实测的候选模式报告写入 `.runtime/reports/`**（D 盘运行时目录，
-> 不入库），避免把离线降级写成真实候选模型成绩。单元测试一律使用 `tmp_path`，不得改写
-> `evals/reports/`。
+工作台的“案件处置 → Agent 全链路”显示工单、操作编号、政策引用、审批等待、处理结果、错误码与审计标识。
+可依次检查正常退款、缺失信息、审批拒绝、未知结果对账、跨租户拒绝与循环停止。
+“Agent Lab”用于隔离验证信息澄清、政策不匹配、跨租户访问和敏感字段脱敏；不能据此推断真实客户系统已接通。
 
-## D 盘约束
-
-`.venv` 和基础解释器位于 D 盘。运行前执行 `scripts/init_d_env.ps1`，它只为当前 PowerShell 设置
-`TEMP`、`TMP`、pytest 临时目录、pip 缓存和 Python 字节码缓存，统一写入项目 `.runtime/` 与
-`.cache/`。禁止向 C 盘安装、下载、缓存或写项目运行时文件。
-
-## 演示与可复现命令
+## 可复现验证与已记录结果
 
 ```powershell
 . .\scripts\init_d_env.ps1
-.venv\Scripts\python.exe scripts\demo_interview.py      # 七场景（五核心 + 跨租户/重复请求）
-.venv\Scripts\python.exe scripts\demo_agent_http.py     # HTTP 生命周期九场景
-.venv\Scripts\python.exe scripts\demo_rag_policy.py     # 确定性证据检索基线展示
-.venv\Scripts\python.exe scripts\demo_modes.py          # 运行模式开关冒烟（含 tokens/cost 记账）
+.venv\Scripts\python.exe -m pytest tests -q
+.venv\Scripts\python.exe scripts\demo_agent_http.py
+.venv\Scripts\python.exe scripts\verify_after_sales.py
+.venv\Scripts\python.exe scripts\demo_rag_policy.py
+.venv\Scripts\python.exe scripts\demo_modes.py
+.venv\Scripts\python.exe scripts\demo_supervisor_trace.py --mode multi_agent
+.venv\Scripts\python.exe evals\replay.py --dataset golden_v1
+.venv\Scripts\python.exe evals\compare_modes.py
+.venv\Scripts\python.exe evals\run_model_shadow_eval.py --mode offline
+.venv\Scripts\python.exe evals\run_llm_judge.py --mode offline
 ```
 
-启动本地中文工作台：
+脚本、接口和数据集名称是现有技术标识，命令按仓库实际路径保留。
+2026-09-13 的记录：离线全量 **502 passed / 55 skipped / 1 warning**；
+隔离 PostgreSQL 迁移至 `0006` 后 **557 passed / 0 skipped / 1 warning**。
+当时离线跳过项包含未启用的 PG 集成及数据库迁移条件未满足的运行时检查；不能将跳过项当作通过。
+边界验证为 memory 6 项加 PG 1 项通过；黄金集 11/11，模式对照在该合成集合内持平。
 
-```powershell
-.venv\Scripts\python.exe scripts\run_api.py --host 127.0.0.1 --port 8080
-# 浏览器打开 http://127.0.0.1:8080/
-```
+以上是历史运行证据。本次整理文档、报告标题与业务验证入口名称；相关报告回归 11 项、业务场景 7 项通过，
+未重跑完整 PG 回归，不新增模型、性能或生产效果结论。
+命令前提、完整记录与已知限制见[测试基线](./docs/TESTING_BASELINE.md)及
+[可靠性审查记录](./docs/RELIABILITY_REVIEW_2026-09-13.md)。
 
-案件处置页的"安全剧本"会调用真实受保护 API，提供四个可重复的面试演示：审批拒绝、外部
-结果未知后按原操作对账、同幂等键重复请求、Agent 越权审批拒绝。每次剧本开始前仅对 memory
-合成后端重置演示数据；该 reset 路由**在 PostgreSQL profile 下不注册**，也不触碰真实业务数据。
+报告约定：已验证的报告存放 `evals/reports/`；未实测候选模式报告放在 `.runtime/reports/`。
+测试使用临时目录，不能改写已有评测报告。真实模型成本缺失时显示 `N/A`，离线 `tokens=0` 不代表真实模型免费。
 
-切换到 Agent Lab 后，"Agent 何时必须安全停止"提供四个隔离边界剧本：信息不足时澄清、政策
-不匹配时转人工、跨租户订单拒绝、手机号/邮箱/身份证脱敏。结果保留真实工作流 outcome 或领域
-错误码，并明确显示零退款副作用；页面的检索区还可演示引用校验与提示注入拒绝。
+## 开发环境与业务拓展
 
-七场景（真实断言）：① 正常破损退款闭环；② 缺订单号 → 澄清；③ 无政策证据 → 转人工不猜测；
-④ 审批拒绝 → 无退款执行；⑤ 外部 unknown → 仅原键对账；⑥ 跨租户拒绝；⑦ 重复请求幂等返回原结果。
-HTTP 九步（`demo_agent_http.py`，真实断言）：start / clarify / 写入审批事实 / decision 空 body /
-state / 审批拒绝 / 未知状态（SYSTEM 写 timeout → decision 重读）/ 身份与租户边界（客户 403、
-越权字段 422、跨租户 404）/ 循环保护。
+本机 `.venv` 和基础解释器位于 D 盘。`scripts/init_d_env.ps1` 仅设置当前 PowerShell 的运行时、
+临时目录及缓存位置，写入项目 `.runtime/` 与 `.cache/`，不向 C 盘安装或写项目运行时文件。
 
-工作台「案件处置 → Agent 全链路」面板真实调用上述四个接口，逐项展示 thread_id、是否等待审批/
-澄清、next_action、operation_id、ticket_id、审批草稿金额、outcome、error_code、step_count、
-证据引用与审计编号；并提供「未知状态」「循环保护」「跨租户拒绝」三个独立入口。
+后续按“业务闭环 → 确定性边界 → 安全与恢复 → 评测与观测 → 界面体验 → 模型与性能优化”推进。
+优先完善故障验证、审计关联和工作台可用性，再依据真实业务需求设计退换货、补发及客户自助流程。
+这些企业业务拓展方向目前仅为规划；增加副作用、扩大业务范围或改变事实源须先完成方案确认。
+开发规则见 [AGENTS.md](./AGENTS.md)，实施与验收要求见[开发计划](./docs/DEVELOPMENT_PLAN.md)。
 
-评测：`evals\replay.py --dataset golden_v1`（11/11）、`evals\compare_modes.py`（单 Agent vs
-四角色 A/B，无收益维持单 Agent）、`evals\rag_metrics.py`、
-`evals\run_model_shadow_eval.py --mode offline|candidate`（含 token 与成本列）、
-`evals\run_llm_judge.py --mode offline|judge`（模糊质量 Judge，不替代确定性验收）。
+## 文档导航
 
-## 面试版项目介绍（90 秒）
-
-> "OpsPilot 是企业售后的确定性可靠性 Agent：单 Agent 只做意图、澄清与只读证据检索；
-> 金额、资格、状态、审批、幂等与审计由确定性领域服务处理，业务事实落在 PostgreSQL。
-> 退款先生成草稿、授权人带版本审批后才恢复执行，checkpoint 只存流程状态；幂等防重复、
-> 外部 unknown 只按原操作对账。V1.2 把 Agent 生命周期接进 HTTP 主链路：start/clarify/
-> decision/state 四个接口只服务内部坐席，其中 decision 不携带审批结论——审批必须先写入
-> 领域事实源，apply_decision 每次重读带版本的事实；外部执行结果也只能由 SYSTEM 写领域事实。
-> 线程以 (租户, 线程) 为唯一键，PG 下靠 workflow_threads + 固定 checkpoint 实现跨进程恢复；
-> 死循环用确定性步数上限收口，被拦截节点不执行、终态写入 checkpoint。多 Agent 同黄金集
-> A/B 无收益，故默认单 Agent；真实 LLM 与 Judge 都是**实现完成、离线验证、真实模型未实测**。"
-
----
-
-## 范围冻结（V1.2 收口）
-
-V1.2 之后**不再新增功能名词**：不新增默认多 Agent、微调/DPO、pgvector、长期记忆、缓存平台、
-真实支付、CRM 或生产部署；Judge 保持独立、只评话术质量，不扩建采样与校准平台。
-后续只做缺陷修复、可复现验证与文档事实对齐。
-
-## 文档
-
-- [工程宪法](./AGENTS.md)
-- [架构](./docs/ARCHITECTURE.md)
-- [PostgreSQL 事实源](./docs/POSTGRES.md)
-- [测试基线](./docs/TESTING_BASELINE.md)
-- [面试讲解](./docs/INTERVIEW_OVERVIEW.md)
-- [状态与风险](./docs/STATUS_AND_RISKS.md)
-- [模型与评测](./docs/MODEL_EVALUATION.md)
-- [V1 执行方案与 Agent 提示词](./docs/V1_EXECUTION_PLAN.md)
-- [Supervisor 实验](./docs/MULTI_AGENT_EXPERIMENT.md)
+| 文档 | 内容 |
+| --- | --- |
+| [项目概览](./docs/PROJECT_OVERVIEW.md) | 电商业务背景、使用角色、流程及设计价值 |
+| [个人开发与业务设计手册](./DEVELOPMENT_HANDBOOK.md) | 数据、状态、权限、恢复、检索与评测的设计依据 |
+| [架构设计](./docs/ARCHITECTURE.md) | 分层、接口、信任边界与运行时限制 |
+| [PostgreSQL 使用说明](./docs/POSTGRES.md) | 数据事实源、迁移、隔离验证与恢复 |
+| [项目状态与风险](./docs/STATUS_AND_RISKS.md) | 当前能力、未验证项及风险对策 |
+| [测试基线](./docs/TESTING_BASELINE.md) | 已记录结果、用例范围与复跑要求 |
+| [缺陷回归台账](./docs/DEFECTS_LOG.md) | 业务一致性与可靠性问题的修复依据 |
+| [可靠性审查记录](./docs/RELIABILITY_REVIEW_2026-09-13.md) | 历史问题、整改与各轮验证证据 |
+| [模型评测](./docs/MODEL_EVALUATION.md) | 受控模型适配、影子验证与成本统计 |
+| [多角色编排实验](./docs/MULTI_AGENT_EXPERIMENT.md) | 业务更新实验与默认路径取舍 |
+| [开发计划](./docs/DEVELOPMENT_PLAN.md) | 维护优先级与企业业务拓展条件 |
+| [维护任务指引](./docs/MAINTENANCE_TASK_GUIDE.md) | 可复用的开发、验证与文档同步任务说明 |

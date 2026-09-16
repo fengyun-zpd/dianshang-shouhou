@@ -1,4 +1,4 @@
-# 单 Agent vs Supervisor 对照实验报告（阶段 5B / ADR-002）
+# 单 Agent vs Supervisor 对照实验报告（ADR-002）
 
 - 数据集：`golden-v1`（黄金集 11 条，固定种子合成数据）
 - 运行方式：同一用例分别驱动单 Agent（WorkflowRunner）与 Supervisor（SupervisorRunner，并行只读子 Agent：order/history/policy）

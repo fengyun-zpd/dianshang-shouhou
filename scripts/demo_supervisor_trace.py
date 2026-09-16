@@ -58,7 +58,7 @@ _DAMAGED_DOC = dict(
 )
 
 
-# ---------- 固定种子（合成数据；与 golden_v1 / demo_interview 同构） ----------
+# ---------- 固定种子（合成数据；与 golden_v1 / verify_after_sales 同构） ----------
 
 def _svc(with_policy: bool = True) -> AfterSalesService:
     svc = AfterSalesService()

@@ -1,6 +1,8 @@
 # PostgreSQL 业务事实源
 
-PostgreSQL 保存订单、工单、退款操作、审批决定、幂等记录、审计事件、政策和工作流租约，是 V1 唯一业务事实源。MemoryAdapter 仅用于测试和合成演示；SQLite 只保存 LangGraph checkpoint。
+> 电商售后订单、退款、审批与审计的持久化设计。文档更新：2026-09-16。
+
+PostgreSQL 保存订单、工单、退款操作、审批决定、幂等记录、审计事件、政策和工作流租约，是持久化运行模式的唯一业务事实源。MemoryAdapter 仅用于测试和合成业务验证；SQLite 只保存 LangGraph checkpoint。
 
 ## 本地开发
 
@@ -24,9 +26,13 @@ SQL。破坏性 live 测试的唯一目标是环境变量 `OPSPILOT_TEST_DATABAS
 `DATABASE_URL`）；未设置或不可达时这些测试如实 skip。
 
 ```powershell
-# 一次性准备隔离测试库（含主库 opspilot 各一次 alembic upgrade head 后）
-$env:OPSPILOT_TEST_DATABASE_URL = 'postgresql+psycopg2://opspilot:opspilot@127.0.0.1:5433/opspilot_test_v1'
-.\.venv\Scripts\python.exe -m pytest tests/ -q -p no:cacheprovider
+# 前提：本地 PostgreSQL 可用，且测试账号可创建数据库。
+# 在专用 PowerShell 会话运行；脚本创建两套随机命名隔离库并迁移到 head。
+. .\scripts\init_d_env.ps1
+.\scripts\run_pg_tests_isolated.ps1
+if ($LASTEXITCODE -ne 0) { throw '隔离数据库准备或验证失败' }
+# 脚本将 DATABASE_URL 和 OPSPILOT_TEST_DATABASE_URL 留在最后一套隔离库。
+.venv\Scripts\python.exe -m pytest tests/ -q -p no:cacheprovider
 ```
 
 `scripts/run_pg_tests_isolated.ps1` 每次自动创建带随机后缀的 `opspilot_test_a_<run>` /
@@ -39,7 +45,7 @@ PG profile 下 `/api/v1/agent/*`（Agent 生命周期 HTTP，仅内部坐席）�
 产出的 `WorkflowRunner` 驱动：真实 `PgCommandAdapter` + **固定** SQLite checkpoint
 （`.runtime/checkpoints/opspilot-agent.sqlite`，可用 `--checkpoint` 覆盖；不使用 PID 临时文件）
 + `workflow_threads` 租约。审批事实从 PG 读取，`decision` 接口只触发重读；
-`/api/demo/reset` 在 pg profile 下**不注册**（该路由只属于 memory 合成演示后端）。
+`/api/demo/reset` 在 pg profile 下**不注册**（该路由只属于 memory 合成业务验证后端）。
 
 线程唯一键是 `(tenant_id, thread_id)`：**绑定事实源是租户限定的 `workflow_threads` 行 + 持久
 checkpoint**，进程内字典只是便利缓存。因此实例 A 中断后进程退出（不释放租约）、租约过期，实例 B
@@ -47,18 +53,19 @@ checkpoint**，进程内字典只是便利缓存。因此实例 A 中断后进�
 "线程不存在"返回**同一个** 404，消息不含所属租户。租约语义不变：他人持约未过期时推进被拒绝。
 checkpoint 键使用带版本的长度编码 `v2|租户长度|租户|线程长度|线程`，不受标识符中冒号影响；
 旧键只有在 checkpoint 内嵌租户/线程与请求精确一致时才兼容，歧义旧键直接拒绝。
-审计事件使用 Alembic 0006 增加的持久化 `event_id`；流程视图引用该 ID，不依赖审计列表下标。
+审计事件使用 Alembic `0006` 增加的持久化 `event_id`，并有非空值唯一索引；历史行按数据库 ID 回填。
+字段目前允许空值，无 ID 的旧领域对象仍有基于列表位置的兼容回退；新事件优先引用持久标识。
 
 收尾恢复（R4）与审计关联（R3）同样以 PG 事实为准：`decision` 恢复时从 `refund_operations`
 重读状态，只在 `executed`/`rejected` 时调用既有领域关单命令收尾（绝不再次执行），`failed`
 保持工单开放转人工，`unknown` 未用原 `operation_id` 对账前不关单；`audit_event_ids` 由
 `audit_events`（`ORDER BY id`）按租户 + 本线程 ticket/operation 过滤重建，稳定且可去重。
 
-实测（隔离库 live）：
+最近已记录的实测命令（2026-09-13，隔离库 live；执行前准备上方测试环境）：
 
 ```powershell
 .venv\Scripts\python.exe -m pytest tests/integration/test_run_api_pg_backend_live.py -q
-# → 4 passed（start→审批事实→decision→state 全链路，以 refund_operations 行金额验收；伪造 decision body 422）
+# → 最近记录为 7 passed；包含领域行金额验收、伪造审批拒绝、PII 脱敏、审计隔离及未知结果对账收尾
 .venv\Scripts\python.exe -m pytest tests/integration/test_agent_restart_recovery_live.py -q
 # → 5 passed（独立进程 A/B；实例 A 中断 → 按 PostgreSQL 时间等待租约到期 → 实例 B 恢复；错误租户 404；
 #   同名线程；租约仍生效；R1 冒号碰撞先 start 后 GET 仍隔离；循环终态跨实例存活且推进被拒）
@@ -69,5 +76,5 @@ checkpoint 键使用带版本的长度编码 `v2|租户长度|租户|线程长�
 这些数字来自固定种子合成数据和本机单次运行，不代表生产吞吐或真实企业收益。
 
 已删除 `PgBackedSession` 整库清空重插和快照恢复原型。生产部署、生产备份、支付或 CRM 接入未实现。
-固定 checkpoint 默认面向单实例；多实例部署应各自指定 `--checkpoint` 或改用服务端 checkpointer
-（当前**未验证**多实例并行）。
+固定 checkpoint 默认面向单实例。多实例并行、共享恢复状态与高可用需要独立设计和验证，
+不能仅通过分配不同 checkpoint 文件推定可接续同一线程。当前只验证顺序重启恢复。

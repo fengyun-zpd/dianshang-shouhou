@@ -1,6 +1,6 @@
-# 模型评测与受控 LLM 运行时（阶段 5A / 5B）
+# 电商售后模型评测与受控 LLM 运行时
 
-> 归属：电商售后多智能体工单系统（OpsPilot）。版本：v1.2（2026-09-13）。
+> 归属：个人开发的电商售后数字化工具 OpsPilot。文档更新：2026-09-16；已记录实测：2026-09-13。
 > 目标：在不扩大模型权限的前提下，建立**可替换 / 可评测 / 可安全降级 / 可记账**的
 > OpenAI-compatible LLM 适配层。
 >
@@ -34,6 +34,7 @@
 适配器）→ `openai_compatible.py`（HTTP 适配器）→ `router.py`（能力矩阵 + `ModelGateway` 降级链）。
 
 触发安全降级（降级到离线规则或转人工信号）：
+
 - API Key 缺失 / Base URL 不在白名单 → `ModelConfigError`（构造即失败，**零网络请求**，测试断言）；
 - 超时 / 网络失败 → `ModelTimeoutError` / `ModelNetworkError`（有限重试后仍失败）；
 - HTTP 429 → `ModelRateLimitedError`；5xx → `ModelHttpError`；
@@ -81,7 +82,7 @@
 内容安全拦截数、降级次数、输入 token、输出 token、总 token、输入成本、输出成本、总成本、
 单条平均成本、价格配置来源、P50/P95 延迟、业务副作用：0。
 
-## 5. Token 与成本记账（阶段 5B）
+## 5. Token 与成本记账
 
 `ModelInvocationMetadata` 记录 provider / model_name / model_version / task / prompt_version /
 dataset_version / duration_ms / input_tokens / output_tokens / `token_source` / `input_cost` /
@@ -100,6 +101,7 @@ dataset_version / duration_ms / input_tokens / output_tokens / `token_source` / 
 `total_cost = input_cost + output_cost`（**仅当输入与输出单价都已配置**）。
 
 未配置/非法价格的行为：
+
 - 未配置 → 对应成本项为 `None`，报告显示 `N/A`；
 - 非法字符串（`abc` / 负数 / `nan` / `inf`）→ 安全回退为未配置，并把变量名记入
   `LLMSettings.price_errors`；
@@ -148,7 +150,7 @@ Judge **不得**评估或替代的维度：金额正确性、权限正确性、�
 **规则：没有真实运行并保存报告，不得声称真实模型已验证**；字段级准确率在提供结构化字段
 黄金集前标"未实测"。不得虚构"DeepSeek-chat 已验证"、真实准确率、真实成本或真实延迟。
 
-## 8. 后续微调门禁（本阶段不做）
+## 8. 后续微调条件（当前未运行）
 
 - 无对照数据禁止 LoRA/QLoRA/DPO；
 - 微调须先跑同一黄金集/影子集并保存对照报告；
@@ -156,8 +158,8 @@ Judge **不得**评估或替代的维度：金额正确性、权限正确性、�
 
 ## 9. 修订记录
 
-- v1.0（2026-09-04）—— 建立能力矩阵、运行时结构、降级策略、影子模式、指标与诚实边界。
-- v1.1（2026-09-07）—— 逐条核对阶段 2 验收；明确 V1.1 实测边界与文档版本。
-- v1.2（2026-09-13）—— 新增输入/输出双向成本记账（新价格变量 + 旧变量兼容 + 未配置 N/A +
+- （2026-09-04）—— 建立能力矩阵、运行时结构、降级策略、影子模式、指标与诚实边界。
+- （2026-09-07）—— 核对模型适配验收；明确实测边界与文档依据。
+- （2026-09-13）—— 新增输入/输出双向成本记账（新价格变量 + 旧变量兼容 + 未配置 N/A +
   非法值安全回退）、候选模式"模型名显式配置"门禁、影子报告完整成本列、影子零副作用与零网络
   断言、LLM-as-Judge 评测骨架（不替代确定性验收）。真实模型与真实 Judge 仍未实测。

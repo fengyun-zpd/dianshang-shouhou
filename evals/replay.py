@@ -641,7 +641,7 @@ def _run(dataset: str, profile: str = "memory",
     rag = rag_checks()
     report = {
         "dataset_version": dataset,
-        "model": "N/A（当前无 LLM 运行时，确定性规则工作流）",
+        "model": "N/A（本轮未调用 LLM，使用确定性规则工作流）",
         "prompt_version": "N/A",
         "run_mode": (pg_profile.run_mode if pg_profile is not None
                      else "本地内存仓储 + MemorySaver checkpoint + 模拟外部执行"),

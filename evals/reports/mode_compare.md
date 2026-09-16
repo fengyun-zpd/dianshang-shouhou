@@ -1,4 +1,4 @@
-# 运行模式 A/B 对照报告（V1.1：单 Agent vs three-agent vs four-role）
+# 运行模式 A/B 对照报告（单 Agent vs three-agent vs four-role）
 
 - 数据集版本：`golden-v1`（黄金集 11 条，固定种子合成数据）
 - 模型版本：offline / rules-v1（三模式均为确定性规则实现，未连接真实 LLM）

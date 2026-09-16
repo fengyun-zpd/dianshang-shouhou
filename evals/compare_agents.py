@@ -133,7 +133,7 @@ def _conclude(r: dict) -> str:
 
 def _render(r: dict) -> str:
     lines = [
-        "# 单 Agent vs Supervisor 对照实验报告（阶段 5B / ADR-002）",
+        "# 单 Agent vs Supervisor 对照实验报告（ADR-002）",
         "",
         f"- 数据集：`{r['dataset_version']}`（黄金集 {r['total']} 条，固定种子合成数据）",
         f"- 运行方式：同一用例分别驱动单 Agent（WorkflowRunner）与 Supervisor（SupervisorRunner，"

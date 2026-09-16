@@ -292,7 +292,7 @@ def _summary(r: dict) -> str:
 def _render(r: dict) -> str:
     measured = r["candidate_measured"]
     lines = [
-        "# 影子评测报告（阶段 5A / 5B）",
+        "# 影子评测报告（售后意图与澄清识别）",
         "",
         "## 运行标识",
         "",

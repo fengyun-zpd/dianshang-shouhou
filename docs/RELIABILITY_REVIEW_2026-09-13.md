@@ -1,10 +1,17 @@
-# OpsPilot V1.2 审查结果（2026-09-13）
+# OpsPilot 可靠性审查记录（2026-09-13）
 
-审查基线：`d5ed51f`。结论：**保持 Release Candidate，暂不通过最终验收**。
-本轮交付为审查证据、复现脚本和下一步执行提示词；下列应用缺陷**尚未修复**。
-变更类别：评测与文档。不扩大 V1 业务范围、不更换事实源、不连接真实副作用系统。
+本文记录电商售后工单的可靠性审查、整改及后续复验，使用本地合成样本。
+文档整理日期：2026-09-16；下方业务执行证据均保留原运行日期。
 
-## 本次实测与范围
+**当前状态：R1–R5 已完成整改，审计事件持久标识后续已补充。** 最近记录的全量结果为
+离线 502 passed / 55 skipped，隔离 PG 557 passed / 0 skipped，见文末审计迁移记录。
+
+修复前审查基线为 `d5ed51f`，当时结论为未通过验收。R1–R6 中的代码位置与“现有”描述均指该历史基线，
+不代表当前缺陷仍未修复；文件重命名后的行号也不能直接对应历史位置。
+七场景脚本在本次整理中更名为 `scripts/verify_after_sales.py`，历史记录中的引用统一指向当前入口。
+审查涉及评测与文档，没有扩大业务范围、更换事实源或连接真实副作用系统。
+
+## 修复前实测与范围（2026-09-13）
 
 | 检查 | 实际结果 | 含义 |
 | --- | --- | --- |
@@ -20,7 +27,7 @@
 
 本地原始证据在 `.runtime/review-20260913/pytest.log`、`migration.log`、
 `pg-collision.json`、`boundaries-pg.json`。报告不保存连接密码或原始联系方式。
-新建隔离库保留供复核，没有清空共享业务库。原有未提交 `炼化.md` 保持原样。
+新建隔离库保留供复核，没有清空共享业务库。当时未提交的开发手册保持原样；本文档整理时已按当前能力重新编排手册。
 
 ## R1 — P1：checkpoint 键碰撞可绕过租户隔离
 
@@ -35,7 +42,7 @@
 - PG：后一租户先 start `dept:victim`，创建自己的 `workflow_threads` 行后因请求指纹冲突
   返回 **409**；随后 GET 却返回 **200** 和前一租户的状态。数据库线程行存在不证明 checkpoint 归属。
 
-前提是配置中存在含冒号的租户标识；当前接口与身份类型允许该标识。默认 T1/T2 演示没有触发
+前提是配置中存在含冒号的租户标识；当前接口与身份类型允许该标识。默认 T1/T2 业务验证没有触发
 该组合，不能据此宣称所有标识下隔离成立。此次证实跨租户读取，未证明越权退款。
 
 修复验收：无歧义、带版本的键编码；读取与推进前校验 checkpoint 内租户和线程；旧键兼容必须
@@ -98,31 +105,31 @@ interrupt 与嵌套展示字段。核查 422 错误回显（`src/api/errors.py:7
 新增独立子进程 A/B 的 HTTP 复现，证明真正退出后能使用同一 PG 与同一 checkpoint 恢复；
 使用数据库时间判断租约到期并设置有限等待，不靠扩大固定 sleep 或降低断言掩盖失败。
 
-## R6 — P2：旧执行提示词与面试稿会把下一轮带回过时方向
+## R6 — P2：旧开发说明与执行指引偏离当前实现
 
-定位：`炼化.md:5`、`:110`、`:172`；`docs/V1_EXECUTION_PLAN.md` 的历史提示词第 8 项。
+修复前的开发手册仍把 399/443 作为当前测试数字，并描述 HTTP 生命周期尚未接入；
+旧维护任务还包含可能误删模型模块的建议。以上为当时文档问题，不能继续指导当前开发。
+远程 CI 成功说法在该轮未核验。
 
-`炼化.md` 明示基于旧 HEAD，却又要求把 399/443 当当前数字、继续建设“尚未接入的 HTTP 主链路”；
-它不能作为 V1.2 当前面试稿。旧执行方案虽然标注历史快照，仍包含可能删除模型模块的旧指令。
-本轮给旧方案增加当前提示词导航，但不重写用户未提交手册。远程 CI 成功说法本轮未核验。
+2026-09-16 已按个人开发与电商业务设计重写项目首页、开发手册、业务概览、开发计划与维护指引。
+手册保留原有 15 个主题，修正 HTTP 已接通、用例数量和 CI 配置事实；原始测试日期与失败结果继续保留。
+当前维护入口见[维护任务指引](./MAINTENANCE_TASK_GUIDE.md)。
 
-后续只做相关段落对齐，保留手册原有学习结构和用户内容；历史数字与 CI 结论必须带来源和日期。
+## 当时的整改顺序与复现方式
 
-## 下一步
-
-直接使用 [V1.2 完整修复与验收提示词](./V1_2_NEXT_STEP_PROMPT.md)。按 R1/R2/R4 → R3/R5 → R6
-收口，逐项先复现、后修复、再验证；不因既有 490 项通过就忽略补充检查失败。
+当时按 R1/R2/R4 → R3/R5 → R6 逐项复现、修复、验证；既有全量通过项不能抵消补充检查失败。
+以下注释记录修复前结果，当前执行应得到修复后的结果。
 
 可重复运行的补充检查：
 
 ```powershell
 . .\scripts\init_d_env.ps1
 .venv\Scripts\python.exe scripts\review_v12_boundaries.py
-# 当前：6 FAIL，退出码 1；仅 memory，无数据库写入。
+# 修复前：6 FAIL，退出码 1；仅 memory，无数据库写入。
 
 # 显式设置 OPSPILOT_TEST_DATABASE_URL 指向已迁移的本地 opspilot_test_* 隔离库后：
 .venv\Scripts\python.exe scripts\review_v12_boundaries.py --pg
-# 当前：7 FAIL，退出码 1；额外仅创建合成 workflow_threads/checkpoint，不重置表。
+# 修复前：7 FAIL，退出码 1；额外仅创建合成 workflow_threads/checkpoint，不重置表。
 ```
 
 该脚本是本次定点复现集，不替代全面安全审计或下一轮针对性回归；不得通过删除检查来获得退出码 0。
@@ -134,12 +141,12 @@ interrupt 与嵌套展示字段。核查 422 错误回显（`src/api/errors.py:7
 | 编号 | 修复 | 验证证据 | 结果 |
 | --- | --- | --- | --- |
 | R1 | checkpoint 改为 v2 长度编码；旧键仅在存储元数据与请求租户/线程精确匹配时兼容；歧义旧键 fail-closed | `test_thread_tenant_namespace.py`、边界脚本 `R1-memory-namespace` | PASS |
-| R2 | HTTP 公共视图白名单；用户文本、回复、interrupt、嵌套值和验证错误统一脱敏 | `test_agent_http_lifecycle.py::test_agent_public_views_redact_pii` 及错误路径回归 | PASS |
+| R2 | HTTP 公共视图白名单；用户文本、回复、interrupt、嵌套值和验证错误统一脱敏 | `test_agent_http_lifecycle.py::test_public_agent_views_and_validation_errors_redact_pii` 及错误路径回归 | PASS |
 | R3 | 审计按租户、线程和当前 ticket/operation 实体过滤；稳定事件 ID 与线程级去重 | Agent 审计单测、PG 全量、边界脚本 `R3-audit-*` | PASS |
 | R4 | `decision` 可恢复 `reconcile_required`/终态 checkpoint；按领域事实收口 executed/rejected/failed，禁止 unknown 未确认时关单 | `test_resume_idempotency_and_unknown.py`、边界脚本 `R4-*` | PASS |
 | R5 | 重启测试改为独立子进程；以 PostgreSQL `now()` 判定租约过期，不依赖固定 sleep | `test_restart_recovers_thread_and_continues`（独立进程）及 PG 全量 | PASS |
 
-### 最终实测
+### 首轮整改后实测
 
 - 离线：`494 passed / 49 skipped / 1 warning`。
 - 隔离 PostgreSQL：`543 passed / 0 skipped / 1 warning`。
@@ -148,7 +155,9 @@ interrupt 与嵌套展示字段。核查 422 错误回显（`src/api/errors.py:7
 
 仍未实测的内容保持原口径：真实 LLM 指标、真实 Judge 分数、微调效果、性能吞吐、多实例部署和生产外部系统。所有数据均为固定种子合成数据；本报告不代表生产收益或生产部署证明。
 
-## 独立复验（2026-09-13，收口提交前）
+## 独立复验（2026-09-13，审计迁移前）
+
+本节数量已按提交 `67d6293` 与本地原始日志校正，后续迁移结果另列，不覆盖本轮。
 
 上表由整改实施方记录；本节由复验方在同一工作树、当前 HEAD 上独立重跑，并补足此前缺少的
 定点回归。历史 FAIL 数字与前节结果均保留，不覆盖。
@@ -157,10 +166,10 @@ interrupt 与嵌套展示字段。核查 422 错误回显（`src/api/errors.py:7
 | --- | --- | --- |
 | 边界脚本（memory） | `scripts/review_v12_boundaries.py` | **6 PASS / 0 FAIL / 0 ERROR，退出码 0** |
 | 边界脚本（隔离 PG） | `scripts/review_v12_boundaries.py --pg` | **7 PASS / 0 FAIL / 0 ERROR，退出码 0**（含 R1-pg-namespace） |
-| 离线全量 | `pytest tests -q` | **502 passed / 55 skipped / 1 warning，约 11 s** |
-| 隔离 PG 全量 | 新建并迁移 `opspilot_test_v12_<随机>` 至 0006 后 `pytest tests -q` | **557 passed / 0 skipped / 1 warning，约 37 s** |
+| 离线全量 | `pytest tests -q` | **503 passed / 51 skipped / 1 warning，11.0 s** |
+| 隔离 PG 全量 | 新建并迁移唯一命名隔离库至 0005 后 `pytest tests -q` | **554 passed / 0 skipped / 1 warning，33.8 s** |
 | 隔离双跑 | `scripts/run_pg_tests_isolated.ps1` | `opspilot_test_a_8c9dfc6f` / `b_8c9dfc6f` 各 **25 passed**，`ISOLATED DOUBLE-RUN PASS` |
-| 演示与评测 | `demo_agent_http.py`、`demo_interview.py`、`replay --dataset golden_v1`、`compare_modes.py`、影子评测 offline、Judge offline | 全部退出码 0；黄金集 11/11；三模式 11/11 持平；影子 `tokens=0 / cost=N/A`；Judge 未实测 |
+| 业务验证与评测 | `demo_agent_http.py`、`verify_after_sales.py`、`replay --dataset golden_v1`、`compare_modes.py`、影子评测 offline、Judge offline | 全部退出码 0；黄金集 11/11；三模式 11/11 持平；影子 `tokens=0 / cost=N/A`；Judge 未实测 |
 | 静态检查 | `node --check src/api/ui/workspace.js`、`git diff --check` | 均退出码 0 |
 
 本轮补充的定点回归（此前无覆盖，先做变异验证再留档）：
@@ -186,41 +195,47 @@ interrupt 与嵌套展示字段。核查 422 错误回显（`src/api/errors.py:7
 微调、性能、多实例部署、生产外部系统）。复验期间 `evals/reports/` 的 canonical 报告仅因重跑
 产生时间戳差异，已还原为原提交内容，未作为新一轮证据。
 
-### 可复现验收顺序（一条命令序列）
+## 审计持久标识补充验证（2026-09-13）
+
+后续代码提交 `091f94c` 增加 `event_id` 持久化及迁移 `0006`，新事件生成标识，历史行按数据库 ID 回填。
+PG HTTP 文件在既有 4 项上新增 3 项：公共视图脱敏、线程审计隔离、未知结果对账后收尾，合计 7 项。
+无 ID 的旧领域对象仍保留兼容回退，不能表述为全部审计来源均已取消位置标识。
+
+| 验证 | 记录结果 | 环境说明 |
+| --- | --- | --- |
+| 离线全量 | 502 passed / 55 skipped / 1 warning，11.20 s | 54 项 PG live 未启用；另 1 项运行时检查因默认库迁移条件不满足而跳过 |
+| 隔离 PG 全量 | 557 passed / 0 skipped / 1 warning，37.08 s | 在已有隔离库升级至 0006 后复跑，不是新建空库迁移记录 |
+| PG HTTP 定点回归 | 7 passed | 含新增 3 项业务边界回归 |
+| 审计、行编解码及 PG 接入组合 | 18 passed | 持久 ID 与相关业务语义 |
+
+该轮未取得真实 LLM、真实支付、生产吞吐或多实例并行的实测证据。
+2026-09-16 只更新文档、说明文字与报告标题，并用收集检查核对现有用例，未重新执行完整业务回归。
+
+### 当前可复现核查顺序
+
+先按[测试基线](./TESTING_BASELINE.md)准备离线与隔离 PG 环境。
+数据库服务、建库权限与迁移前提见[PostgreSQL 使用说明](./POSTGRES.md)，不得用共享库替代隔离库。
 
 ```powershell
 . .\scripts\init_d_env.ps1
-
-# 1) 定点复现集（先跑：任何 FAIL/ERROR 都表示验收未完成，不能算通过）
-.venv\Scripts\python.exe scripts\review_v12_boundaries.py            # memory：预期 6 PASS，退出码 0
-
-# 2) 新建唯一命名隔离库并迁移到 head，然后 PG 复现集 + 全量
-$env:OPSPILOT_TEST_DATABASE_URL = 'postgresql+psycopg2://opspilot:opspilot@127.0.0.1:5433/opspilot_test_v12_<随机后缀>'
-.venv\Scripts\python.exe -m alembic -c alembic.ini upgrade head
-.venv\Scripts\python.exe scripts\review_v12_boundaries.py --pg        # 预期 7 PASS，退出码 0
-.venv\Scripts\python.exe -m pytest tests -q                           # 预期 557 passed / 0 skipped
-.\scripts\run_pg_tests_isolated.ps1                                   # 两套隔离库各 25 passed
-
-# 3) 离线全量（不设隔离库时 PG live 按纪律 skip）
-Remove-Item Env:OPSPILOT_TEST_DATABASE_URL
-.venv\Scripts\python.exe -m pytest tests -q                           # 预期 502 passed / 55 skipped
-
-# 4) 业务闭环演示与评测
-.venv\Scripts\python.exe scripts\demo_agent_http.py                   # HTTP 生命周期九步（含 404/422/循环）
-.venv\Scripts\python.exe scripts\demo_interview.py                     # 领域闭环七场景
-.venv\Scripts\python.exe evals\replay.py --dataset golden_v1           # 11/11
-.venv\Scripts\python.exe evals\compare_modes.py                        # single/three-agent/four-role 持平
-
-# 5) 工作台（人工路径验证：正常 / 澄清 / 拒绝 / unknown→对账→恢复 / 跨租户 / 循环终态）
-.venv\Scripts\python.exe scripts\run_api.py --backend memory --port 8080
-#   浏览器打开 http://127.0.0.1:8080/ →「案件处置 → Agent 全链路」
-#   本轮未使用浏览器自动化：上述路径以页面按钮的同一 API 序列在运行中的服务上逐条验证。
-
-# 6) 静态检查
-node --check src/api/ui/workspace.js ; git diff --check
+.venv\Scripts\python.exe scripts\review_v12_boundaries.py
+# PG 环境在专用会话中准备，脚本将数据库变量指向最后一套隔离库。
+.\scripts\run_pg_tests_isolated.ps1
+if ($LASTEXITCODE -ne 0) { throw '隔离验证失败' }
+.venv\Scripts\python.exe scripts\review_v12_boundaries.py --pg
+.venv\Scripts\python.exe -m pytest tests -q
+.venv\Scripts\python.exe scripts\demo_agent_http.py
+.venv\Scripts\python.exe scripts\verify_after_sales.py
+.venv\Scripts\python.exe evals\replay.py --dataset golden_v1
+.venv\Scripts\python.exe evals\compare_modes.py
+node --check src/api/ui/workspace.js
+git diff --check
 ```
 
-本轮原始证据（未提交，留在 D 盘运行时目录）：`.runtime/verify-v12-20260913-2209/`
+完整输出按当次日期与提交记录，不能将本文件的历史成功数字直接复制为新的运行结果。
+工作台六条路径此前使用页面相同 API 序列验证，浏览器自动化仍未完成。
+
+审计迁移前独立复验的原始证据（未提交，留在 D 盘运行时目录）：`.runtime/verify-v12-20260913-2209/`
 （`boundaries-memory*.txt`、`boundaries-pg*.txt`、`offline-*.txt`、`pg-final.txt`、
 `pg-isolated-final.txt`、`ui-paths.txt`、`acceptance-cli.txt`、`pg-restart.txt`），
 上一轮审查证据备份在 `.runtime/review-20260913/pre-verify-20260913-2209/`。
